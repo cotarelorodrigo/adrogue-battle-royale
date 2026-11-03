@@ -4,6 +4,7 @@ import type { Vec2, Vec3 } from '../shared/geo.ts';
 import type { MapData } from '../shared/mapdata.ts';
 import { eyeHeight, initialState, stepPlayer } from '../shared/player.ts';
 import type { PlayerState } from '../shared/player.ts';
+import photoFacadeData from '../../data/photo-facades.json';
 import { debugEnabled, installDebug } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
@@ -16,6 +17,8 @@ import type { Overlay } from './ui/overlay.ts';
 import { buildChunks } from './world/chunks.ts';
 import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
+import { buildPhotoFacades } from './world/photo-facades.ts';
+import type { PhotoFacade } from './world/photo-facades.ts';
 import { buildClimbProps } from './world/props.ts';
 import { buildSigns } from './world/signs.ts';
 import type { WorldMaterials } from './world/types.ts';
@@ -156,10 +159,13 @@ async function run(boot: Boot): Promise<void> {
   if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
   scene.addChunks(buildChunks(map, materials));
   const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark);
+  const photos = await buildPhotoFacades(map, photoFacadeData as PhotoFacade[], import.meta.env.BASE_URL, QUALITY[quality].textureSize, QUALITY[quality].anisotropy);
+  if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
   scene.addStatic([
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
+    photos,
     buildSigns(map.places),
     ...trees,
     ...buildClimbProps(map.props),
