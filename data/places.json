@@ -1,0 +1,334 @@
+[
+  {
+    "id": "bbva",
+    "name": "BBVA",
+    "type": "bank",
+    "lat": -34.798398,
+    "lon": -58.392374,
+    "enterable": true,
+    "signText": "BBVA"
+  },
+  {
+    "id": "banco-itau-adrogue-suc-84",
+    "name": "Banco Itaú - Adrogué Suc 84",
+    "type": "bank",
+    "lat": -34.79643,
+    "lon": -58.389168,
+    "enterable": false,
+    "signText": "BANCO ITAÚ - ADROGUÉ SUC 84"
+  },
+  {
+    "id": "banco-nacion",
+    "name": "Banco Nación (Esteban Adrogué 1052)",
+    "type": "bank",
+    "lat": -34.798586,
+    "lon": -58.392217,
+    "enterable": true,
+    "signText": "BANCO NACIÓN"
+  },
+  {
+    "id": "banco-nacion-2",
+    "name": "Banco Nación (otra sucursal)",
+    "type": "bank",
+    "lat": -34.795494,
+    "lon": -58.396846,
+    "enterable": false,
+    "signText": "BANCO NACIÓN"
+  },
+  {
+    "id": "banco-provincia",
+    "name": "Banco Provincia",
+    "type": "bank",
+    "lat": -34.79805,
+    "lon": -58.393278,
+    "enterable": false,
+    "signText": "BANCO PROVINCIA"
+  },
+  {
+    "id": "galicia",
+    "name": "Galicia",
+    "type": "bank",
+    "lat": -34.798606,
+    "lon": -58.392087,
+    "enterable": true,
+    "signText": "GALICIA"
+  },
+  {
+    "id": "icbc",
+    "name": "ICBC",
+    "type": "bank",
+    "lat": -34.79748,
+    "lon": -58.39175,
+    "enterable": false,
+    "signText": "ICBC"
+  },
+  {
+    "id": "macro",
+    "name": "Macro",
+    "type": "bank",
+    "lat": -34.797645,
+    "lon": -58.388998,
+    "enterable": false,
+    "signText": "MACRO"
+  },
+  {
+    "id": "santander",
+    "name": "Santander",
+    "type": "bank",
+    "lat": -34.798433,
+    "lon": -58.390473,
+    "enterable": false,
+    "signText": "SANTANDER"
+  },
+  {
+    "id": "guernica-bar",
+    "name": "Guernica Bar",
+    "type": "bar",
+    "lat": -34.798873,
+    "lon": -58.391332,
+    "enterable": true,
+    "signText": "GUERNICA BAR"
+  },
+  {
+    "id": "la-zorra",
+    "name": "La Zorra",
+    "type": "bar",
+    "lat": -34.798993,
+    "lon": -58.391951,
+    "enterable": false,
+    "signText": "LA ZORRA"
+  },
+  {
+    "id": "the-way",
+    "name": "The Way",
+    "type": "bar",
+    "lat": -34.797704,
+    "lon": -58.386146,
+    "enterable": false,
+    "signText": "THE WAY"
+  },
+  {
+    "id": "casa-de-la-cultura",
+    "name": "Casa de la Cultura Almirante Brown",
+    "type": "culture",
+    "lat": -34.798719,
+    "lon": -58.390055,
+    "enterable": true,
+    "signText": "CASA DE LA CULTURA ALMIRANTE BROWN"
+  },
+  {
+    "id": "cine-pixel",
+    "name": "Cine Pixel",
+    "type": "cinema",
+    "lat": -34.799848,
+    "lon": -58.397106,
+    "enterable": true,
+    "signText": "CINE PIXEL"
+  },
+  {
+    "id": "jose-marmol-club",
+    "name": "José Mármol Club",
+    "type": "club",
+    "lat": -34.797222,
+    "lon": -58.382794,
+    "enterable": false,
+    "signText": "JOSÉ MÁRMOL CLUB"
+  },
+  {
+    "id": "stallion-futbol-5",
+    "name": "Stallion Fútbol 5",
+    "type": "club",
+    "lat": -34.794154,
+    "lon": -58.386708,
+    "enterable": false,
+    "signText": "STALLION FÚTBOL 5"
+  },
+  {
+    "id": "clinica-ima-sa",
+    "name": "Clínica I.M.A. SA",
+    "type": "clinic",
+    "lat": -34.800743,
+    "lon": -58.398482,
+    "enterable": false,
+    "signText": "CLÍNICA I.M.A. SA"
+  },
+  {
+    "id": "danke",
+    "name": "Danke",
+    "type": "fastfood",
+    "lat": -34.801169,
+    "lon": -58.384727,
+    "enterable": false,
+    "signText": "DANKE"
+  },
+  {
+    "id": "lo-de-carlitos",
+    "name": "Lo de Carlitos",
+    "type": "fastfood",
+    "lat": -34.800347,
+    "lon": -58.397173,
+    "enterable": false,
+    "signText": "LO DE CARLITOS"
+  },
+  {
+    "id": "mcdonalds",
+    "name": "McDonald's",
+    "type": "fastfood",
+    "lat": -34.79609,
+    "lon": -58.388472,
+    "enterable": true,
+    "signText": "MCDONALD'S"
+  },
+  {
+    "id": "colegio-alfa",
+    "name": "Colegio Alfa",
+    "type": "school",
+    "lat": -34.796493,
+    "lon": -58.386318,
+    "enterable": false,
+    "signText": "COLEGIO ALFA"
+  },
+  {
+    "id": "estacion-adrogue",
+    "name": "Estación Adrogué",
+    "type": "station",
+    "lat": -34.797811,
+    "lon": -58.394237,
+    "enterable": true,
+    "signText": "ADROGUÉ"
+  },
+  {
+    "id": "la-veneciana",
+    "name": "La Veneciana",
+    "type": "icecream",
+    "lat": -34.795163,
+    "lon": -58.388631,
+    "enterable": true,
+    "signText": "LA VENECIANA"
+  },
+  {
+    "id": "luccianos",
+    "name": "Lucciano's",
+    "type": "icecream",
+    "lat": -34.798739,
+    "lon": -58.391583,
+    "enterable": false,
+    "signText": "LUCCIANO'S"
+  },
+  {
+    "id": "escultura-general-san-martin",
+    "name": "Escultura General San Martín",
+    "type": "monument",
+    "lat": -34.797915,
+    "lon": -58.394773,
+    "enterable": false
+  },
+  {
+    "id": "monumento-a-esteban-adrogue",
+    "name": "Monumento a Esteban Adrogué",
+    "type": "monument",
+    "lat": -34.797403,
+    "lon": -58.388469,
+    "enterable": false
+  },
+  {
+    "id": "monumento-a-san-martin",
+    "name": "Monumento a San Martín",
+    "type": "monument",
+    "lat": -34.798106,
+    "lon": -58.394886,
+    "enterable": false
+  },
+  {
+    "id": "monumento-al-almirante-guillermo-brown",
+    "name": "Monumento al Almirante Guillermo Brown",
+    "type": "monument",
+    "lat": -34.798021,
+    "lon": -58.384416,
+    "enterable": false
+  },
+  {
+    "id": "parque-de-la-fuente",
+    "name": "Parque de la Fuente",
+    "type": "plaza",
+    "lat": -34.798758,
+    "lon": -58.384594,
+    "enterable": false
+  },
+  {
+    "id": "plaza-bynnon",
+    "name": "Plaza Bynnon",
+    "type": "plaza",
+    "lat": -34.794762,
+    "lon": -58.38367,
+    "enterable": false
+  },
+  {
+    "id": "plaza-rosales",
+    "name": "Plaza Rosales",
+    "type": "plaza",
+    "lat": -34.800508,
+    "lon": -58.388709,
+    "enterable": false
+  },
+  {
+    "id": "plaza-san-martin",
+    "name": "Plaza San Martín",
+    "type": "plaza",
+    "lat": -34.798018,
+    "lon": -58.394555,
+    "enterable": false
+  },
+  {
+    "id": "plazoleta-las-delicias",
+    "name": "Plazoleta Las Delicias",
+    "type": "plaza",
+    "lat": -34.799197,
+    "lon": -58.390138,
+    "enterable": false
+  },
+  {
+    "id": "el-faro",
+    "name": "El Faro",
+    "type": "restaurant",
+    "lat": -34.798369,
+    "lon": -58.390746,
+    "enterable": false,
+    "signText": "EL FARO"
+  },
+  {
+    "id": "filomena",
+    "name": "Filomena",
+    "type": "restaurant",
+    "lat": -34.798753,
+    "lon": -58.391067,
+    "enterable": false,
+    "signText": "FILOMENA"
+  },
+  {
+    "id": "la-delicia",
+    "name": "La Delicia",
+    "type": "restaurant",
+    "lat": -34.800109,
+    "lon": -58.388568,
+    "enterable": false,
+    "signText": "LA DELICIA"
+  },
+  {
+    "id": "la-florencia",
+    "name": "La Florencia",
+    "type": "restaurant",
+    "lat": -34.79591,
+    "lon": -58.386036,
+    "enterable": false,
+    "signText": "LA FLORENCIA"
+  },
+  {
+    "id": "plaza-almirante-brown",
+    "name": "Plaza Almirante Brown",
+    "type": "plaza",
+    "lat": -34.798024,
+    "lon": -58.384465,
+    "enterable": false
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "osm",
+    "title": "OpenStreetMap",
+    "author": "© colaboradores de OpenStreetMap",
+    "license": "ODbL 1.0",
+    "url": "https://www.openstreetmap.org/copyright"
+  },
+  {
+    "id": "ms-buildings",
+    "title": "Microsoft Global ML Building Footprints (release 2026-02-03)",
+    "author": "Microsoft",
+    "license": "ODbL 1.0",
+    "url": "https://github.com/microsoft/GlobalMLBuildingFootprints"
+  }
+]
