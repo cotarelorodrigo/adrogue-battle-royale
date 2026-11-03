@@ -132,20 +132,24 @@ export function extrudeBuilding(bd: Building): {
     const c = fp[(i + 1) % fp.length];
     cum.push(cum[i] + Math.hypot(c[0] - fp[i][0], c[1] - fp[i][1]));
   }
-  const top = Math.max(bd.height, FLOOR_H);
 
   const rb = newBuilder(true);
   for (const [x, z] of fp) vert(rb, [x, bd.height, z], [0, 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
   triangulateUp(fp, 0, rb.idx);
 
   return {
-    walls: { ground: wallBand(fp, cum, 0, FLOOR_H, color), upper: wallBand(fp, cum, FLOOR_H, top, color) },
+    walls: {
+      ground: wallBand(fp, cum, 0, Math.min(FLOOR_H, bd.height), color),
+      // edificio más bajo que un piso: sin banda superior (geometría vacía)
+      upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, color) : toGeometry(newBuilder(true)),
+    },
     roof: toGeometry(rb),
     parapet: parapetRing(fp, cum, bd.height, color),
   };
 }
 
-export function ribbon(points: Vec2[], width: number, y: number): THREE.BufferGeometry {
+/** `startV`: v (metros recorridos / 4) en el primer punto, para continuar la textura entre tramos. */
+export function ribbon(points: Vec2[], width: number, y: number, startV = 0): THREE.BufferGeometry {
   const pts: Vec2[] = [];
   for (const p of points) {
     const q = pts[pts.length - 1];
@@ -178,7 +182,7 @@ export function ribbon(points: Vec2[], width: number, y: number): THREE.BufferGe
       const len = Math.min((2 * h) / ml, MITER_LIMIT * h);
       ox = (mx / ml) * len; oz = (mz / ml) * len;
     }
-    const v = dist / PLANAR_UV;
+    const v = startV + (dist - h) / PLANAR_UV;
     vert(b, [ext[i][0] + ox, y, ext[i][1] + oz], [0, 1, 0], [0, v]);
     vert(b, [ext[i][0] - ox, y, ext[i][1] - oz], [0, 1, 0], [uMax, v]);
   }

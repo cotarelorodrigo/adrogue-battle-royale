@@ -104,6 +104,16 @@ describe('extrudeBuilding', () => {
   });
 });
 
+describe('edificio bajo', () => {
+  test('altura 3,0 (< FLOOR_H): paredes terminan en height y sin banda superior', () => {
+    const e = extrudeBuilding({ ...square10, height: 3.0, floors: 1 });
+    expect(maxOf(e.walls.ground, 'position', 1)).toBeCloseTo(3.0);
+    expect(posOf(e.walls.upper).count).toBe(0);
+    const gs = buildChunks(baseMap({ buildings: [{ ...square10, height: 3.0, floors: 1 }] }), fake());
+    expect(namesIn(gs, 0, 0)).not.toContain('wallUpper');
+  });
+});
+
 describe('ribbon / polygonGeometry', () => {
   test('cinta: área ≈ largo × ancho y sin NaN en giros cerrados', () => {
     expect(areaOf(ribbon([[0, 0], [100, 0]], 8, 0))).toBeCloseTo((100 + 8) * 8, 0);
@@ -189,12 +199,12 @@ describe('buildChunks', () => {
   });
 
   test('ruta que cruza el límite de chunk deja cinta en ambos', () => {
-    const sidewalkPos = (i: number) => {
+    const asphaltPos = (i: number) => {
       const m = groups.find((gr) => gr.userData.chunk[0] === i && gr.userData.chunk[1] === 0)!.children.find((c) => c.name === 'asphalt') as THREE.Mesh;
       return posOf(m.geometry);
     };
-    expect(sidewalkPos(0).count).toBeGreaterThan(0);
-    expect(sidewalkPos(1).count).toBeGreaterThan(0);
+    expect(asphaltPos(0).count).toBeGreaterThan(0);
+    expect(asphaltPos(1).count).toBeGreaterThan(0);
   });
 
   test('footway: dentro de un parque no se dibuja; afuera -> sidewalk; pedestrian -> sidewalk', () => {
@@ -204,6 +214,48 @@ describe('buildChunks', () => {
     expect(only([road('c', 'pedestrian', [[10, 60], [30, 60]], 6, 0)]).map((m) => m.name)).toEqual(['sidewalk']);
     // calle sin vereda: solo asfalto
     expect(only([road('d', 'service', [[10, 60], [30, 60]], 4, 0)]).map((m) => m.name)).toEqual(['asphalt']);
+  });
+
+  test('capas del suelo: vereda 0,02 < asfalto 0,04 < sendas 0,06', () => {
+    const ys = (rs: Road[]) => Object.fromEntries(buildChunks(baseMap({ roads: rs }), fake()).flatMap((gr) => gr.children as THREE.Mesh[])
+      .filter((m) => m.name !== 'grass').map((m) => [m.name, maxOf(m.geometry, 'position', 1)]));
+    expect(ys([road('a', 'residential', [[10, 60], [30, 60]], 8, 2)])).toEqual({ asphalt: expect.closeTo(0.04), sidewalk: expect.closeTo(0.02) });
+    expect(ys([road('b', 'pedestrian', [[10, 60], [30, 60]], 6, 0)]).sidewalk).toBeCloseTo(0.06);
+    expect(ys([road('c', 'footway', [[10, 60], [30, 60]], 2, 0)]).sidewalk).toBeCloseTo(0.06);
+  });
+
+  test('calles se recortan al suelo: nada fuera de bounds + margen (+ extremo)', () => {
+    const m = baseMap({ roads: [
+      road('long', 'residential', [[-1000, 100], [200, 100], [1400, 100]], 8, 2),
+      road('far', 'residential', [[-900, 900], [-800, 900]], 8, 2),
+      road('farfoot', 'footway', [[900, 10], [1000, 10]], 2, 0),
+      road('diag', 'service', [[-600, -600], [200, 100]], 4, 0),
+    ] });
+    const gs = buildChunks(m, fake());
+    const [lo, hi] = [-150, 550], [zlo, zhi] = [-150, 350]; // bounds ± 150
+    for (const mesh of meshes(gs).filter((x) => x.name !== 'grass')) {
+      const p = posOf(mesh.geometry);
+      for (let i = 0; i < p.count; i++) {
+        const e = 4 + 2 + 1e-3; // semiancho + vereda (inglete) ; margen para el extremo extendido
+        expect(p.getX(i)).toBeGreaterThanOrEqual(lo - e); expect(p.getX(i)).toBeLessThanOrEqual(hi + e);
+        expect(p.getZ(i)).toBeGreaterThanOrEqual(zlo - e); expect(p.getZ(i)).toBeLessThanOrEqual(zhi + e);
+      }
+    }
+    // los chunks son exactamente los tiles del suelo: i -1..2, j -1..1
+    expect(gs).toHaveLength(12);
+    for (const gr of gs) {
+      expect(gr.userData.chunk[0]).toBeGreaterThanOrEqual(-1); expect(gr.userData.chunk[0]).toBeLessThanOrEqual(2);
+      expect(gr.userData.chunk[1]).toBeGreaterThanOrEqual(-1); expect(gr.userData.chunk[1]).toBeLessThanOrEqual(1);
+    }
+    // 'far' y 'farfoot' quedan totalmente afuera: sin mallas extra en sus chunks
+    expect(namesIn(gs, 2, 0).includes('sidewalk')).toBe(false);
+  });
+
+  test('textura continua entre tramos: v inicial del segundo tramo = metros previos / 4', () => {
+    const r = ribbon([[0, 0], [10, 0]], 8, 0, 25);
+    const uv = r.getAttribute('uv');
+    expect(uv.getY(0)).toBeCloseTo(25 - 4 / 4, 5); // extremo extendido h=4 antes del punto
+    expect(uv.getY(2)).toBeCloseTo(25 + (10 + 4) / 4, 5); // extremo final extendido h
   });
 
   test('geometría fusionada sin NaN', () => {
