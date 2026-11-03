@@ -47,19 +47,37 @@ function segSegDist(a: Vec2, b: Vec2, c: Vec2, d: Vec2): number {
   return Math.min(distPointSegment(a, c, d), distPointSegment(b, c, d), distPointSegment(c, a, b), distPointSegment(d, a, b));
 }
 
-const REACH_STEP = 0.1;
+/**
+ * Primer t en [0, alcance] tal que el punto mid + n·t queda a ≤ `h` del segmento a–b, o null. La distancia de un punto
+ * que avanza en línea recta a un segmento es convexa en t: se busca el mínimo (ternaria) y, si alcanza, el primer
+ * cruce con h por bisección en el tramo decreciente. Determinista.
+ */
+function firstReach(mid: Vec2, n: Vec2, a: Vec2, b: Vec2, h: number): number | null {
+  const f = (t: number): number => distPointSegment([mid[0] + n[0] * t, mid[1] + n[1] * t], a, b);
+  if (f(0) <= h) return 0;
+  let lo = 0, hi = ROAD_REACH_M;
+  for (let k = 0; k < 60; k++) {
+    const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+    if (f(m1) < f(m2)) hi = m2; else lo = m1;
+  }
+  const tMin = (lo + hi) / 2;
+  if (f(tMin) > h + 1e-9) return null;
+  lo = 0; hi = tMin;
+  for (let k = 0; k < 60; k++) {
+    const m = (lo + hi) / 2;
+    if (f(m) <= h) hi = m; else lo = m;
+  }
+  return hi;
+}
 
 /** Distancia t (0..alcance) a lo largo del rayo mid + n·t en la que toca por primera vez una calzada (vía no peatonal), o null. */
 function roadHitDistance(mid: Vec2, n: Vec2, roads: Road[]): number | null {
-  const end: Vec2 = [mid[0] + n[0] * ROAD_REACH_M, mid[1] + n[1] * ROAD_REACH_M];
   let best: number | null = null;
   for (const r of roads) {
     if (r.kind === 'footway') continue;
     for (let i = 0; i + 1 < r.points.length; i++) {
-      if (segSegDist(mid, end, r.points[i], r.points[i + 1]) > r.width / 2) continue;
-      for (let t = 0; t <= ROAD_REACH_M + 1e-9 && (best === null || t < best); t += REACH_STEP) {
-        if (distPointSegment([mid[0] + n[0] * t, mid[1] + n[1] * t], r.points[i], r.points[i + 1]) <= r.width / 2) { best = t; break; }
-      }
+      const t = firstReach(mid, n, r.points[i], r.points[i + 1], r.width / 2);
+      if (t !== null && (best === null || t < best)) best = t;
     }
   }
   return best;

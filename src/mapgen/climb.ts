@@ -157,11 +157,11 @@ function isFree(ctx: Ctx, e: Edge, aid: Aid): boolean {
   return free;
 }
 
-/** La ayuda (base y caja) queda a ≥ 1 m del borde del área jugable. */
 function aidOf(ctx: Ctx, e: Edge): Aid {
   return (e.aid ??= makeAid(ctx.ix.buildings[e.bi], e));
 }
 
+/** La ayuda (base y caja) queda a ≥ 1 m del borde del área jugable. */
 function inArea(ctx: Ctx, e: Edge): boolean {
   if (e.inside !== undefined) return e.inside;
   const r = ctx.rect;
