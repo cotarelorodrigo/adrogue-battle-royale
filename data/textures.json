@@ -1,0 +1,62 @@
+[
+  {
+    "slot": "revoque",
+    "assetId": "white_stucco",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/white_stucco"
+  },
+  {
+    "slot": "ladrillo",
+    "assetId": "brick_wall_001",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/brick_wall_001"
+  },
+  {
+    "slot": "asfalto",
+    "assetId": "asphalt_02",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/asphalt_02"
+  },
+  {
+    "slot": "hormigon",
+    "assetId": "concrete_floor_worn_001",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/concrete_floor_worn_001"
+  },
+  {
+    "slot": "pasto",
+    "assetId": "leafy_grass",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/leafy_grass"
+  },
+  {
+    "slot": "sendero",
+    "assetId": "gravel_floor",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/gravel_floor"
+  },
+  {
+    "slot": "techo",
+    "assetId": "concrete_floor_01",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/concrete_floor_01"
+  },
+  {
+    "slot": "metal",
+    "assetId": "painted_metal_shutter",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/painted_metal_shutter"
+  },
+  {
+    "slot": "madera",
+    "assetId": "wood_shutter",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/wood_shutter"
+  },
+  {
+    "slot": "corteza",
+    "assetId": "bark_platanus",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/bark_platanus"
+  }
+]

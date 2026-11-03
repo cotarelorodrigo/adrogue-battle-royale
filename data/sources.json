@@ -12,5 +12,12 @@
     "author": "Microsoft",
     "license": "ODbL 1.0",
     "url": "https://github.com/microsoft/GlobalMLBuildingFootprints"
+  },
+  {
+    "id": "polyhaven",
+    "title": "Poly Haven (texturas)",
+    "author": "Poly Haven y sus autores",
+    "license": "CC0",
+    "url": "https://polyhaven.com"
   }
 ]
