@@ -99,6 +99,31 @@ describe('frontGeometry', () => {
     expect(doorAt(lot('a', 9, front({ edges: [3], contra: true }), { footprint: cw }))).toBe(0);
   });
 
+  test('u crece a lo largo de la planta antihoraria, también con la corrida al revés (contra)', () => {
+    // sin contra: la corrida va con fp; la puerta está en x = 0..3 y el extremo fp-anterior (x = 0) lleva u0
+    const r = cellRect('vidriera-puerta');
+    const doorQ = (bd: Building) => row(walls(gfront(bd)), 0, FLOOR_H).find((q) => inCell(q, 'vidriera-puerta'))!;
+    const uAtX = (q: Q, x: number) => q.uv[q.pos.findIndex((v) => Math.abs(v.x - x) < 1e-6)].x;
+    const a = doorQ(lot('a', 9, front()));
+    expect(uAtX(a, 0)).toBeCloseTo(r.u0);
+    expect(uAtX(a, 3)).toBeCloseTo(r.u1);
+    // contra: la corrida va contra fp; la puerta está en x = 6..9 y el extremo fp-anterior (x = 6) sigue llevando u0
+    const c = doorQ(lot('a', 9, front({ contra: true })));
+    expect(uAtX(c, 6)).toBeCloseTo(r.u0);
+    expect(uAtX(c, 9)).toBeCloseTo(r.u1);
+  });
+
+  test('corrida de varias aristas con contra: la puerta sigue en el extremo desde y u continuo en la unión', () => {
+    const bd = lot('m', 9, front({ edges: [1, 0], contra: true })  /* desde = x alto: la lista va desde → hasta */, { footprint: [[0, 0], [4.4, 0], [9, 0.05], [9, -12], [0, -12]] });
+    const g = walls(gfront(bd)).filter((q) => q.ymin < 1e-6).sort((x, y) => x.xmin - y.xmin);
+    const doors = g.filter((q) => inCell(q, 'vidriera-puerta'));
+    expect(doors.length).toBeGreaterThan(0);
+    expect(doors.every((q) => q.xmin > 5.9)).toBe(true); // desde = x alto
+    const [p1, p2] = g.filter((q) => q.xmin > 2.9 && q.xmin < 4.5);
+    const span = (q: Q) => [Math.min(...q.uv.map((t) => t.x)), Math.max(...q.uv.map((t) => t.x))];
+    expect(span(p1)[1]).toBeCloseTo(span(p2)[0]);
+  });
+
   test('lotes vecinos con colores distintos dan colores distintos (anti-objetivo del spec)', () => {
     const a = quads(gfront(lot('a', 9, front(), { tint: '#d9d2c3' })));
     const b = quads(gfront(lot('b', 9, front(), { tint: '#7a9e6b' })));
@@ -167,6 +192,19 @@ describe('extrudeBuilding con front', () => {
       }
     }
     expect(e.walls.front.getAttribute('position').count).toBeGreaterThan(0);
+  });
+
+  test('las aristas de la esquina tampoco van en ground ni en upper', () => {
+    const bd = lot('e', 9, front({ corner: [1] }), { footprint: [[0, 0], [9, 0], [9, -6], [0, -6]] });
+    const e = extrudeBuilding(bd);
+    for (const g of [e.walls.ground, e.walls.upper]) {
+      const p = g.getAttribute('position');
+      expect(p.count).toBeGreaterThan(0);
+      for (let i = 0; i < p.count; i += 4) {
+        const xs = [0, 1, 2, 3].map((k) => p.getX(i + k));
+        expect(xs.every((x) => Math.abs(x - 9) < 1e-6)).toBe(false);
+      }
+    }
   });
 
   test('un edificio sin front da walls.front vacía', () => {

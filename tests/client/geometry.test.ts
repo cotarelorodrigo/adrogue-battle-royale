@@ -132,7 +132,9 @@ describe('lotes en buildChunks', () => {
     const groups = buildChunks(baseMap({ buildings: lots }), fake());
     const names = namesIn(groups, 0, 0);
     expect(names.filter((n) => n === 'front')).toHaveLength(1);
-    expect(names).toContain('parapet');
+    // el pretil de cada lote más sus medianeras y fondo (ground + upper): los muros laterales llegan a parapet
+    const expected = lots.reduce((n, l) => { const e = extrudeBuilding(l); return n + [e.parapet, e.walls.ground, e.walls.upper].reduce((m, g) => m + posOf(g).count, 0); }, 0);
+    expect(posOf(meshes(groups).find((m) => m.name === 'parapet')!.geometry).count).toBe(expected);
     expect(names).not.toContain('wallGroundShop');
     expect(names).not.toContain('wallUpper');
     const front = meshes(groups).find((m) => m.name === 'front')!;

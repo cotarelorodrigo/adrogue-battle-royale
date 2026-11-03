@@ -141,9 +141,16 @@ test('frontEdgesOf: encuentra la arista del frente con 4 mm de error y no las de
 
 test('frontIsContra: la arista guardada va con o contra el sentido desde → hasta', () => {
   const fp: Vec2[] = [[0, 0], [10, 0], [10, 15], [0, 15]]; // arista 0: (0,0) → (10,0)
-  expect(frontIsContra(fp, 0, [[0, 0], [10, 0]])).toBe(false);
-  expect(frontIsContra(fp, 0, [[10, 0], [0, 0]])).toBe(true);
-  expect(frontIsContra(fp, undefined, [[0, 0], [10, 0]])).toBe(false);
+  expect(frontIsContra(fp, [0], [[0, 0], [10, 0]])).toBe(false);
+  expect(frontIsContra(fp, [0], [[10, 0], [0, 0]])).toBe(true);
+  expect(frontIsContra(fp, [], [[0, 0], [10, 0]])).toBe(false);
+});
+
+test('frontIsContra: en una curva decide la suma de todas las aristas del frente', () => {
+  const fp: Vec2[] = [[0, 0], [10, 0], [10, 10], [-5, 10]]; // aristas 0 y 1 hacen una esquina
+  const bend: Vec2[] = [[0, 0], [10, 0], [10, 10]];
+  expect(frontIsContra(fp, [0, 1], bend)).toBe(false);
+  expect(frontIsContra(fp, [0, 1], [...bend].reverse())).toBe(true);
 });
 
 test('lotBuilding: kind, wall y front', () => {

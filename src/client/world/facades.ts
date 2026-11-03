@@ -1,4 +1,4 @@
-import { BAY_W, FLOOR_H } from './geometry.ts';
+import { BAY_W, FLOOR_H } from './wall-kit.ts';
 
 export type FacadeStyle = 'house' | 'shop' | 'upper';
 

@@ -10,7 +10,7 @@ import type { Builder } from './wall-kit.ts';
 export const AWNING = { topY: 2.3, bottomY: 2.0, depth: 1.0, inset: 0.2 } as const;
 
 /** Un pedazo de arista de `fp`, recorrido de `a` a `b` en el sentido de la corrida; `n` es la normal hacia afuera. */
-interface Piece { a: Vec2; b: Vec2; len: number; n: Vec2; s0: number }
+interface Piece { a: Vec2; b: Vec2; len: number; n: Vec2; s0: number; rev: boolean }
 interface Run { pieces: Piece[]; length: number }
 
 function makeRun(fp: Vec2[], edges: { i: number; rev: boolean }[]): Run {
@@ -21,15 +21,24 @@ function makeRun(fp: Vec2[], edges: { i: number; rev: boolean }[]): Run {
     const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
     if (len < 1e-6) continue;
     // la normal sale del sentido de fp (antihorario): el de la corrida puede ser el inverso
-    pieces.push({ a: rev ? q : p, b: rev ? p : q, len, n: [-(q[1] - p[1]) / len, (q[0] - p[0]) / len], s0: s });
+    pieces.push({ a: rev ? q : p, b: rev ? p : q, len, n: [-(q[1] - p[1]) / len, (q[0] - p[0]) / len], s0: s, rev });
     s += len;
   }
   return { pieces, length: s };
 }
 
+/** Cantidad de bahías de una corrida de `len` m. */
+const bays = (len: number): number => Math.max(1, Math.round(len / BAY_W));
+
+/** u dentro de la celda `r` para la posición `s` de la bahía `bay`: crece a lo largo de fp (se lee de izquierda a derecha). */
+function uAt(r: { u0: number; u1: number }, p: Piece, s: number, bay: number, bw: number): number {
+  const t = (s - bay * bw) / bw;
+  return p.rev ? r.u1 - t * (r.u1 - r.u0) : r.u0 + t * (r.u1 - r.u0);
+}
+
 /** Recorre la corrida bahía por bahía (de ancho L/n) y la parte en los pedazos de arista que cruza, entre `lo` y `hi`. */
 function eachSpan(run: Run, lo: number, hi: number, cb: (p: Piece, sa: number, sb: number, bay: number, bw: number) => void): number {
-  const n = Math.max(1, Math.round(run.length / BAY_W));
+  const n = bays(run.length);
   const bw = run.length / n;
   for (let k = 0; k < n; k++) {
     for (const p of run.pieces) {
@@ -91,21 +100,21 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
   const height = bd.height;
   const bandY = floors * FLOOR_H;
   const rows: { y0: number; y1: number; groundRow: boolean }[] = [{ y0: 0, y1: Math.min(FLOOR_H, height), groundRow: true }];
-  for (let r = 1; r < floors; r++) rows.push({ y0: r * FLOOR_H, y1: Math.min((r + 1) * FLOOR_H, height), groundRow: false });
+  for (let r = 1; r < floors && r * FLOOR_H < height - 1e-6; r++) rows.push({ y0: r * FLOOR_H, y1: Math.min((r + 1) * FLOOR_H, height), groundRow: false });
   const band = height - bandY > 1e-6 ? { y0: bandY, y1: height, groundRow: false } : null;
 
   const wall = (run: Run, isMain: boolean): void => {
     const doorBay = !isMain ? -1
       : f.puerta === 'inicio' ? 0
-        : f.puerta === 'fin' ? Math.max(1, Math.round(run.length / BAY_W)) - 1
-          : Math.floor((Math.max(1, Math.round(run.length / BAY_W)) - 1) / 2);
+        : f.puerta === 'fin' ? bays(run.length) - 1
+          : Math.floor((bays(run.length) - 1) / 2);
     for (const row of [...rows, ...(band ? [band] : [])]) {
       const isBand = row === band;
       eachSpan(run, 0, run.length, (p, sa, sb, bay, bw) => {
         const cell: FrontCell = row.groundRow ? (bay === doorBay ? door : rest) : isBand ? bandCell : upper;
         const r = cellRect(cell);
         const vTop = r.v0 + ((r.v1 - r.v0) * (row.y1 - row.y0)) / FLOOR_H; // alturas parciales (banda, edificio bajo): se recorta
-        const ua = r.u0 + ((sa - bay * bw) / bw) * (r.u1 - r.u0), ub = r.u0 + ((sb - bay * bw) / bw) * (r.u1 - r.u0);
+        const ua = uAt(r, p, sa, bay, bw), ub = uAt(r, p, sb, bay, bw);
         const [pa, pb] = [at(p, sa), at(p, sb)];
         face(b, [[pa[0], row.y0, pa[1]], [pb[0], row.y0, pb[1]], [pb[0], row.y1, pb[1]], [pa[0], row.y1, pa[1]]],
           [[ua, r.v0], [ub, r.v0], [ub, vTop], [ua, vTop]], [p.n[0], 0, p.n[1]], row.groundRow ? groundColor : tint);
@@ -122,7 +131,7 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
     const h = topY - bottomY;
     const norm = Math.hypot(h, depth);
     eachSpan(mainRun, inset, mainRun.length - inset, (p, sa, sb, bay, bw) => {
-      const ua = r.u0 + ((sa - bay * bw) / bw) * (r.u1 - r.u0), ub = r.u0 + ((sb - bay * bw) / bw) * (r.u1 - r.u0);
+      const ua = uAt(r, p, sa, bay, bw), ub = uAt(r, p, sb, bay, bw);
       const [pa, pb] = [at(p, sa), at(p, sb)];
       const vs: [number, number, number][] = [
         [pa[0], topY, pa[1]], [pb[0], topY, pb[1]],

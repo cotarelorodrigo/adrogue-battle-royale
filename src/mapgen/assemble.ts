@@ -59,7 +59,7 @@ export function assembleMap(
       // las aristas del frente se buscan sobre la planta ya redondeada
       const line = lot.front.map((p) => v2(p));
       const edges = frontEdgesOf(footprint, line);
-      const contra = frontIsContra(footprint, edges[0], line);
+      const contra = frontIsContra(footprint, edges, line);
       if (edges.length === 0) warnings.push(`${b.id}: el frente no coincide con ninguna arista`);
       const corner = [...new Set(lot.cornerRings.flatMap((c) => { const r = ring(c); return frontEdgesOf(footprint, [...r, r[0]]); }))]
         .filter((e) => !edges.includes(e));

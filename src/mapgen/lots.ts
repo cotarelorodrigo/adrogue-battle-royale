@@ -238,12 +238,13 @@ function alongLine(p: Vec2, line: Vec2[], cum: number[]): number {
   return best[1];
 }
 
-/** true si la arista `edge` de `footprint`, en el sentido guardado (footprint[e] → footprint[e+1]), va de `hasta` a `desde`. */
-export function frontIsContra(footprint: Vec2[], edge: number | undefined, line: Vec2[]): boolean {
-  if (edge === undefined) return false;
+/** true si las aristas `edges` de `footprint`, en el sentido guardado (footprint[e] → footprint[e+1]), van de `hasta` a `desde`.
+ *  Decide la suma de lo que avanza cada arista sobre `line` (pesa por largo y aguanta una curva). */
+export function frontIsContra(footprint: Vec2[], edges: number[], line: Vec2[]): boolean {
   const cum = cumulative(line);
-  const a = footprint[edge], b = footprint[(edge + 1) % footprint.length];
-  return alongLine(b, line, cum) < alongLine(a, line, cum);
+  let sum = 0;
+  for (const e of edges) sum += alongLine(footprint[(e + 1) % footprint.length], line, cum) - alongLine(footprint[e], line, cum);
+  return sum < 0;
 }
 
 export function frontEdgesOf(footprint: Vec2[], line: Vec2[], tol = 0.15): number[] {
