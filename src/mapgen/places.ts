@@ -47,15 +47,22 @@ function segSegDist(a: Vec2, b: Vec2, c: Vec2, d: Vec2): number {
   return Math.min(distPointSegment(a, c, d), distPointSegment(b, c, d), distPointSegment(c, a, b), distPointSegment(d, a, b));
 }
 
-function facesRoad(mid: Vec2, n: Vec2, roads: Road[]): boolean {
+const REACH_STEP = 0.1;
+
+/** Distancia t (0..alcance) a lo largo del rayo mid + n·t en la que toca por primera vez una calzada (vía no peatonal), o null. */
+function roadHitDistance(mid: Vec2, n: Vec2, roads: Road[]): number | null {
   const end: Vec2 = [mid[0] + n[0] * ROAD_REACH_M, mid[1] + n[1] * ROAD_REACH_M];
+  let best: number | null = null;
   for (const r of roads) {
     if (r.kind === 'footway') continue;
     for (let i = 0; i + 1 < r.points.length; i++) {
-      if (segSegDist(mid, end, r.points[i], r.points[i + 1]) <= r.width / 2) return true;
+      if (segSegDist(mid, end, r.points[i], r.points[i + 1]) > r.width / 2) continue;
+      for (let t = 0; t <= ROAD_REACH_M + 1e-9 && (best === null || t < best); t += REACH_STEP) {
+        if (distPointSegment([mid[0] + n[0] * t, mid[1] + n[1] * t], r.points[i], r.points[i + 1]) <= r.width / 2) { best = t; break; }
+      }
     }
   }
-  return false;
+  return best;
 }
 
 /** ¿El segmento p→q cruza alguna arista del contorno `fp` (salvo la `skip`)? */
@@ -98,10 +105,11 @@ function edgesOf(b: Building, p: Vec2, roads: Road[], bl: Blockers): Edge[] {
     const mid: Vec2 = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
     const n = outwardNormal(a, c);
     const start: Vec2 = [mid[0] + n[0] * 1e-3, mid[1] + n[1] * 1e-3];
-    const end: Vec2 = [mid[0] + n[0] * ROAD_REACH_M, mid[1] + n[1] * ROAD_REACH_M];
-    // califica: cabe el cartel con 1 m de aire, el rayo llega a una calle y no cruza ningún edificio (ni el propio: patios, U, L)
-    const qualifies = len >= signWidth(len) + 1 && facesRoad(mid, n, roads)
-      && !crossesFootprint(start, end, fp, i) && !blockedByOther(start, end, b, bl);
+    // califica: cabe el cartel con 1 m de aire, el rayo llega a una calle y, hasta la calle, no cruza ningún edificio
+    // (ni el propio: patios, U, L). Más allá de la calle no importa: en una calle angosta ya están los de enfrente.
+    const tRoad = len >= signWidth(len) + 1 ? roadHitDistance(mid, n, roads) : null;
+    const end: Vec2 = [mid[0] + n[0] * (tRoad ?? 0), mid[1] + n[1] * (tRoad ?? 0)];
+    const qualifies = tRoad !== null && !crossesFootprint(start, end, fp, i) && !blockedByOther(start, end, b, bl);
     out.push({ i, a, b: c, len, mid, n, qualifies, dist: distPointSegment(p, a, c) });
   }
   return out.sort((x, y) => Number(y.qualifies) - Number(x.qualifies) || x.dist - y.dist);

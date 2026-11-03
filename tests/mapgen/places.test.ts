@@ -128,3 +128,14 @@ test('una arista con otro edificio entre ella y la calle no califica', () => {
   expect(res.places[0].buildingId).toBe('ba');
   expect(sign.normal[1]).toBeCloseTo(1); // sur (z = −8), no norte
 });
+
+test('calle angosta: un edificio del otro lado, dentro del alcance, no descalifica la arista que da a la calle', () => {
+  const a = mk('ba', rect(0, 30, -20, -8)); // cara norte en z = −20
+  const road = hRoad('rn', -24); // calzada de z −27 a −21
+  const across = mk('bb', rect(0, 30, -34, -28)); // a 4 m del eje, a 8 m de la arista, dentro de 15 m
+  const res = matchPlaces([inp('x', 'bar', [15, -19])], [a, across], [], [road, hRoad('rs', 20)]);
+  const sign = res.places[0].sign!;
+  expect(res.places[0].buildingId).toBe('ba');
+  expect(sign.normal[1]).toBeCloseTo(-1); // norte, hacia la calle angosta
+  expect(sign.anchor[1]).toBeLessThan(-19.9);
+});
