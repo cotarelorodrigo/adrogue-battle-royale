@@ -1,5 +1,5 @@
 import { heightFor } from '../../src/mapgen/buildings.ts';
-import { MANTLE_REACH, placeClimbAids, roofClusters } from '../../src/mapgen/climb.ts';
+import { MANTLE_REACH, placeClimbAids, placeClimbAidsWithStats, roofClusters } from '../../src/mapgen/climb.ts';
 import { areaRect, distPointSegment, ensureCCW, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, Prop, Road } from '../../src/shared/mapdata.ts';
@@ -117,4 +117,15 @@ test('una escalera no se ubica a menos de 1 m del borde del área jugable', () =
   expect(base[0]).toBeGreaterThanOrEqual(r.minX + 1);
   expect(base[1]).toBeGreaterThanOrEqual(r.minZ + 1);
   expect(base[1]).toBeLessThanOrEqual(r.maxZ - 1);
+});
+
+test('cluster cuyas ayudas caerían todas fuera del área: noAidOutside, no noAid', () => {
+  const r = areaRect();
+  // entra 0,5 m al área: la única arista adentro deja la ayuda a menos de 1 m del borde
+  const edge = box('e', r.maxX - 0.5, 0, r.maxX + 10, 10, 2);
+  const inside = box('i', 0, 0, 10, 10, 2);
+  const { props, stats } = placeClimbAidsWithStats([inside, edge], roads);
+  expect(stats.noAidOutside).toBe(1);
+  expect(stats.noAid).toBe(0);
+  expect(props).toHaveLength(1);
 });

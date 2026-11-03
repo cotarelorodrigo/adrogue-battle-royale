@@ -1,6 +1,6 @@
 import { distPointSegment, hash01, pointInPolygon, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
-import type { Bounds, Building, Park, Road, Tree } from '../shared/mapdata.ts';
+import type { Bounds, Building, Park, Prop, Road, Tree } from '../shared/mapdata.ts';
 import { bboxOf, createGrid, distToRing } from './spatial.ts';
 
 const SPACING = 9;
@@ -130,4 +130,19 @@ export function placeTrees(roads: Road[], buildings: Building[], parks: Park[], 
     for (const p of accepted) trees.push(makeTree(p));
   }
   return trees;
+}
+
+/** Saca los árboles que pisan fuentes, monumentos, bancos, volquetes, escaleras o andenes (placeTrees no ve los props). */
+export function filterTrees(trees: Tree[], props: Prop[], platforms: Vec2[][]): Tree[] {
+  const circles: { p: Vec2; r: number }[] = [];
+  for (const pr of props) {
+    if (pr.kind === 'fountain') circles.push({ p: pr.position, r: pr.radius + 2 });
+    else if (pr.kind === 'monument') circles.push({ p: pr.position, r: 4.5 });
+    else if (pr.kind === 'dumpster' || pr.kind === 'bench') circles.push({ p: pr.position, r: 1.5 });
+    else circles.push({ p: pr.base, r: 1.5 });
+  }
+  return trees.filter((t) => {
+    if (circles.some((c) => Math.hypot(t.position[0] - c.p[0], t.position[1] - c.p[1]) < c.r)) return false;
+    return !platforms.some((pl) => pointInPolygon(t.position, pl) || distToRing(t.position, pl) < 0.5);
+  });
 }

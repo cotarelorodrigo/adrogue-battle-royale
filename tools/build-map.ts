@@ -6,7 +6,7 @@ import { loadPlaces } from '../src/mapgen/places-input.ts';
 const OUT = 'public/map/adrogue.map.json';
 const MAX_KB = 3 * 1024;
 
-const { map, warnings, stats } = assembleMap({
+const { map, warnings, stats, pockets } = assembleMap({
   osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')),
   buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
   places: loadPlaces(),
@@ -21,12 +21,14 @@ const count = (xs: { kind: string }[]): string => {
   return [...m].map(([k, n]) => `${k}=${n}`).join(' ');
 };
 const kb = Math.round(Buffer.byteLength(json) / 1024);
-console.log(`edificios: ${map.buildings.length} (${count(map.buildings)})`);
+const solid = map.buildings.filter((b) => !b.fill);
+console.log(`edificios: ${solid.length} (${count(solid)}) + ${map.buildings.length - solid.length} rellenos de huecos`);
 console.log(`outskirts: ${map.outskirts.length}`);
 console.log(`calles: ${map.roads.length}, parques: ${map.parks.length}, lugares: ${map.places.length}`);
 console.log(`props: ${map.props.length} (${count(map.props)})`);
 console.log(`arboles: ${map.trees.length}, randomSpawns: ${map.randomSpawns.length}`);
-console.log(`ayudas de ascenso: clusters=${stats.clusters} dumpsters=${stats.dumpsters} ladders=${stats.ladders} tier0=${stats.tier0} tier1=${stats.tier1} fallback=${stats.fallback} sinAyuda=${stats.noAid}`);
+console.log(`ayudas de ascenso: clusters=${stats.clusters} dumpsters=${stats.dumpsters} ladders=${stats.ladders} tier0=${stats.tier0} tier1=${stats.tier1} fallback=${stats.fallback} sinAyuda=${stats.noAid} sinAyudaAfuera=${stats.noAidOutside}`);
+console.log(`huecos de suelo: encontrados=${pockets.pockets} escaleras=${pockets.ladders} rellenos=${pockets.filled}`);
 console.log(`warnings: ${warnings.length}`);
 for (const w of warnings) console.log(`  - ${w}`);
 console.log(`${OUT}: ${kb} KB`);

@@ -74,6 +74,30 @@ function bboxOf(p: Vec2[]): [number, number, number, number] {
   return [x0, z0, x1, z1];
 }
 
+/** ¿El polígono tiene área adentro del rectángulo abierto? (Tocar el borde no cuenta.) */
+export function intersectsRect(fp: Vec2[], r: { minX: number; maxX: number; minZ: number; maxZ: number }): boolean {
+  const inside = ([x, z]: Vec2): boolean => x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ;
+  if (fp.some(inside)) return true;
+  const corners: Vec2[] = [[r.minX, r.minZ], [r.maxX, r.minZ], [r.maxX, r.maxZ], [r.minX, r.maxZ]];
+  if (corners.some((c) => pointInPolygon(c, fp))) return true;
+  // una arista que atraviesa el rectángulo: el punto medio del tramo recortado (Liang–Barsky) queda adentro
+  for (let i = 0; i < fp.length; i++) {
+    const a = fp[i], b = fp[(i + 1) % fp.length];
+    const dx = b[0] - a[0], dz = b[1] - a[1];
+    let t0 = 0, t1 = 1;
+    const clip = (p: number, q: number): boolean => {
+      if (p === 0) return q >= 0;
+      const t = q / p;
+      if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+      return true;
+    };
+    if (!clip(-dx, a[0] - r.minX) || !clip(dx, r.maxX - a[0]) || !clip(-dz, a[1] - r.minZ) || !clip(dz, r.maxZ - a[1])) continue;
+    const t = (t0 + t1) / 2;
+    if (t1 > t0 && inside([a[0] + dx * t, a[1] + dz * t])) return true;
+  }
+  return false;
+}
+
 const NO_CLIP_KINDS: readonly string[] = ['footway', 'pedestrian', 'service'];
 const JOINT_SIDES = 12;
 
@@ -229,17 +253,22 @@ export function buildBuildings(
   const keptSet = new Set(kept);
   cands = cands.filter((c) => keptSet.has(c)); // conserva el orden de entrada
 
-  // 5. fuera del área estricta → outskirts
+  // 5. outskirts = footprints enteramente fuera del área estricta; el que entra aunque sea un poco es un edificio
   const inside: Cand[] = [];
+  const crossing: Cand[] = [];
   const outskirts: OutskirtBuilding[] = [];
   for (const c of cands) {
     const [x, z] = c.c;
     if (x >= rect.minX && x <= rect.maxX && z >= rect.minZ && z <= rect.maxZ) inside.push(c);
+    else if (intersectsRect(c.footprint, rect)) crossing.push(c);
     else outskirts.push({ footprint: c.footprint, height: heightFor(hash01(`o${x.toFixed(1)},${z.toFixed(1)}`) < 0.5 ? 1 : 2) });
   }
 
-  // 6. ids por z (redondeado) y x
-  inside.sort((a, b) => Math.round(a.c[1]) - Math.round(b.c[1]) || a.c[0] - b.c[0]);
+  // 6. ids por z (redondeado) y x; los que cruzan el borde con el centroide afuera van al final (mismo orden) para no
+  //    renumerar a los de adentro: el id siembra pisos, tipo, pared y tinte.
+  const byZX = (a: Cand, b: Cand): number => Math.round(a.c[1]) - Math.round(b.c[1]) || a.c[0] - b.c[0];
+  inside.sort(byZX);
+  inside.push(...crossing.sort(byZX));
 
   // 7-8. clasificación
   const corridor: [Vec2, Vec2][] = [];

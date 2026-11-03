@@ -144,7 +144,8 @@ export function extrudeBuilding(bd: Building): {
       upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, color) : toGeometry(newBuilder(true)),
     },
     roof: toGeometry(rb),
-    parapet: parapetRing(fp, cum, bd.height, color),
+    // un relleno de hueco (mapgen/pockets.ts) es un parche de techo entre vecinos: sin pretil propio
+    parapet: bd.fill ? toGeometry(newBuilder(true)) : parapetRing(fp, cum, bd.height, color),
   };
 }
 

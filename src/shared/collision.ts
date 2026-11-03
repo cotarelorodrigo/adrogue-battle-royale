@@ -580,7 +580,8 @@ function orientedBox([cx, cz]: Vec2, rotation: number, length: number, depth: nu
   return [[cx - ux + vx, cz - uz + vz], [cx + ux + vx, cz + uz + vz], [cx + ux - vx, cz + uz - vz], [cx - ux - vx, cz - uz - vz]];
 }
 
-export function buildCollisionWorld(map: MapData): CollisionWorld {
+/** Los sólidos (con tag: el id del edificio, o el tipo de prop) y las escaleras del mapa. */
+export function collisionPrisms(map: Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props'>): { prisms: Prism[]; ladders: LadderVolume[] } {
   const prisms: Prism[] = [];
   const ladders: LadderVolume[] = [];
   for (const b of map.buildings) prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
@@ -607,5 +608,10 @@ export function buildCollisionWorld(map: MapData): CollisionWorld {
       }
     }
   }
+  return { prisms, ladders };
+}
+
+export function buildCollisionWorld(map: Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props' | 'bounds'>): CollisionWorld {
+  const { prisms, ladders } = collisionPrisms(map);
   return new CollisionWorld(prisms, ladders, map.bounds);
 }

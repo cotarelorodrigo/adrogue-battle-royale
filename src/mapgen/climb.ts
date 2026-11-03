@@ -189,7 +189,9 @@ function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edg
   return null;
 }
 
-export interface AidStats { clusters: number; dumpsters: number; ladders: number; tier0: number; tier1: number; fallback: number; noAid: number }
+/** `noAid`: clusters con alguna arista candidata adentro del área que igual quedaron sin acceso (rompe el build).
+ *  `noAidOutside`: clusters cuyas aristas candidatas caen todas fuera del área (edificios del borde): no se puede. */
+export interface AidStats { clusters: number; dumpsters: number; ladders: number; tier0: number; tier1: number; fallback: number; noAid: number; noAidOutside: number }
 
 /** Como `placeClimbAids`, pero devuelve además cuántos clusters cayeron en cada nivel de preferencia. */
 export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): { props: Prop[]; stats: AidStats } {
@@ -199,7 +201,7 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
   const ctx: Ctx = { ix, roadBoxes, roadGrid: createGrid(roadBoxes), vehicular, edges: new Map(), rect: areaRect() };
   const idx = new Map(buildings.map((b, i) => [b.id, i]));
   const props: Prop[] = [];
-  const stats: AidStats = { clusters: 0, dumpsters: 0, ladders: 0, tier0: 0, tier1: 0, fallback: 0, noAid: 0 };
+  const stats: AidStats = { clusters: 0, dumpsters: 0, ladders: 0, tier0: 0, tier1: 0, fallback: 0, noAid: 0, noAidOutside: 0 };
 
   for (const cluster of clustersOf(ix)) {
     stats.clusters++;
@@ -234,8 +236,10 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
         if (other) {
           push(other.edge);
           stats[other.tier === 0 ? 'tier0' : 'tier1']++;
+        } else if (members.some((i) => edgesOf(ctx, i).some((e) => inArea(ctx, e)))) {
+          stats.noAid++;
         } else {
-          stats.noAid++; // todas las aristas candidatas quedan fuera del área jugable
+          stats.noAidOutside++; // todas las aristas candidatas quedan fuera del área jugable
         }
       }
     }

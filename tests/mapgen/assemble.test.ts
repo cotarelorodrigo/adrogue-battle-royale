@@ -1,9 +1,14 @@
 import { readFileSync } from 'node:fs';
-import { assembleMap, filterTrees } from '../../src/mapgen/assemble.ts';
+import polygonClipping from 'polygon-clipping';
+import { assembleMap } from '../../src/mapgen/assemble.ts';
+import { filterTrees } from '../../src/mapgen/trees.ts';
 import { SPAWN_RELAXED, findFreeSpot, isFatalWarning, randomSpawns, seesSign } from '../../src/mapgen/spawns.ts';
 import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { parkFractionOf } from '../../src/mapgen/buildings.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
+import { analyzeGround, solidOutlines } from '../../src/mapgen/pockets.ts';
+import { polygonDist } from '../../src/mapgen/spatial.ts';
+import { climbOut, regionAt } from './pocket-exit.ts';
 import { buildCollisionWorld } from '../../src/shared/collision.ts';
 import { distPointSegment, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
@@ -43,13 +48,15 @@ function hasAccess(clusterIds: string[], props: Prop[]): boolean {
   });
 }
 
-const { map, warnings } = assembleMap(loadRaw());
+const { map, warnings, stats } = assembleMap(loadRaw());
 const world = buildCollisionWorld(map);
 
 describe('assembleMap sobre datos reales', () => {
   test('sin warnings salvo relajaciones del punto de aparición', () => expect(warnings.filter(isFatalWarning)).toEqual([]));
   test('cantidades razonables', () => {
-    expect(map.buildings.length).toBeGreaterThan(1000); expect(map.buildings.length).toBeLessThan(1300);
+    // los que cruzan el borde del área también son edificios (≈ 56 más); los rellenos de huecos no cuentan
+    const real = map.buildings.filter((b) => !b.fill);
+    expect(real.length).toBeGreaterThan(1000); expect(real.length).toBeLessThan(1350);
     expect(map.places).toHaveLength(38); expect(map.parks.length).toBeGreaterThanOrEqual(12);
     expect(map.trees.length).toBeGreaterThan(1000);
     expect(map.randomSpawns).toHaveLength(64);
@@ -86,7 +93,30 @@ describe('assembleMap sobre datos reales', () => {
     for (const b of map.buildings) expect(frac(b.footprint), b.id).toBeLessThan(0.5);
   });
   test('ninguna calle vehicular pasa por adentro de un edificio', () => expect(roadPointsInsideBuildings(map)).toEqual([]));
-  test('todo cluster de techos tiene acceso', () => roofClusters(map.buildings).forEach((c) => expect(hasAccess(c, map.props), c[0]).toBe(true)));
+  test('todo cluster de techos tiene acceso, salvo los del borde (noAidOutside)', () => {
+    const b = map.bounds;
+    // una arista cuyo punto medio queda a más de 2,5 m adentro del borde siempre deja lugar para un contenedor o una escalera
+    const deep = ([x, z]: Vec2): boolean => x > b.minX + 2.5 && x < b.maxX - 2.5 && z > b.minZ + 2.5 && z < b.maxZ - 2.5;
+    const byId = new Map(map.buildings.map((bd) => [bd.id, bd]));
+    const without = roofClusters(map.buildings).filter((c) => !hasAccess(c, map.props));
+    for (const c of without) {
+      const mids = c.flatMap((id) => byId.get(id)!.footprint.map((p, i, fp): Vec2 => [(p[0] + fp[(i + 1) % fp.length][0]) / 2, (p[1] + fp[(i + 1) % fp.length][1]) / 2]));
+      expect(mids.some(deep), c[0]).toBe(false);
+    }
+    expect(without).toHaveLength(stats.noAidOutside);
+  });
+  test('ningún footprint de las afueras entra al área (los que la tocan son edificios)', () => {
+    const b = map.bounds;
+    const rect: [number, number][][] = [[[b.minX, b.minZ], [b.maxX, b.minZ], [b.maxX, b.maxZ], [b.minX, b.maxZ], [b.minX, b.minZ]]];
+    const ringArea = (r: [number, number][]): number => Math.abs(r.reduce((s, p, i) => (i + 1 < r.length ? s + p[0] * r[i + 1][1] - r[i + 1][0] * p[1] : s), 0)) / 2;
+    const inside = map.outskirts.map((o) => {
+      const poly: [number, number][][] = [[...o.footprint, o.footprint[0]].map(([x, z]): [number, number] => [x, z])];
+      return polygonClipping.intersection(poly, rect).reduce((s, piece) => s + ringArea(piece[0]), 0);
+    });
+    expect(inside.filter((a) => a > 1e-6)).toEqual([]);
+    // y los edificios que cruzan el borde existen (antes eran siluetas sin colisión)
+    expect(map.buildings.some((bd) => bd.footprint.some(([x, z]) => x > b.maxX || x < b.minX || z > b.maxZ || z < b.minZ))).toBe(true);
+  });
   test('Estación y Plaza Brown presentes', () => {
     expect(map.buildings.some((b) => b.kind === 'station')).toBe(true);
     expect(map.places.find((p) => p.id === 'plaza-almirante-brown')!.parkId).toBeDefined();
@@ -98,6 +128,46 @@ describe('assembleMap sobre datos reales', () => {
         expect(p[0] === q[0] && p[1] === q[1], b.id).toBe(false);
         expect(Math.round(p[0] * 100) / 100).toBe(p[0]);
       });
+    }
+  });
+});
+
+describe('huecos de suelo (flood fill sobre el mapa final)', () => {
+  const g = analyzeGround(world, solidOutlines(map));
+  const clusterOf = new Map<string, number>();
+  roofClusters(map.buildings).forEach((c, i) => c.forEach((id) => clusterOf.set(id, i)));
+  // clusters con una ayuda a la que se llega desde la componente principal del suelo
+  const fromMain = new Set<number>();
+  for (const p of map.props) {
+    if (p.kind === 'ladder') {
+      const n = Math.hypot(p.normal[0], p.normal[1]);
+      if (regionAt(g, p.base[0] + (p.normal[0] / n) * 0.45, p.base[1] + (p.normal[1] / n) * 0.45) === 0) fromMain.add(clusterOf.get(p.buildingId)!);
+    } else if (p.kind === 'dumpster') {
+      const perp: Vec2 = [Math.sin(p.rotation), Math.cos(p.rotation)];
+      if (![1, -1].some((s) => regionAt(g, p.position[0] + perp[0] * s * 0.95, p.position[1] + perp[1] * s * 0.95) === 0)) continue;
+      for (const b of map.buildings) {
+        if (b.height > 3.85 || !b.footprint.some((v, i) => distPointSegment(p.position, v, b.footprint[(i + 1) % b.footprint.length]) <= 1)) continue;
+        fromMain.add(clusterOf.get(b.id)!);
+      }
+    }
+  }
+  test('ningún hueco queda sin salida: desde cada uno se sube por una escalera a un techo accesible', () => {
+    const stuck = g.pockets.filter((p) => {
+      const l = climbOut(world, map, p);
+      return !l || !fromMain.has(clusterOf.get(l.buildingId)!);
+    }).map((p) => `${p.points[0].map((v) => v.toFixed(1)).join(', ')} (${p.area.toFixed(2)} m²)`);
+    expect(stuck).toEqual([]);
+  });
+  test('los spawns caen en la componente principal del suelo', () => {
+    for (const s of [...map.places.map((p) => p.spawn), ...map.randomSpawns]) expect(g.regionOf(s[0], s[2]), s.join(',')).toBe(0);
+  });
+  test('los rellenos tienen techo al ras (−1 cm) de un vecino y no pisan a ningún edificio', () => {
+    const fills = map.buildings.filter((b) => b.fill);
+    const real = map.buildings.filter((b) => !b.fill);
+    for (const f of fills) {
+      const touching = real.filter((b) => polygonDist(f.footprint, b.footprint) < 0.02);
+      expect(touching.length, f.id).toBeGreaterThan(0);
+      expect(Math.min(...touching.map((b) => b.height)) - f.height, f.id).toBeCloseTo(0.01, 6);
     }
   });
 });

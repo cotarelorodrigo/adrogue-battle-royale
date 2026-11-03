@@ -4,7 +4,10 @@ export type RoadKind = 'secondary'|'tertiary'|'residential'|'living_street'|'ser
 export type PlaceType = 'bank'|'bar'|'restaurant'|'fastfood'|'icecream'|'cinema'|'club'|'clinic'|'school'|'culture'|'station'|'monument'|'plaza';
 export interface Bounds { minX: number; maxX: number; minZ: number; maxZ: number }
 export interface Building { id: string; footprint: Vec2[]; height: number; floors: number;
-  kind: 'house'|'shop'|'apartments'|'station'; wall: 'plaster'|'brick'; tint: string; landmarkId?: string }
+  kind: 'house'|'shop'|'apartments'|'station'; wall: 'plaster'|'brick'; tint: string; landmarkId?: string;
+  /** Relleno de un hueco de suelo sin salida (mapgen/pockets.ts): un sólido al ras del techo vecino más bajo, no un
+   *  edificio real. Se dibuja sin pretil. */
+  fill?: true }
 export interface OutskirtBuilding { footprint: Vec2[]; height: number }
 export interface Road { id: string; kind: RoadKind; name?: string; width: number; sidewalk: number; points: Vec2[] }
 export interface Park { id: string; name?: string; polygon: Vec2[] }

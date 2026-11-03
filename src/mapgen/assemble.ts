@@ -1,7 +1,7 @@
-import { ORIGIN, areaRect, pointInPolygon } from '../shared/geo.ts';
+import { ORIGIN, areaRect } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
-import type { Building, MapData, Place, Prop, Tree } from '../shared/mapdata.ts';
+import type { Building, MapData, Place, Prop } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
 import { buildBuildings } from './buildings.ts';
 import type { GeoJSONFeatureCollection } from './buildings.ts';
@@ -9,52 +9,26 @@ import { matchPlaces } from './places.ts';
 import type { PlaceInput } from './places-input.ts';
 import { placeClimbAidsWithStats } from './climb.ts';
 import type { AidStats } from './climb.ts';
-import { placeTrees } from './trees.ts';
+import { filterTrees, placeTrees } from './trees.ts';
+import { exitPockets } from './pockets.ts';
+import type { PocketStats } from './pockets.ts';
 import { placeProps } from './props.ts';
-import { distToRing } from './spatial.ts';
+import { ring, rn, v2 } from './round.ts';
 import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts';
 
 const SPAWN_RADIUS = 16;
 const SPAWN_CLEARANCE = 2.5;
 
-const rn = (n: number, d = 2): number => { const f = 10 ** d; return Math.round(n * f) / f; };
-const v2 = (p: Vec2, d = 2): Vec2 => [rn(p[0], d), rn(p[1], d)];
-/** Redondea y quita vértices consecutivos repetidos (también el último igual al primero). */
-function ring(pts: Vec2[]): Vec2[] {
-  const out: Vec2[] = [];
-  for (const p of pts.map((q) => v2(q))) {
-    const l = out[out.length - 1];
-    if (!l || l[0] !== p[0] || l[1] !== p[1]) out.push(p);
-  }
-  while (out.length > 1 && out[0][0] === out[out.length - 1][0] && out[0][1] === out[out.length - 1][1]) out.pop();
-  return out;
-}
-
-/** Saca los árboles que pisan fuentes, monumentos, bancos, volquetes, escaleras o andenes (placeTrees no ve los props). */
-export function filterTrees(trees: Tree[], props: Prop[], platforms: Vec2[][]): Tree[] {
-  const circles: { p: Vec2; r: number }[] = [];
-  for (const pr of props) {
-    if (pr.kind === 'fountain') circles.push({ p: pr.position, r: pr.radius + 2 });
-    else if (pr.kind === 'monument') circles.push({ p: pr.position, r: 4.5 });
-    else if (pr.kind === 'dumpster' || pr.kind === 'bench') circles.push({ p: pr.position, r: 1.5 });
-    else circles.push({ p: pr.base, r: 1.5 });
-  }
-  return trees.filter((t) => {
-    if (circles.some((c) => Math.hypot(t.position[0] - c.p[0], t.position[1] - c.p[1]) < c.r)) return false;
-    return !platforms.some((pl) => pointInPolygon(t.position, pl) || distToRing(t.position, pl) < 0.5);
-  });
-}
-
 export function assembleMap(
   raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[] },
-): { map: MapData; warnings: string[]; stats: AidStats } {
+): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats } {
   const warnings: string[] = [];
   const { roads, railways, platforms, parks, fountains } = parseOsm(raw.osm);
   const built = buildBuildings(raw.buildings, roads, parks);
   const matched = matchPlaces(raw.places, built.buildings, parks, roads);
   warnings.push(...matched.warnings);
   const { props: aids, stats } = placeClimbAidsWithStats(matched.buildings, roads);
-  if (stats.noAid > 0) warnings.push(`${stats.noAid} cluster(s) de techos sin ayuda de ascenso: todas las aristas caen fuera del área`);
+  if (stats.noAid > 0) warnings.push(`${stats.noAid} cluster(s) de techos sin ayuda de ascenso aunque tienen aristas adentro del área`);
   const bounds = areaRect();
   const trees = placeTrees(roads, matched.buildings, parks, bounds);
   const props = [...aids, ...placeProps(parks, fountains, matched.places, roads)];
@@ -94,6 +68,10 @@ export function assembleMap(
     randomSpawns: [],
   };
 
+  // huecos de suelo sin salida: escalera adentro o relleno (antes de los spawns, que usan el mundo final)
+  const holes = exitPockets(map);
+  warnings.push(...holes.warnings);
+
   const world = buildCollisionWorld(map);
   map.places = matched.places.map((p0): Place => {
     const p: Omit<Place, 'spawn'> = {
@@ -121,5 +99,5 @@ export function assembleMap(
   });
   map.randomSpawns = randomSpawns(world);
   if (map.randomSpawns.length < 64) warnings.push(`randomSpawns: solo ${map.randomSpawns.length} de 64`);
-  return { map, warnings, stats };
+  return { map, warnings, stats, pockets: holes.stats };
 }

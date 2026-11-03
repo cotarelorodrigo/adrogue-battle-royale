@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { buildBuildings, COMMERCIAL_STREETS, FLOOR_H, PARAPET, heightFor } from '../../src/mapgen/buildings.ts';
 import type { GeoJSONFeatureCollection } from '../../src/mapgen/buildings.ts';
-import { project, unproject, polygonArea, signedAreaFromAbove, pointInPolygon } from '../../src/shared/geo.ts';
+import { areaRect, project, unproject, polygonArea, signedAreaFromAbove, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Park, Road } from '../../src/shared/mapdata.ts';
 
@@ -112,4 +112,32 @@ describe('footprints dentro de parques', () => {
     expect(run(rectFeature(22, -5, 42, 5))).toHaveLength(1);
   });
   test('con ≥ 50 % adentro se descarta', () => expect(run(rectFeature(20, -5, 40, 5))).toHaveLength(0));
+});
+
+describe('borde del área: afuera solo lo que no la toca', () => {
+  const r = areaRect();
+  const feature = (x0: number, z0: number, x1: number, z1: number): GeoJSONFeatureCollection['features'][number] =>
+    rectFc(x0, z0, x1, z1).features[0];
+  // a: adentro; cruza: el centroide queda afuera pero 3 m entran al área (y por z iría antes que a); pegado: toca el
+  // borde sin entrar; lejos: afuera
+  const fc2: GeoJSONFeatureCollection = { type: 'FeatureCollection', features: [
+    feature(r.maxX - 40, 0, r.maxX - 30, 10),
+    feature(r.maxX - 3, -30, r.maxX + 12, -20),
+    feature(r.maxX, 40, r.maxX + 10, 50),
+    feature(r.maxX + 20, 0, r.maxX + 30, 10),
+  ] };
+  const out = buildBuildings(fc2, []);
+
+  test('un footprint que entra al área es un edificio aunque su centroide quede afuera', () => {
+    expect(out.buildings).toHaveLength(2);
+    const cruza = out.buildings.find((b) => b.footprint.some(([x]) => x > r.maxX))!;
+    expect(cruza).toBeDefined();
+    expect(Math.min(...cruza.footprint.map(([x]) => x))).toBeCloseTo(r.maxX - 3, 1);
+    expect(out.outskirts.every((o) => o.footprint.every(([x]) => x >= r.maxX - 1e-6))).toBe(true);
+  });
+  test('los que cruzan el borde van después: no renumeran a los de adentro', () => {
+    expect(out.buildings.map((b) => b.id)).toEqual(['b0001', 'b0002']);
+    expect(Math.max(...out.buildings[0].footprint.map(([x]) => x))).toBeLessThan(r.maxX);
+  });
+  test('tocar el borde sin entrar, o quedar lejos, sigue siendo afuera', () => expect(out.outskirts).toHaveLength(2));
 });

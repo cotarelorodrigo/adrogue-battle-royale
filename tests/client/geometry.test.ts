@@ -114,6 +114,16 @@ describe('edificio bajo', () => {
   });
 });
 
+describe('relleno de un hueco', () => {
+  test('techo y paredes como cualquier edificio, sin pretil', () => {
+    const e = extrudeBuilding({ ...square10, fill: true });
+    expect(posOf(e.parapet).count).toBe(0);
+    expect(areaOf(e.roof)).toBeCloseTo(100);
+    expect(posOf(e.walls.ground).count).toBeGreaterThan(0);
+    expect(namesIn(buildChunks(baseMap({ buildings: [{ ...square10, fill: true }] }), fake()), 0, -1)).not.toContain('parapet');
+  });
+});
+
 describe('ribbon / polygonGeometry', () => {
   test('cinta: área ≈ largo × ancho y sin NaN en giros cerrados', () => {
     expect(areaOf(ribbon([[0, 0], [100, 0]], 8, 0))).toBeCloseTo((100 + 8) * 8, 0);
@@ -190,6 +200,13 @@ describe('buildChunks', () => {
       expect(m.geometry.boundingSphere).not.toBeNull();
       expect(Number.isFinite(m.geometry.boundingSphere!.radius)).toBe(true);
     }
+  });
+
+  test('un edificio que cruza el borde del área con el centroide afuera va al chunk de adentro (sin merges nuevos)', () => {
+    // x de −8 a 2: centroide en x = −3 (chunk −1), pero el área empieza en x = 0 (chunk 0)
+    const gs = buildChunks(baseMap({ buildings: [mk('A', sq(10, 20)), mk('X', [[-8, 20], [2, 20], [2, 10], [-8, 10]])] }), fake());
+    expect(namesIn(gs, -1, 0)).toEqual(['grass']);
+    expect(namesIn(gs, 0, 0)).toEqual(['grass', 'parapet', 'roof', 'wallGroundHouse', 'wallUpper']);
   });
 
   test('shop usa wallGroundShop si es revoque', () => {

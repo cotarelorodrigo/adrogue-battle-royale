@@ -40,6 +40,8 @@ export function clipSegment(a: Vec2, b: Vec2, minX: number, minZ: number, maxX: 
     t1 === 1 ? b : [a[0] + dx * t1, a[1] + dz * t1],
   ];
 }
+/** Un edificio se asigna a un chunk como si su centroide estuviera al menos a esto del borde del área (m). */
+const EDGE_INSET = 10;
 const SHADOW_CASTERS = new Set<keyof WorldMaterials>(['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet']);
 
 const cell = (x: number, z: number): [number, number] => [Math.floor(x / CHUNK), Math.floor(z / CHUNK)];
@@ -70,11 +72,14 @@ export function buildChunks(map: MapData, materials: WorldMaterials): THREE.Grou
     }
   }
 
-  // Edificios por centroide
+  // Edificios por centroide, llevado a ≥ EDGE_INSET adentro del área: los del borde (y los que lo cruzan con el centroide
+  // afuera) se suman a los merges de un chunk de adentro en vez de abrir uno casi vacío del lado de afuera.
+  const inside = (v: number, lo: number, hi: number): number =>
+    lo + EDGE_INSET > hi - EDGE_INSET ? (lo + hi) / 2 : Math.min(hi - EDGE_INSET, Math.max(lo + EDGE_INSET, v));
   for (const b of map.buildings) {
     let cx = 0, cz = 0;
     for (const [x, z] of b.footprint) { cx += x; cz += z; }
-    const ij = cell(cx / b.footprint.length, cz / b.footprint.length);
+    const ij = cell(inside(cx / b.footprint.length, bd.minX, bd.maxX), inside(cz / b.footprint.length, bd.minZ, bd.maxZ));
     const e = extrudeBuilding(b);
     const brick = b.wall === 'brick';
     const groundMat = brick ? 'brickGround' : b.kind === 'house' ? 'wallGroundHouse' : 'wallGroundShop';
