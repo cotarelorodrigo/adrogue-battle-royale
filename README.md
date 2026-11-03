@@ -63,7 +63,7 @@ lugar, agregale `facade` a su entrada en `data/places.json`; los dos campos son 
 
 | Campo | Valores | Qué cambia |
 |---|---|---|
-| `ground` | `"shop"` (vidriera con persiana), `"house"` (puerta y ventana con reja), `"brick"` (ladrillo) | la planta baja de esa pared |
+| `ground` | `"shop"` (vidriera con persiana), `"house"` (revoque, puerta y ventana con reja), `"brick"` (ladrillo visto, puerta y ventana con reja) | la planta baja de esa pared |
 | `tint` | color `#rrggbb` | el tinte de esa planta baja |
 
 Plazas y monumentos no llevan `facade` (no tienen edificio). Un valor que no está en la lista corta el `build:map` con

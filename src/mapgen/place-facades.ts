@@ -21,12 +21,13 @@ export type BuildingPlaceType = Exclude<PlaceType, 'plaza' | 'monument'>;
  * | icecream    | shop        | #f6f2ea | vidriera, casi blanco                                |
  * | cinema      | shop        | #d3cec6 | hall vidriado, gris                                  |
  * | clinic      | shop        | #f2f2ee | entrada vidriada, blanco                             |
- * | school      | brick       | #f0e6dc | edificio escolar de ladrillo visto                   |
+ * | school      | shop        | #f0e6dc | acceso vidriado del colegio                          |
  * | culture     | shop        | #efe6d8 | casona con planta baja abierta                       |
- * | club        | brick       | #efe4d6 | sede de club de ladrillo                             |
+ * | club        | shop        | #efe4d6 | sede de club con planta baja vidriada                |
  * | station     | shop        | #dde3cc | boletería y andén vidriados, verde claro             |
  *
- * Ninguno usa `house` (puerta de madera y ventana con reja): un lugar con cartel no tiene que parecer una casa.
+ * Todos usan `shop`: `house` y `brick` dibujan puerta de madera y ventana con reja, y un lugar con cartel no tiene que
+ * parecer una casa. `brick` queda para correcciones a mano en data/places.json.
  */
 export const FACADE_BY_TYPE: Record<BuildingPlaceType, { ground: FacadeGround; tint: string }> = {
   bank: { ground: 'shop', tint: '#e4e2dc' },
@@ -36,9 +37,9 @@ export const FACADE_BY_TYPE: Record<BuildingPlaceType, { ground: FacadeGround; t
   icecream: { ground: 'shop', tint: '#f6f2ea' },
   cinema: { ground: 'shop', tint: '#d3cec6' },
   clinic: { ground: 'shop', tint: '#f2f2ee' },
-  school: { ground: 'brick', tint: '#f0e6dc' },
+  school: { ground: 'shop', tint: '#f0e6dc' },
   culture: { ground: 'shop', tint: '#efe6d8' },
-  club: { ground: 'brick', tint: '#efe4d6' },
+  club: { ground: 'shop', tint: '#efe4d6' },
   station: { ground: 'shop', tint: '#dde3cc' },
 };
 

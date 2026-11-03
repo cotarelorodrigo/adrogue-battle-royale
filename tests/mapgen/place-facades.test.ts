@@ -27,8 +27,8 @@ test('tabla por tipo: todo tipo con edificio tiene fachada; los comercios, de lo
     expect(FACADE_BY_TYPE[t].tint).toMatch(/^#[0-9a-f]{6}$/);
   }
   for (const t of ['bank', 'bar', 'restaurant', 'fastfood', 'icecream', 'cinema'] as const) expect(FACADE_BY_TYPE[t].ground).toBe('shop');
-  // ninguno queda con la puerta de madera y la ventana con reja de una casa
-  expect(Object.values(FACADE_BY_TYPE).some((f) => f.ground === 'house')).toBe(false);
+  // ninguno queda con la puerta de madera y la ventana con reja de una casa (`house` y `brick` las dibujan)
+  expect(Object.values(FACADE_BY_TYPE).filter((f) => f.ground !== 'shop')).toEqual([]);
 });
 
 test('sin foto: la arista del cartel, con el material y el tinte del tipo', () => {
