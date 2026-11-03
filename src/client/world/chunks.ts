@@ -43,7 +43,7 @@ export function clipSegment(a: Vec2, b: Vec2, minX: number, minZ: number, maxX: 
 /** Un edificio se asigna a un chunk como si su centroide estuviera al menos a esto del borde del área (m). */
 const EDGE_INSET = 10;
 const GROUND_MAT: Record<FacadeGround, keyof WorldMaterials> = { shop: 'wallGroundShop', house: 'wallGroundHouse', brick: 'brickGround' };
-const SHADOW_CASTERS = new Set<keyof WorldMaterials>(['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet']);
+const SHADOW_CASTERS = new Set<keyof WorldMaterials>(['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'front']);
 
 const cell = (x: number, z: number): [number, number] => [Math.floor(x / CHUNK), Math.floor(z / CHUNK)];
 
@@ -84,10 +84,13 @@ export function buildChunks(map: MapData, materials: WorldMaterials): THREE.Grou
     const e = extrudeBuilding(b);
     const brick = b.wall === 'brick';
     const groundMat = brick ? 'brickGround' : b.kind === 'house' ? 'wallGroundHouse' : 'wallGroundShop';
-    add(ij, groundMat, e.walls.ground);
+    // un lote dibuja su frente con el atlas (`front`); sus medianeras y fondos son revoque liso teñido, sin ventanas
+    const lotSides = b.front ? 'parapet' : null;
+    add(ij, lotSides ?? groundMat, e.walls.ground);
+    add(ij, 'front', e.walls.front);
     // aristas con fachada de lugar (spec 4.3): al merge del material de su planta baja, en el mismo chunk
     for (const o of e.walls.overrides) add(ij, GROUND_MAT[o.ground], o.geometry);
-    add(ij, brick ? 'brickUpper' : 'wallUpper', e.walls.upper);
+    add(ij, lotSides ?? (brick ? 'brickUpper' : 'wallUpper'), e.walls.upper);
     add(ij, 'roof', e.roof);
     add(ij, 'parapet', e.parapet);
   }

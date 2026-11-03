@@ -124,6 +124,22 @@ describe('relleno de un hueco', () => {
   });
 });
 
+describe('lotes en buildChunks', () => {
+  test('10 lotes en un chunk dan una sola malla front y sus medianeras van a parapet', () => {
+    const lots = Array.from({ length: 10 }, (_, i) => mk(`l${i}`, [[10 + i * 10, 20], [19 + i * 10, 20], [19 + i * 10, 8], [10 + i * 10, 8]], {
+      kind: 'shop', tint: i % 2 ? '#d9d2c3' : '#7a9e6b', front: { edges: [0], corner: [], pb: 'vidriera', arriba: 'ventanas', puerta: 'inicio' },
+    }));
+    const groups = buildChunks(baseMap({ buildings: lots }), fake());
+    const names = namesIn(groups, 0, 0);
+    expect(names.filter((n) => n === 'front')).toHaveLength(1);
+    expect(names).toContain('parapet');
+    expect(names).not.toContain('wallGroundShop');
+    expect(names).not.toContain('wallUpper');
+    const front = meshes(groups).find((m) => m.name === 'front')!;
+    expect(front.castShadow).toBe(true);
+  });
+});
+
 describe('ribbon / polygonGeometry', () => {
   test('cinta: área ≈ largo × ancho y sin NaN en giros cerrados', () => {
     expect(areaOf(ribbon([[0, 0], [100, 0]], 8, 0))).toBeCloseTo((100 + 8) * 8, 0);

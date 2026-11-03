@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Vec2 } from '../../shared/geo.ts';
 import { ensureCCW } from '../../shared/geo.ts';
 import type { Building, FacadeGround } from '../../shared/mapdata.ts';
+import { frontGeometry } from './fronts.ts';
 
 /** Alto de un piso (copia de mapgen/buildings.ts; el cliente no importa mapgen). */
 export const FLOOR_H = 3.2;
@@ -12,12 +13,12 @@ const PARAPET_T = 0.2;
 const MITER_LIMIT = 2;
 const PLANAR_UV = 4;
 
-interface Builder {
+export interface Builder {
   pos: number[]; nor: number[]; uv: number[]; col: number[] | null; idx: number[];
 }
-const newBuilder = (withColor: boolean): Builder => ({ pos: [], nor: [], uv: [], col: withColor ? [] : null, idx: [] });
+export const newBuilder = (withColor: boolean): Builder => ({ pos: [], nor: [], uv: [], col: withColor ? [] : null, idx: [] });
 
-function toGeometry(b: Builder): THREE.BufferGeometry {
+export function toGeometry(b: Builder): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3));
@@ -27,20 +28,20 @@ function toGeometry(b: Builder): THREE.BufferGeometry {
   return g;
 }
 
-function vert(b: Builder, p: [number, number, number], n: [number, number, number], uv: [number, number], c?: THREE.Color): number {
+export function vert(b: Builder, p: [number, number, number], n: [number, number, number], uv: [number, number], c?: THREE.Color): number {
   b.pos.push(...p); b.nor.push(...n); b.uv.push(...uv);
   if (b.col) b.col.push(c!.r, c!.g, c!.b);
   return b.pos.length / 3 - 1;
 }
 
 /** Cuadrilátero a,b,c,d (en ese orden alrededor) con winding antihorario visto desde el lado de `n`. */
-function quad(b: Builder, vs: [number, number, number][], uvs: [number, number][], n: [number, number, number], c?: THREE.Color): void {
+export function quad(b: Builder, vs: [number, number, number][], uvs: [number, number][], n: [number, number, number], c?: THREE.Color): void {
   const i = vs.map((p, k) => vert(b, p, n, uvs[k], c));
   b.idx.push(i[0], i[1], i[2], i[0], i[2], i[3]);
 }
 
 const tintCache = new Map<string, THREE.Color>();
-function tintColor(tint: string): THREE.Color {
+export function tintColor(tint: string): THREE.Color {
   let c = tintCache.get(tint);
   if (!c) { c = new THREE.Color().setStyle(tint); tintCache.set(tint, c); }
   return c;
@@ -126,9 +127,10 @@ function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color):
 /**
  * `walls.ground` es la planta baja de las aristas comunes; las de `bd.facades` van aparte en `walls.overrides`, una
  * geometría por tipo de planta baja (el que dibuja las suma al merge de ese material, sin draw calls nuevos).
+ * Un lote (`bd.front`) saca de ground/upper las aristas de su frente y su esquina: las dibuja `walls.front`.
  */
 export function extrudeBuilding(bd: Building): {
-  walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry; overrides: { ground: FacadeGround; geometry: THREE.BufferGeometry }[] };
+  walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry; front: THREE.BufferGeometry; overrides: { ground: FacadeGround; geometry: THREE.BufferGeometry }[] };
   roof: THREE.BufferGeometry;
   parapet: THREE.BufferGeometry;
 } {
@@ -137,9 +139,10 @@ export function extrudeBuilding(bd: Building): {
   // facades cuenta aristas sobre el footprint guardado; si ensureCCW lo dio vuelta, la arista i es la n − 2 − i
   const n = fp.length;
   const flipped = fp !== bd.footprint;
+  const edgeOf = (e: number): number => (flipped ? (2 * n - 2 - e) % n : e);
   const own = new Map<number, { ground: FacadeGround; color: THREE.Color }>();
   for (const f of bd.facades ?? []) {
-    own.set(flipped ? (2 * n - 2 - f.edge) % n : f.edge, { ground: f.ground, color: f.tint ? tintColor(f.tint) : color });
+    own.set(edgeOf(f.edge), { ground: f.ground, color: f.tint ? tintColor(f.tint) : color });
   }
 
   const cum: number[] = [0];
@@ -147,6 +150,9 @@ export function extrudeBuilding(bd: Building): {
     const c = fp[(i + 1) % fp.length];
     cum.push(cum[i] + Math.hypot(c[0] - fp[i][0], c[1] - fp[i][1]));
   }
+
+  // aristas del frente de un lote: las dibuja walls.front
+  const lotEdges = new Set([...(bd.front?.edges ?? []), ...(bd.front?.corner ?? [])].map(edgeOf));
 
   const rb = newBuilder(true);
   for (const [x, z] of fp) vert(rb, [x, bd.height, z], [0, 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
@@ -156,9 +162,10 @@ export function extrudeBuilding(bd: Building): {
   const grounds = [...new Set([...own.values()].map((o) => o.ground))].sort();
   return {
     walls: {
-      ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) ? null : color)),
+      ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color)),
       // edificio más bajo que un piso: sin banda superior (geometría vacía)
-      upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, () => color) : toGeometry(newBuilder(true)),
+      upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : color)) : toGeometry(newBuilder(true)),
+      front: bd.front ? frontGeometry(bd, fp, edgeOf) : toGeometry(newBuilder(true)),
       overrides: grounds.map((ground) => ({
         ground,
         geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }),

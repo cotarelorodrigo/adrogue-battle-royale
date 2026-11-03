@@ -1,0 +1,143 @@
+import * as THREE from 'three';
+import type { Vec2 } from '../../shared/geo.ts';
+import type { Building } from '../../shared/mapdata.ts';
+import { cellRect, groundCells, upperCell } from './front-atlas.ts';
+import type { FrontCell } from './front-atlas.ts';
+import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry } from './geometry.ts';
+import type { Builder } from './geometry.ts';
+
+/** Toldo sobre la puerta y la vidriera: cae de `topY` (en la pared) a `bottomY` a `depth` m; `inset` m de margen por lado. */
+export const AWNING = { topY: 2.3, bottomY: 2.0, depth: 1.0, inset: 0.2 } as const;
+
+/** Un pedazo de arista de `fp`, recorrido de `a` a `b` en el sentido de la corrida; `n` es la normal hacia afuera. */
+interface Piece { a: Vec2; b: Vec2; len: number; n: Vec2; s0: number }
+interface Run { pieces: Piece[]; length: number }
+
+function makeRun(fp: Vec2[], edges: { i: number; rev: boolean }[]): Run {
+  const pieces: Piece[] = [];
+  let s = 0;
+  for (const { i, rev } of edges) {
+    const p = fp[i], q = fp[(i + 1) % fp.length];
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (len < 1e-6) continue;
+    // la normal sale del sentido de fp (antihorario): el de la corrida puede ser el inverso
+    pieces.push({ a: rev ? q : p, b: rev ? p : q, len, n: [-(q[1] - p[1]) / len, (q[0] - p[0]) / len], s0: s });
+    s += len;
+  }
+  return { pieces, length: s };
+}
+
+/** Recorre la corrida bahía por bahía (de ancho L/n) y la parte en los pedazos de arista que cruza, entre `lo` y `hi`. */
+function eachSpan(run: Run, lo: number, hi: number, cb: (p: Piece, sa: number, sb: number, bay: number, bw: number) => void): number {
+  const n = Math.max(1, Math.round(run.length / BAY_W));
+  const bw = run.length / n;
+  for (let k = 0; k < n; k++) {
+    for (const p of run.pieces) {
+      const sa = Math.max(k * bw, p.s0, lo), sb = Math.min((k + 1) * bw, p.s0 + p.len, hi);
+      if (sb - sa > 1e-6) cb(p, sa, sb, k, bw);
+    }
+  }
+  return n;
+}
+
+const at = (p: Piece, s: number): Vec2 => {
+  const t = (s - p.s0) / p.len;
+  return [p.a[0] + (p.b[0] - p.a[0]) * t, p.a[1] + (p.b[1] - p.a[1]) * t];
+};
+
+/** Cuadrilátero con la normal pedida: si el orden dado la daría al revés, se invierte (así no importa el sentido de la corrida). */
+function face(b: Builder, vs: [number, number, number][], uvs: [number, number][], n: [number, number, number], c: THREE.Color): void {
+  const e1 = new THREE.Vector3(vs[1][0] - vs[0][0], vs[1][1] - vs[0][1], vs[1][2] - vs[0][2]);
+  const e2 = new THREE.Vector3(vs[2][0] - vs[0][0], vs[2][1] - vs[0][1], vs[2][2] - vs[0][2]);
+  if (e1.cross(e2).dot(new THREE.Vector3(...n)) >= 0) quad(b, vs, uvs, n, c);
+  else quad(b, [vs[0], vs[3], vs[2], vs[1]], [uvs[0], uvs[3], uvs[2], uvs[1]], n, c);
+}
+
+/**
+ * Pared de un frente (y de su esquina) con los módulos del atlas: una cara por bahía y por pedazo de arista.
+ * `fp`: la planta antihoraria que usa `extrudeBuilding`; `edgeOf`: índice guardado → índice en `fp`.
+ */
+export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => number): THREE.BufferGeometry {
+  const b = newBuilder(true);
+  const f = bd.front;
+  if (!f) return toGeometry(b);
+  const ladrillo = f.ladrillo === true;
+  const floors = Math.max(1, bd.floors);
+  const tint = tintColor(bd.tint);
+  const groundColor = f.colorPB ? tintColor(f.colorPB) : tint;
+  const { door, rest } = groundCells(f.pb, ladrillo);
+  const upper = upperCell(f.arriba, ladrillo);
+  const bandCell = upperCell('ciego', ladrillo);
+
+  // Corrida principal: las aristas en orden. Cada una se recorre en el sentido de la corrida: el del vecino; la única, el guardado.
+  const main = f.edges.map(edgeOf);
+  const mid = (i: number): Vec2 => [(fp[i][0] + fp[(i + 1) % fp.length][0]) / 2, (fp[i][1] + fp[(i + 1) % fp.length][1]) / 2];
+  const flipped = fp !== bd.footprint;
+  const mainRun = makeRun(fp, main.map((i, k) => {
+    if (main.length < 2) return { i, rev: flipped };
+    const [m0, m1] = k < main.length - 1 ? [mid(i), mid(main[k + 1])] : [mid(main[k - 1]), mid(i)];
+    const q = fp[(i + 1) % fp.length];
+    return { i, rev: (q[0] - fp[i][0]) * (m1[0] - m0[0]) + (q[1] - fp[i][1]) * (m1[1] - m0[1]) < 0 };
+  }));
+
+  // Corridas de esquina: grupos de aristas contiguas (con vuelta por el índice 0).
+  const mainSet = new Set(main);
+  const corner = [...new Set(f.corner.map(edgeOf))].filter((i) => !mainSet.has(i)).sort((x, y) => x - y);
+  const groups: number[][] = [];
+  for (const i of corner) {
+    const last = groups[groups.length - 1];
+    if (last && last[last.length - 1] === i - 1) last.push(i); else groups.push([i]);
+  }
+  if (groups.length > 1 && groups[0][0] === 0 && groups[groups.length - 1].at(-1) === fp.length - 1) {
+    groups[0].unshift(...groups.pop()!);
+  }
+  const cornerRuns = groups.map((g) => makeRun(fp, g.map((i) => ({ i, rev: false }))));
+
+  const height = bd.height;
+  const bandY = floors * FLOOR_H;
+  const rows: { y0: number; y1: number; groundRow: boolean }[] = [{ y0: 0, y1: Math.min(FLOOR_H, height), groundRow: true }];
+  for (let r = 1; r < floors; r++) rows.push({ y0: r * FLOOR_H, y1: Math.min((r + 1) * FLOOR_H, height), groundRow: false });
+  const band = height - bandY > 1e-6 ? { y0: bandY, y1: height, groundRow: false } : null;
+
+  const wall = (run: Run, isMain: boolean): void => {
+    const doorBay = !isMain ? -1
+      : f.puerta === 'inicio' ? 0
+        : f.puerta === 'fin' ? Math.max(1, Math.round(run.length / BAY_W)) - 1
+          : Math.floor((Math.max(1, Math.round(run.length / BAY_W)) - 1) / 2);
+    for (const row of [...rows, ...(band ? [band] : [])]) {
+      const isBand = row === band;
+      eachSpan(run, 0, run.length, (p, sa, sb, bay, bw) => {
+        const cell: FrontCell = row.groundRow ? (bay === doorBay ? door : rest) : isBand ? bandCell : upper;
+        const r = cellRect(cell);
+        const vTop = r.v0 + ((r.v1 - r.v0) * (row.y1 - row.y0)) / FLOOR_H; // alturas parciales (banda, edificio bajo): se recorta
+        const ua = r.u0 + ((sa - bay * bw) / bw) * (r.u1 - r.u0), ub = r.u0 + ((sb - bay * bw) / bw) * (r.u1 - r.u0);
+        const [pa, pb] = [at(p, sa), at(p, sb)];
+        face(b, [[pa[0], row.y0, pa[1]], [pb[0], row.y0, pb[1]], [pb[0], row.y1, pb[1]], [pa[0], row.y1, pa[1]]],
+          [[ua, r.v0], [ub, r.v0], [ub, vTop], [ua, vTop]], [p.n[0], 0, p.n[1]], row.groundRow ? groundColor : tint);
+      });
+    }
+  };
+  wall(mainRun, true);
+  for (const run of cornerRuns) wall(run, false);
+
+  if (f.toldo && mainRun.length > 2 * AWNING.inset) {
+    const r = cellRect(f.toldo.rayas ? 'toldo-rayas' : 'toldo');
+    const color = tintColor(f.toldo.color);
+    const { topY, bottomY, depth, inset } = AWNING;
+    const h = topY - bottomY;
+    const norm = Math.hypot(h, depth);
+    eachSpan(mainRun, inset, mainRun.length - inset, (p, sa, sb, bay, bw) => {
+      const ua = r.u0 + ((sa - bay * bw) / bw) * (r.u1 - r.u0), ub = r.u0 + ((sb - bay * bw) / bw) * (r.u1 - r.u0);
+      const [pa, pb] = [at(p, sa), at(p, sb)];
+      const vs: [number, number, number][] = [
+        [pa[0], topY, pa[1]], [pb[0], topY, pb[1]],
+        [pb[0] + p.n[0] * depth, bottomY, pb[1] + p.n[1] * depth], [pa[0] + p.n[0] * depth, bottomY, pa[1] + p.n[1] * depth],
+      ];
+      const uvs: [number, number][] = [[ua, r.v1], [ub, r.v1], [ub, r.v0], [ua, r.v0]];
+      const up: [number, number, number] = [(p.n[0] * h) / norm, depth / norm, (p.n[1] * h) / norm];
+      face(b, vs, uvs, up, color);
+      face(b, vs, uvs, [-up[0], -up[1], -up[2]], color); // por abajo también se ve
+    });
+  }
+  return toGeometry(b);
+}
