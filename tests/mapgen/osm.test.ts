@@ -46,3 +46,16 @@ test('pois: nodos y vías con nombre y shop, amenity, office o craft; las vías 
   expect(r.pois[1].position[0]).toBeCloseTo((pb[0] + pc[0]) / 2, 6);
   expect(r.pois[1].position[1]).toBeCloseTo((pb[1] + pc[1]) / 2, 6);
 });
+
+test('surface sett/cobblestone marca la calzada; paving_stones no', () => {
+  const way = (id: number, surface: string) => ({ type: 'way', id, nodes: [1, 2], tags: { highway: 'residential', surface } });
+  const osm = {
+    elements: [
+      { type: 'node', id: 1, lat: -34.797, lon: -58.392 },
+      { type: 'node', id: 2, lat: -34.797, lon: -58.39 },
+      way(10, 'sett'), way(11, 'cobblestone'), way(12, 'unhewn_cobblestone'), way(13, 'paving_stones'),
+    ],
+  };
+  const roads = parseOsm(osm).roads;
+  expect(roads.map((r) => [r.id, r.surface])).toEqual([['w10', 'sett'], ['w11', 'sett'], ['w12', 'sett'], ['w13', undefined]]);
+});

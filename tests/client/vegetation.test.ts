@@ -12,7 +12,7 @@ import { stubCanvas } from './canvas-stub.ts';
 beforeEach(() => stubCanvas());
 afterEach(() => vi.restoreAllMocks());
 
-const KEYS = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
+const KEYS = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt', 'cobble',
   'sidewalk', 'grass', 'path', 'platform', 'rail'] as const;
 const materials = Object.fromEntries(KEYS.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
 

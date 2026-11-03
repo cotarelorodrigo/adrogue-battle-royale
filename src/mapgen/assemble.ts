@@ -33,6 +33,11 @@ export function assembleMap(
 ): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats; report: string[] } {
   const warnings: string[] = [];
   const { roads, railways, platforms, parks, fountains, pois } = parseOsm(raw.osm);
+  for (const r of roads) {
+    const calzada = r.name === undefined ? undefined : raw.frentes?.calzadas[r.name];
+    if (calzada === 'empedrado') r.surface = 'sett';
+    else if (calzada === 'asfalto') delete r.surface;
+  }
   const built = buildBuildings(raw.buildings, roads, parks);
   const fr = applyFrentes(raw.frentes ?? NO_FRENTES, roads, built.buildings, raw.places, pois);
   warnings.push(...fr.warnings);

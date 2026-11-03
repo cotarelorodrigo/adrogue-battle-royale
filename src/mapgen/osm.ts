@@ -2,6 +2,8 @@ import { project, ensureCCW } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Park, Road, RoadKind } from '../shared/mapdata.ts';
 
+const isSett = (s: string | undefined): boolean => s === 'sett' || s === 'cobblestone' || s === 'unhewn_cobblestone';
+
 export const ROAD_SPECS: Record<RoadKind, { width: number; sidewalk: number }> = {
   secondary: { width: 12, sidewalk: 3 },
   tertiary: { width: 10, sidewalk: 3 },
@@ -102,7 +104,7 @@ export function parseOsm(raw: unknown): OsmFeatures {
     if (kind) {
       if (pts.length < 2) continue;
       const pointsFull = closed && pts.length === ids.length ? [...pts, pts[0]] : pts;
-      out.roads.push({ id: `w${w.id}`, kind, ...(t.name ? { name: t.name } : {}), ...ROAD_SPECS[kind], points: pointsFull });
+      out.roads.push({ id: `w${w.id}`, kind, ...(t.name ? { name: t.name } : {}), ...ROAD_SPECS[kind], ...(isSett(t.surface) ? { surface: 'sett' as const } : {}), points: pointsFull });
     } else if (t.railway === 'rail') {
       if (pts.length >= 2) out.railways.push(closed && pts.length === ids.length ? [...pts, pts[0]] : pts);
     } else if (t.railway === 'platform') {

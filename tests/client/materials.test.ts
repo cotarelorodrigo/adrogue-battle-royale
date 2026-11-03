@@ -80,3 +80,13 @@ test('las texturas se piden bajo BASE_URL (el juego puede vivir en una subcarpet
   expect(srcs.length).toBeGreaterThan(0);
   expect(srcs.every((s) => s.startsWith('/adrogue-cs/textures/'))).toBe(true);
 });
+
+test('cobble: material propio con baldosa de 2 m (repeat 2x2) y sus texturas se liberan', async () => {
+  const m = await createMaterials('media') as WorldMaterials & { cobble: THREE.MeshStandardMaterial };
+  expect(m.cobble).toBeInstanceOf(THREE.Material);
+  expect(m.cobble).not.toBe(m.asphalt);
+  for (const t of [m.cobble.map, m.cobble.normalMap, m.cobble.roughnessMap]) expect(t!.repeat.toArray()).toEqual([2, 2]);
+  const texDispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
+  disposeMaterials(m);
+  for (const t of [m.cobble.map, m.cobble.normalMap, m.cobble.roughnessMap]) expect(texDispose.mock.contexts).toContain(t);
+});

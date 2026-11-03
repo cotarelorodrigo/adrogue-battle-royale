@@ -7,7 +7,7 @@ import type { WorldMaterials } from './types.ts';
 
 export type { WorldMaterials } from './types.ts';
 
-const SLOTS = ['revoque', 'ladrillo', 'asfalto', 'hormigon', 'pasto', 'sendero', 'techo', 'metal', 'madera'] as const;
+const SLOTS = ['revoque', 'ladrillo', 'asfalto', 'empedrado', 'hormigon', 'pasto', 'sendero', 'techo', 'metal', 'madera'] as const;
 type Slot = (typeof SLOTS)[number];
 type MapKind = 'diff' | 'nor_gl' | 'rough';
 
@@ -122,6 +122,9 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
   const offset = (n: number) => ({ polygonOffset: true, polygonOffsetFactor: n, polygonOffsetUnits: n });
   const sidewalkMap = makeTexture(composeSidewalk(img('hormigon', 'diff'), size), true, anisotropy);
 
+  // Una baldosa cada 2 m (el suelo mapea 4 m por unidad de UV). Solo cobble usa estas texturas.
+  for (const m of ['diff', 'nor_gl', 'rough'] as const) if (maps.includes(m)) tex('empedrado', m).repeat.set(2, 2);
+
   return {
     wallGroundHouse: facade('revoque', 'house'),
     wallGroundShop: facade('revoque', 'shop'),
@@ -131,6 +134,7 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
     roof: material('techo', { vertexColors: false }),
     parapet: material('revoque', { vertexColors: true }),
     asphalt: material('asfalto', offset(-2)),
+    cobble: material('empedrado', offset(-2)),
     sidewalk: material('hormigon', offset(-1), sidewalkMap),
     grass: material('pasto'),
     path: material('sendero', offset(-3)),

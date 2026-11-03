@@ -18,6 +18,7 @@ import type { Vec2 } from '../../src/shared/geo.ts';
 import type { MapData, Prop, Tree } from '../../src/shared/mapdata.ts';
 
 const photos = JSON.parse(readFileSync('data/photo-facades.json', 'utf8')) as { placeId: string; edgeIndex?: number }[];
+const MIN_OTHER_SETT = 43;
 function loadRaw() {
   return {
     osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')) as unknown,
@@ -342,3 +343,24 @@ describe('filterTrees', () => {
     expect(filterTrees([...drop, ...keep], props, platform)).toEqual(keep);
   });
 });
+
+describe('empedrado', () => {
+  const raw = loadRaw();
+  const roads = assembleMap(raw).map.roads;
+  test('Esteban Adrogué sale con sett por data/frentes.json, incluida la vía w28314572', () => {
+    const ea = roads.filter((r) => r.name === 'Esteban Adrogué');
+    expect(ea.find((r) => r.id === 'w28314572')?.surface).toBe('sett');
+    expect(ea.every((r) => r.surface === 'sett')).toBe(true);
+  });
+  test('calzada asfalto saca el sett que traía OSM', () => {
+    const rosales = (rs: typeof roads) => rs.filter((r) => r.name === 'Leonardo Rosales');
+    expect(rosales(roads).some((r) => r.surface === 'sett')).toBe(true);
+    const asfaltada = assembleMap({ ...raw, frentes: { frentes: [], calzadas: { 'Leonardo Rosales': 'asfalto' } } }).map.roads;
+    expect(rosales(asfaltada).length).toBeGreaterThan(0);
+    expect(rosales(asfaltada).every((r) => r.surface === undefined)).toBe(true);
+  });
+  test('otras vías vehiculares con sett de OSM se conservan', () => {
+    const others = roads.filter((r) => r.surface === 'sett' && r.kind !== 'footway' && r.kind !== 'pedestrian' && r.name !== 'Esteban Adrogué');
+    expect(others.length).toBeGreaterThanOrEqual(MIN_OTHER_SETT);
+  });
+}, 60_000);

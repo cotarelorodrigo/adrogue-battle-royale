@@ -18,6 +18,12 @@
     "url": "https://polyhaven.com/a/asphalt_02"
   },
   {
+    "slot": "empedrado",
+    "assetId": "cobblestone_floor_08",
+    "license": "CC0",
+    "url": "https://polyhaven.com/a/cobblestone_floor_08"
+  },
+  {
     "slot": "hormigon",
     "assetId": "concrete_floor_worn_001",
     "license": "CC0",

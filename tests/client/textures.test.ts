@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 
-const SLOTS = ['revoque', 'ladrillo', 'asfalto', 'hormigon', 'pasto', 'sendero', 'techo', 'metal', 'madera', 'corteza'];
+const SLOTS = ['revoque', 'ladrillo', 'asfalto', 'hormigon', 'pasto', 'sendero', 'techo', 'metal', 'madera', 'corteza', 'empedrado'];
 const entries = JSON.parse(readFileSync('data/textures.json', 'utf8')) as { slot: string; license: string }[];
 
-test('textures.json tiene los 10 slots, todos CC0', () => {
+test('textures.json tiene los 11 slots, todos CC0', () => {
   expect(entries.map((e) => e.slot).sort()).toEqual([...SLOTS].sort());
   expect(entries.every((e) => e.license === 'CC0')).toBe(true);
 });

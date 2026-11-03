@@ -131,7 +131,7 @@ export function buildChunks(map: MapData, materials: WorldMaterials): THREE.Grou
     } else if (r.kind === 'pedestrian') {
       addRibbonRuns(r, r.width, Y_PATH, 'sidewalk');
     } else {
-      addRibbonRuns(r, r.width, Y_ASPHALT, 'asphalt');
+      addRibbonRuns(r, r.width, Y_ASPHALT, r.surface === 'sett' ? 'cobble' : 'asphalt');
       if (r.sidewalk > 0) addRibbonRuns(r, r.width + 2 * r.sidewalk, Y_SIDEWALK, 'sidewalk');
     }
   }

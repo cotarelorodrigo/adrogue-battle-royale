@@ -151,7 +151,7 @@ describe('ribbon / polygonGeometry', () => {
 const fake = (): WorldMaterials => {
   const m = () => new THREE.MeshBasicMaterial();
   return { wallGroundHouse: m(), wallGroundShop: m(), wallUpper: m(), brickGround: m(), brickUpper: m(), roof: m(),
-    parapet: m(), asphalt: m(), sidewalk: m(), grass: m(), path: m(), platform: m(), rail: m() };
+    parapet: m(), asphalt: m(), cobble: m(), sidewalk: m(), grass: m(), path: m(), platform: m(), rail: m() };
 };
 const road = (id: string, kind: Road['kind'], points: Vec2[], width = 8, sidewalk = 2): Road => ({ id, kind, width, sidewalk, points });
 const baseMap = (over: Partial<MapData>): MapData => ({
@@ -278,6 +278,16 @@ describe('buildChunks', () => {
     expect(only([road('c', 'pedestrian', [[10, 60], [30, 60]], 6, 0)]).map((m) => m.name)).toEqual(['sidewalk']);
     // calle sin vereda: solo asfalto
     expect(only([road('d', 'service', [[10, 60], [30, 60]], 4, 0)]).map((m) => m.name)).toEqual(['asphalt']);
+  });
+
+  test('calle con sett: malla cobble a la altura del asfalto y ninguna asphalt; footway con sett sigue en sidewalk', () => {
+    const mk = (rs: Road[]) => buildChunks(baseMap({ roads: rs }), fake()).flatMap((gr) => gr.children as THREE.Mesh[]).filter((m) => m.name !== 'grass');
+    const r = { ...road('a', 'residential', [[10, 60], [30, 60]], 8, 2), surface: 'sett' as const };
+    const meshes = mk([r]);
+    expect(meshes.map((m) => m.name).sort()).toEqual(['cobble', 'sidewalk']);
+    expect(maxOf(meshes.find((m) => m.name === 'cobble')!.geometry, 'position', 1)).toBeCloseTo(0.04);
+    const f = { ...road('b', 'footway', [[10, 60], [30, 60]], 2, 0), surface: 'sett' as const };
+    expect(mk([f]).map((m) => m.name)).toEqual(['sidewalk']);
   });
 
   test('capas del suelo: vereda 0,02 < asfalto 0,04 < sendas 0,06', () => {
