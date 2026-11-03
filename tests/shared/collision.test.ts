@@ -93,6 +93,17 @@ describe('pushOut', () => {
     expect(w.pushOut(5, -4, 0.35, 0, 1.8)).toBeCloseTo2D([5, 0.35], 4)); // z = 0 está a 4 m; las demás a ≥ 5
   test('adentro junto al vértice reflejo: sale y resuelve las dos paredes', () =>
     expect(w.pushOut(27.9, -27.9, 0.35, 0, 1.8)).toBeCloseTo2D([28.35, -28.35], 4));
+  test('con el centro justo sobre una pared sale por esa pared', () => {
+    expect(w.pushOut(10, -5, 0.35, 0, 1.8)).toBeCloseTo2D([10.35, -5], 4);
+    expect(w.pushOut(0, -5, 0.35, 0, 1.8)).toBeCloseTo2D([-0.35, -5], 4);
+  });
+  test('con más contactos de los que entran se queda con los más profundos', () => {
+    const post = (cx: number, cz: number): Prism => ({ polygon: [[cx - 0.01, cz + 0.01], [cx + 0.01, cz + 0.01], [cx + 0.01, cz - 0.01], [cx - 0.01, cz - 0.01]], minY: 0, maxY: 3 });
+    // 9 postes finitos a 0,42 m (al alcance pero sin tocar) y, último en el orden, uno a 0,25 m que sí se mete
+    const ring = Array.from({ length: 9 }, (_, i) => ((-80 + 20 * i) * Math.PI) / 180).map((a) => post(0.43 * Math.cos(a), 0.43 * Math.sin(a)));
+    const s = new CollisionWorld([...ring, post(0.26, 0)], [], bounds);
+    expect(s.pushOut(0, 0, 0.35, 0, 1.8)).toBeCloseTo2D([-0.1, 0], 4);
+  });
   test('esquina formada por dos prismas distintos', () => {
     const a: Prism = { polygon: [[0, 1], [10, 1], [10, 0], [0, 0]], minY: 0, maxY: 3 }; // pared z ∈ [0, 1]
     const b: Prism = { polygon: [[0, 1], [1, 1], [1, -10], [0, -10]], minY: 0, maxY: 3 }; // pared x ∈ [0, 1]
@@ -100,6 +111,75 @@ describe('pushOut', () => {
     const p = s.pushOut(1.2, -0.2, 0.35, 0, 1.8);
     expect(p).toBeCloseTo2D([1.35, -0.35], 4);
     expect(s.overlaps(p[0], p[1], 0.35, 0, 1.8)).toBe(false);
+  });
+});
+
+describe('pushOut caminando a 5 m/s con subpasos de 1/120 s', () => {
+  const box = (x0: number, z0: number, x1: number, z1: number): Prism => ({ polygon: [[x0, z1], [x1, z1], [x1, z0], [x0, z0]], minY: 0, maxY: 6 });
+  /** Avanza el disco (r 0,35, y ∈ [0, 1,8]) y llama a pushOut tras cada subpaso; exige que nunca quede superpuesto. */
+  function walk(ps: Prism[], start: Vec2, dir: Vec2, seconds: number, each: (p: Vec2) => void = () => {}): Vec2 {
+    const ww = new CollisionWorld(ps, [], bounds);
+    const l = Math.hypot(dir[0], dir[1]);
+    const sx = (dir[0] / l) * (5 / 120), sz = (dir[1] / l) * (5 / 120);
+    let p = start;
+    for (let i = 0; i < seconds * 120; i++) {
+      p = ww.pushOut(p[0] + sx, p[1] + sz, 0.35, 0, 1.8);
+      expect(ww.overlaps(p[0], p[1], 0.35, 0, 1.8), `paso ${i}: ${p}`).toBe(false);
+      each(p);
+    }
+    return p;
+  }
+
+  test('boca de 0,6 m entre dos cajas: se frena donde toca las dos esquinas', () => {
+    const stop = Math.sqrt(0.35 ** 2 - 0.3 ** 2); // 0,1803
+    const end = walk([box(0, -20, 10, 0), box(10.6, -20, 30, 0)], [10.3, 1], [0, -1], 3, (p) => expect(p[1]).toBeGreaterThanOrEqual(stop - 1e-3));
+    expect(end).toBeCloseTo2D([10.3, 0.1803], 3);
+  });
+  test('pasaje que se angosta 1° por lado (1,0 m en la boca): no pasa del tope', () => {
+    const α = Math.PI / 180;
+    const d = 20 * Math.tan(α); // cada pared entra d en 20 m
+    const a: Prism = { polygon: [[0, 0], [10, 0], [10 + d, -20], [0, -20]], minY: 0, maxY: 6 };
+    const b: Prism = { polygon: [[11, 0], [30, 0], [30, -20], [11 - d, -20]], minY: 0, maxY: 6 };
+    const stop = (0.35 - 0.5 * Math.cos(α)) / Math.sin(α); // distancia r a las dos paredes en el eje: ≈ −8,590
+    const end = walk([a, b], [10.5, 1], [0, -1], 4, (p) => expect(p[1]).toBeGreaterThanOrEqual(stop - 1e-3));
+    expect(end[1]).toBeCloseTo(-8.590, 2);
+  });
+  test('rincón en V de 15° entre dos edificios: se frena a r de las dos paredes', () => {
+    const a = (7.5 * Math.PI) / 180;
+    const [s, c] = [Math.sin(a), Math.cos(a)];
+    const A: Prism = { polygon: [[0, 0], [-20 * s, 20 * c], [-30, 20 * c], [-30, -10], [0, -10]], minY: 0, maxY: 6 };
+    const B: Prism = { polygon: [[0, 0], [0, -10], [30, -10], [30, 20 * c], [20 * s, 20 * c]], minY: 0, maxY: 6 };
+    const stop = 0.35 / s; // 2,681
+    const end = walk([A, B], [0, 15], [0, -1], 6, (p) => expect(p[1]).toBeGreaterThanOrEqual(stop - 1e-3));
+    expect(end).toBeCloseTo2D([0, 2.681], 2);
+  });
+  test('hueco paralelo de 0,69 m: no entra', () => {
+    const stop = Math.sqrt(0.35 ** 2 - 0.345 ** 2); // 0,0589
+    const end = walk([box(0, -20, 10, 0), box(10.69, -20, 30, 0)], [10.345, 1], [0, -1], 3, (p) => expect(p[1]).toBeGreaterThanOrEqual(stop - 1e-3));
+    expect(end[1]).toBeCloseTo(0.0589, 3);
+  });
+  test('justo encima de la línea de las esquinas no sale disparado (pliegue casi paralelo)', () => {
+    const ww = new CollisionWorld([box(0, -20, 10, 0), box(10.695, -20, 30, 0)], [], bounds);
+    const stop = Math.sqrt(0.35 ** 2 - 0.3475 ** 2); // 0,04176
+    expect(ww.pushOut(10.3475, 0.0001, 0.35, 0, 1.8)).toBeCloseTo2D([10.3475, stop], 4);
+  });
+  test('si un paso cae adentro de un hueco < 2r, overlaps lo delata y rechazar el paso lo deja afuera', () => {
+    // hueco de 0,699 m: el tope (0,019 m) queda más cerca que un subpaso (0,042 m), así que un paso entra al hueco
+    const ww = new CollisionWorld([box(0, -20, 10, 0), box(10.699, -20, 30, 0)], [], bounds);
+    const stop = Math.sqrt(0.35 ** 2 - 0.3495 ** 2);
+    let p: Vec2 = [10.3495, 1];
+    let rejected = 0;
+    for (let i = 0; i < 360; i++) {
+      const q = ww.pushOut(p[0], p[1] - 5 / 120, 0.35, 0, 1.8);
+      if (ww.overlaps(q[0], q[1], 0.35, 0, 1.8)) rejected++; // lo que hará el controlador (Tarea 9)
+      else p = q;
+      expect(p[1]).toBeGreaterThanOrEqual(stop - 1e-3);
+    }
+    expect(rejected).toBeGreaterThan(0);
+  });
+  test('se desliza por la fachada de dos casas pegadas sin trabarse en la medianera', () => {
+    const end = walk([box(0, -10, 10, 0), box(10, -10, 20, 0)], [2, 0.4], [1, -0.3], 3);
+    expect(end).toBeCloseTo2D([2 + 15 / Math.sqrt(1.09), 0.35], 3); // conserva la componente tangencial: x ≈ 16,367
   });
 });
 
@@ -118,6 +198,19 @@ describe('ladderAt', () => {
     expect(w.ladderAt(29.6 - 0.36, -19.7, 0.35, 1)).toBeNull();
   });
   test('la escalera no es un prisma', () => expect(w.overlaps(30, -19.7, 0.1, 0, 1.8)).toBe(false));
+  test('escalera en una pared diagonal (normal a 30°)', () => {
+    const n: Vec2 = [Math.cos(Math.PI / 6), 0.5]; // (0,866, 0,5)
+    const t: Vec2 = [-0.5, Math.cos(Math.PI / 6)]; // tangente de la pared
+    const diag: LadderVolume = { base: [0, 0], normal: n, topY: 5 };
+    const dw = new CollisionWorld([], [diag], bounds);
+    const out = (k: number, u: number): Vec2 => [n[0] * k + t[0] * u, n[1] * k + t[1] * u];
+    expect(dw.ladderAt(...out(0.3, 0), 0.1, 1)).toBe(diag); // (0,260, 0,150)
+    expect(dw.ladderAt(...out(0.3, 0.45), 0.1, 1)).toBe(diag); // 0,05 m fuera del ancho: el disco lo toca
+    expect(dw.ladderAt(...out(0.3, 0.6), 0.1, 1)).toBeNull(); // 0,2 m fuera del ancho
+    expect(dw.ladderAt(...out(0.3, -0.6), 0.1, 1)).toBeNull();
+    expect(dw.ladderAt(...out(0.75, 0), 0.1, 1)).toBeNull(); // 0,15 m más allá de la profundidad
+    expect(dw.ladderAt(...out(-0.15, 0), 0.1, 1)).toBeNull(); // detrás de la pared
+  });
 });
 
 describe('raycast', () => {

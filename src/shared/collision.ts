@@ -14,7 +14,14 @@ export interface RayHit { dist: number; point: Vec3; normal: Vec3; tag?: string 
 const EPS = 1e-6;
 /** Holgura que agrega `pushOut` para que el resultado quede estrictamente afuera. */
 const SKIN = 1e-6;
+/** Vueltas de `pushOut` (cada una: juntar contactos, linealizarlos y resolverlos juntos). */
 const PUSH_ITERS = 12;
+/** Contactos simultáneos que resuelve `pushOut` (se quedan los más profundos). */
+const MAX_CONTACTS = 8;
+/** Los bordes a menos de r + CONTACT_MARGIN también son contactos, y cada vuelta de `pushOut` avanza a lo sumo eso
+ *  (región de confianza): la linealización de un vértice casi de costado da un pliegue lejano, y así lo que estaba en
+ *  contacto sigue al alcance y se vuelve a linealizar en vez de pasarse. */
+const CONTACT_MARGIN = 0.1;
 const LADDER_HALF_W = 0.4;
 const LADDER_DEPTH = 0.6;
 
@@ -148,28 +155,40 @@ function toLadder(l: LadderVolume): Ladder {
   return { src: l, bx, bz, nx, nz, tx, tz, minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
 }
 
-/** Distancia² de (px, pz) al segmento a–b. */
-function segDist2(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+/** Parámetro t ∈ [0, 1] del punto del segmento a–b más cercano a (px, pz). */
+function segT(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
   const dx = bx - ax, dz = bz - az;
   const len2 = dx * dx + dz * dz;
-  let t = len2 === 0 ? 0 : ((px - ax) * dx + (pz - az) * dz) / len2;
-  t = t < 0 ? 0 : t > 1 ? 1 : t;
-  const ex = ax + t * dx - px, ez = az + t * dz - pz;
-  return ex * ex + ez * ez;
+  const t = len2 === 0 ? 0 : ((px - ax) * dx + (pz - az) * dz) / len2;
+  return t < 0 ? 0 : t > 1 ? 1 : t;
 }
 
-/** ¿El disco toca la planta? Adentro, o a distancia estrictamente menor que r de alguna arista. */
-function discHits(s: Solid, x: number, z: number, r: number): boolean {
-  if (x + r <= s.minX || x - r >= s.maxX || z + r <= s.minZ || z - r >= s.maxZ) return false;
-  const v = s.v;
-  const r2 = r * r;
+/** Paridad de cruces (mismo criterio que `pointInPolygon`) sobre el anillo plano x0, z0, x1, z1, … */
+function insideRing(v: Float64Array, x: number, z: number): boolean {
   let inside = false;
   for (let i = 0, j = v.length - 2; i < v.length; j = i, i += 2) {
     const xi = v[i], zi = v[i + 1], xj = v[j], zj = v[j + 1];
     if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
-    if (segDist2(x, z, xj, zj, xi, zi) < r2) return true;
   }
   return inside;
+}
+
+/** ¿El disco queda a ≥ r de la caja del prisma? (Entonces no lo toca.) */
+const bboxMisses = (s: Box, x: number, z: number, r: number): boolean =>
+  x + r <= s.minX || x - r >= s.maxX || z + r <= s.minZ || z - r >= s.maxZ;
+
+/** ¿El disco toca la planta? Adentro, o a distancia estrictamente menor que r de alguna arista. */
+function discHits(s: Solid, x: number, z: number, r: number): boolean {
+  if (bboxMisses(s, x, z, r)) return false;
+  const v = s.v;
+  const r2 = r * r;
+  for (let i = 0, j = v.length - 2; i < v.length; j = i, i += 2) {
+    const ax = v[j], az = v[j + 1], bx = v[i], bz = v[i + 1];
+    const t = segT(x, z, ax, az, bx, bz);
+    const ex = ax + t * (bx - ax) - x, ez = az + t * (bz - az) - z;
+    if (ex * ex + ez * ez < r2) return true;
+  }
+  return insideRing(v, x, z);
 }
 
 const overlapsY = (s: Solid, minY: number, maxY: number): boolean => minY < s.maxY - EPS && maxY > s.minY + EPS;
@@ -181,6 +200,13 @@ export class CollisionWorld {
   private readonly grid: Grid;
   private readonly ladderGrid: Grid;
   private readonly hitNormal: [number, number, number] = [0, 0, 0]; // búfer de rayPrism: evita reservar en cada rayo
+  // Contactos de pushOut, cada uno un semiplano n·p ≥ b con n unitaria.
+  private readonly cnx = new Float64Array(MAX_CONTACTS);
+  private readonly cnz = new Float64Array(MAX_CONTACTS);
+  private readonly cb = new Float64Array(MAX_CONTACTS);
+  private contactInside = false; // algún contacto viene de un centro adentro de un prisma
+  private solX = 0; // salida de solve()
+  private solZ = 0;
 
   constructor(prisms: Prism[], ladders: LadderVolume[], bounds: Bounds, cellSize = 16) {
     if (!(cellSize > 0)) throw new RangeError(`cellSize inválido: ${cellSize}`);
@@ -216,61 +242,142 @@ export class CollisionWorld {
     return best;
   }
 
-  /** Posición corregida para que el disco no toque ningún prisma que se superpone en altura. En cada vuelta resuelve
-   *  la penetración más profunda contra el punto más cercano del borde (si el centro quedó adentro, sale por la
-   *  arista más cercana). Si no hay salida en PUSH_ITERS vueltas devuelve el último intento: pasa con huecos más
-   *  angostos que 2r o con el centro hundido en prismas pegados, donde salir de uno es entrar al otro. */
+  /** Posición corregida para que el disco no toque ningún prisma que se superpone en altura, moviéndolo lo mínimo.
+   *  Cada vuelta junta los contactos (aristas a < r + CONTACT_MARGIN; si el centro está adentro de un prisma, solo la
+   *  salida por su borde más cercano), los linealiza como semiplanos desplazados r desde el punto más cercano (del lado
+   *  seguro: cumplirlo deja el disco a ≥ r de esa arista) y busca el punto más cercano al pedido que los cumple todos:
+   *  el mismo, una proyección o el pliegue entre dos. Así un rincón agudo o un hueco angosto se resuelven juntos en vez
+   *  de rebotar entre paredes. Cada vuelta avanza a lo sumo CONTACT_MARGIN (salvo la salida de un prisma).
+   *  Puede no haber salida (hueco más angosto que 2r, centro hundido en prismas pegados): devuelve el último intento
+   *  y el que llama lo detecta con `overlaps(resultado)` (el controlador rechaza ese movimiento). */
   pushOut(x: number, z: number, r: number, minY: number, maxY: number): Vec2 {
-    const g = this.grid;
-    const r2 = r * r;
+    let ax = x, az = z; // ancla: el punto pedido, o la salida de un prisma si el centro estaba adentro
     for (let iter = 0; iter < PUSH_ITERS; iter++) {
-      const n = g.query(x - r, z - r, x + r, z + r);
-      let worst = -Infinity, wi = -1, wx = 0, wz = 0;
-      for (let k = 0; k < n; k++) {
-        const si = g.found[k];
-        const s = this.solids[si];
-        if (!overlapsY(s, minY, maxY)) continue;
-        if (x + r <= s.minX || x - r >= s.maxX || z + r <= s.minZ || z - r >= s.maxZ) continue;
-        // punto del borde más cercano (qx, qz), arista que lo contiene y paridad
-        const v = s.v;
-        let inside = false, d2 = Infinity, qx = 0, qz = 0, ex = 0, ez = 0;
-        for (let i = 0, j = v.length - 2; i < v.length; j = i, i += 2) {
-          const ax = v[j], az = v[j + 1], bx = v[i], bz = v[i + 1];
-          if (bz > z !== az > z && x < ((ax - bx) * (z - bz)) / (az - bz) + bx) inside = !inside;
-          const dx = bx - ax, dz = bz - az;
-          const len2 = dx * dx + dz * dz;
-          let t = ((x - ax) * dx + (z - az) * dz) / len2;
-          t = t < 0 ? 0 : t > 1 ? 1 : t;
-          const px = ax + t * dx, pz = az + t * dz;
-          const e2 = (px - x) * (px - x) + (pz - z) * (pz - z);
-          if (e2 < d2) {
-            d2 = e2; qx = px; qz = pz; ex = dx; ez = dz;
-          }
-        }
-        if (!inside && d2 >= r2) continue;
-        const d = Math.sqrt(d2);
-        const pen = inside ? r + d : r - d;
-        if (pen < worst || (pen === worst && si > wi)) continue;
-        // dirección de salida: del borde hacia afuera
-        let ox: number, oz: number;
-        if (d > 1e-9) {
-          const sgn = inside ? -1 : 1;
-          ox = (sgn * (x - qx)) / d;
-          oz = (sgn * (z - qz)) / d;
-        } else {
-          const el = Math.hypot(ex, ez);
-          ox = -ez / el; // normal exterior de una arista antihoraria vista desde arriba
-          oz = ex / el;
-        }
-        worst = pen; wi = si;
-        wx = qx + ox * (r + SKIN);
-        wz = qz + oz * (r + SKIN);
+      const k = this.contacts(x, z, r, minY, maxY);
+      if (k === 0) break;
+      if (this.contactInside) {
+        ax = x;
+        az = z;
       }
-      if (wi < 0) break;
-      x = wx;
-      z = wz;
+      if (!this.solve(k, ax, az)) break;
+      let sx = this.solX, sz = this.solZ;
+      const step = Math.hypot(sx - x, sz - z);
+      if (this.contactInside) {
+        ax = sx; // la salida de un prisma puede ser larga: no se recorta y pasa a ser el ancla
+        az = sz;
+      } else if (step > CONTACT_MARGIN) {
+        sx = x + ((sx - x) * CONTACT_MARGIN) / step;
+        sz = z + ((sz - z) * CONTACT_MARGIN) / step;
+      }
+      x = sx;
+      z = sz;
+      if (step <= 1e-9) break;
     }
     return [x, z];
+  }
+
+  /** Junta en cnx/cnz/cb los contactos del disco en (x, z); devuelve cuántos. Con el centro afuera de un prisma,
+   *  cada arista a menos de r + CONTACT_MARGIN; con el centro adentro, solo la salida por el borde más cercano. */
+  private contacts(x: number, z: number, r: number, minY: number, maxY: number): number {
+    const g = this.grid;
+    const reach = r + CONTACT_MARGIN;
+    const n = g.query(x - reach, z - reach, x + reach, z + reach);
+    let k = 0;
+    this.contactInside = false;
+    for (let f = 0; f < n; f++) {
+      const s = this.solids[g.found[f]];
+      if (!overlapsY(s, minY, maxY) || bboxMisses(s, x, z, reach)) continue;
+      const v = s.v;
+      const inside = insideRing(v, x, z);
+      let d2 = Infinity, qx = 0, qz = 0, ex = 0, ez = 0; // borde más cercano (si está adentro)
+      for (let i = 0, j = v.length - 2; i < v.length; j = i, i += 2) {
+        const ax = v[j], az = v[j + 1], bx = v[i], bz = v[i + 1];
+        const t = segT(x, z, ax, az, bx, bz);
+        const px = ax + t * (bx - ax), pz = az + t * (bz - az);
+        const e2 = (px - x) * (px - x) + (pz - z) * (pz - z);
+        if (!inside) {
+          if (e2 < reach * reach) k = this.addContact(k, x, z, r, px, pz, e2, bx - ax, bz - az, false);
+        } else if (e2 < d2) {
+          d2 = e2; qx = px; qz = pz; ex = bx - ax; ez = bz - az;
+        }
+      }
+      if (inside && d2 < Infinity) {
+        k = this.addContact(k, x, z, r, qx, qz, d2, ex, ez, true);
+        this.contactInside = true;
+      }
+    }
+    return k;
+  }
+
+  /** Agrega el semiplano del punto del borde q (a distancia² d2 del centro, sobre una arista de dirección e): el centro
+   *  tiene que quedar a ≥ r de q en la dirección de salida. Si ya hay MAX_CONTACTS, reemplaza al menos violado. */
+  private addContact(k: number, x: number, z: number, r: number, qx: number, qz: number, d2: number, ex: number, ez: number, inside: boolean): number {
+    const { cnx, cnz, cb } = this;
+    const d = Math.sqrt(d2);
+    let nx: number, nz: number;
+    if (d > 1e-9) {
+      const sgn = inside ? -1 : 1; // hacia afuera del prisma
+      nx = (sgn * (x - qx)) / d;
+      nz = (sgn * (z - qz)) / d;
+    } else {
+      const el = Math.hypot(ex, ez);
+      nx = -ez / el; // normal exterior de una arista antihoraria vista desde arriba
+      nz = ex / el;
+    }
+    const b = nx * qx + nz * qz + r + SKIN;
+    let slot = k;
+    if (k === MAX_CONTACTS) {
+      let mv = Infinity;
+      for (let i = 0; i < k; i++) {
+        const vi = cb[i] - cnx[i] * x - cnz[i] * z;
+        if (vi < mv) {
+          mv = vi; slot = i;
+        }
+      }
+      if (b - nx * x - nz * z <= mv) return k;
+    } else {
+      k++;
+    }
+    cnx[slot] = nx; cnz[slot] = nz; cb[slot] = b;
+    return k;
+  }
+
+  /** Punto más cercano a (ax, az) que cumple los k semiplanos (en solX/solZ). En 2D es el ancla, la proyección sobre
+   *  una recta o la intersección de dos: se prueban todas. false si ninguna los cumple a todos. */
+  private solve(k: number, ax: number, az: number): boolean {
+    const { cnx, cnz, cb } = this;
+    if (this.feasible(k, ax, az)) {
+      this.solX = ax;
+      this.solZ = az;
+      return true;
+    }
+    let best = Infinity;
+    for (let i = 0; i < k; i++) {
+      const vi = cb[i] - cnx[i] * ax - cnz[i] * az;
+      if (vi <= 0 || vi * vi >= best) continue;
+      const x = ax + vi * cnx[i], z = az + vi * cnz[i];
+      if (this.feasible(k, x, z)) {
+        best = vi * vi; this.solX = x; this.solZ = z;
+      }
+    }
+    for (let i = 0; i < k; i++) {
+      for (let j = i + 1; j < k; j++) {
+        const det = cnx[i] * cnz[j] - cnz[i] * cnx[j];
+        if (Math.abs(det) < 1e-9) continue; // paralelas
+        const x = (cb[i] * cnz[j] - cb[j] * cnz[i]) / det;
+        const z = (cnx[i] * cb[j] - cnx[j] * cb[i]) / det;
+        const e2 = (x - ax) * (x - ax) + (z - az) * (z - az);
+        if (e2 < best && this.feasible(k, x, z)) {
+          best = e2; this.solX = x; this.solZ = z;
+        }
+      }
+    }
+    return best < Infinity;
+  }
+
+  private feasible(k: number, x: number, z: number): boolean {
+    for (let i = 0; i < k; i++) if (this.cnx[i] * x + this.cnz[i] * z < this.cb[i] - 1e-9) return false;
+    return true;
   }
 
   /** Escalera cuyo volumen toca el disco, con 0 ≤ y ≤ topY (± EPS). Si hay varias, la más cercana. */
@@ -297,7 +404,8 @@ export class CollisionWorld {
   }
 
   /** Primer impacto contra un prisma (paredes, tapas o bases) a ≤ maxDist. Solo cuentan las caras por las que el
-   *  rayo entra: un rayo que nace adentro de un prisma no lo golpea. El suelo no es un prisma. */
+   *  rayo entra: un rayo que nace adentro de un prisma, o justo sobre su tapa o su base (tA = 0), no golpea ese
+   *  prisma. El suelo no es un prisma. */
   raycast(origin: Vec3, dir: Vec3, maxDist: number): RayHit | null {
     const len = Math.hypot(dir[0], dir[1], dir[2]);
     if (!(len > 0) || !(maxDist >= 0)) return null;
@@ -367,17 +475,9 @@ function rayPrism(s: Solid, ox: number, oy: number, oz: number, dx: number, dy: 
   const v = s.v;
   let best = Infinity;
   // tapa o base: el rayo entra a la franja de alturas en tA > 0 con el punto dentro de la planta
-  if (tA > 0) {
-    const px = ox + dx * tA, pz = oz + dz * tA;
-    let inside = false;
-    for (let i = 0, j = v.length - 2; i < v.length; j = i, i += 2) {
-      const xi = v[i], zi = v[i + 1], xj = v[j], zj = v[j + 1];
-      if (zi > pz !== zj > pz && px < ((xj - xi) * (pz - zi)) / (zj - zi) + xi) inside = !inside;
-    }
-    if (inside) {
-      best = tA;
-      out[0] = 0; out[1] = dy < 0 ? 1 : -1; out[2] = 0;
-    }
+  if (tA > 0 && insideRing(v, ox + dx * tA, oz + dz * tA)) {
+    best = tA;
+    out[0] = 0; out[1] = dy < 0 ? 1 : -1; out[2] = 0;
   }
   // paredes: aristas por las que el rayo entra (dir · normal exterior < 0) dentro de [tA, tB]
   if (dx !== 0 || dz !== 0) {
