@@ -32,7 +32,7 @@ function roadKind(highway: string | undefined): RoadKind | null {
 }
 
 /** Desplaza una polilínea `d` metros a la izquierda (normal por vértice, unión en inglete). */
-function offsetLine(pts: Vec2[], d: number): Vec2[] {
+export function offsetLine(pts: Vec2[], d: number): Vec2[] {
   return pts.map((p, i) => {
     const prev = pts[Math.max(i - 1, 0)];
     const next = pts[Math.min(i + 1, pts.length - 1)];
@@ -55,7 +55,7 @@ function offsetLine(pts: Vec2[], d: number): Vec2[] {
   });
 }
 
-function bufferLine(pts: Vec2[], half: number): Vec2[] {
+export function bufferLine(pts: Vec2[], half: number): Vec2[] {
   return ensureCCW([...offsetLine(pts, half), ...offsetLine(pts, -half).reverse()]);
 }
 
