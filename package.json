@@ -16,6 +16,7 @@
     "build:map": "node tools/build-map.ts"
   },
   "dependencies": {
+    "polygon-clipping": "^0.15.7",
     "three": "^0.187.0"
   },
   "devDependencies": {

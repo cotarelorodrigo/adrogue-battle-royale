@@ -1,4 +1,5 @@
 import { areaRect, distPointSegment, ensureCCW, hash01, pointInPolygon, polygonArea, project } from '../shared/geo.ts';
+import polygonClipping from 'polygon-clipping';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, OutskirtBuilding, Road } from '../shared/mapdata.ts';
 
@@ -21,7 +22,6 @@ export const heightFor = (floors: number): number => floors * FLOOR_H + PARAPET;
 
 const MIN_AREA = 12;
 const SIMPLIFY_M = 0.3;
-const ROAD_SAMPLE_M = 2;
 const CORRIDOR_M = 25;
 const APARTMENT_MIN_AREA = 400;
 const TINTS = ['#f4f1ea', '#ece4d3', '#e6d9b8', '#ddc9a0', '#d8d4cc', '#c9c5bc', '#efe6d8', '#e2d3c0'];
@@ -74,16 +74,36 @@ function bboxOf(p: Vec2[]): [number, number, number, number] {
   return [x0, z0, x1, z1];
 }
 
-function roadSamples(roads: Road[]): Vec2[] {
-  const out: Vec2[] = [];
+const NO_CLIP_KINDS: readonly string[] = ['footway', 'pedestrian', 'service'];
+const JOINT_SIDES = 12;
+
+type Poly = [number, number][][];
+interface Corridor { poly: Poly; bbox: [number, number, number, number] }
+
+/** Calzada de cada vía vehicular: un rectángulo por tramo más un polígono en cada vértice (juntas y extremos). */
+function corridorsOf(roads: Road[]): Corridor[] {
+  const out: Corridor[] = [];
+  const add = (ring: Vec2[]) => out.push({ poly: [[...ring, ring[0]]], bbox: bboxOf(ring) });
   for (const r of roads) {
-    if (r.kind === 'footway' || r.kind === 'pedestrian') continue;
+    if (NO_CLIP_KINDS.includes(r.kind)) continue;
+    const h = r.width / 2;
+    if (!(h > 0)) continue;
     for (let i = 0; i < r.points.length - 1; i++) {
       const [a, b] = [r.points[i], r.points[i + 1]];
-      const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / ROAD_SAMPLE_M));
-      for (let k = 0; k <= n; k++) out.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len < 1e-6) continue;
+      const nx = (-(b[1] - a[1]) / len) * h;
+      const nz = ((b[0] - a[0]) / len) * h;
+      add([[a[0] + nx, a[1] + nz], [b[0] + nx, b[1] + nz], [b[0] - nx, b[1] - nz], [a[0] - nx, a[1] - nz]]);
     }
-    if (r.points.length === 1) out.push(r.points[0]);
+    for (const [x, z] of r.points) {
+      const ring: Vec2[] = [];
+      for (let k = 0; k < JOINT_SIDES; k++) {
+        const t = (2 * Math.PI * k) / JOINT_SIDES;
+        ring.push([x + h * Math.cos(t), z + h * Math.sin(t)]);
+      }
+      add(ring);
+    }
   }
   return out;
 }
@@ -112,36 +132,51 @@ export function buildBuildings(
 ): { buildings: Building[]; outskirts: OutskirtBuilding[] } {
   const rect = areaRect();
 
-  // 1. proyectar, CCW, simplificar
+  // calzadas (grilla espacial para recortar solo contra las cercanas)
+  const CELL = 50;
+  const grid = new Map<string, Corridor[]>();
+  for (const c of corridorsOf(roads)) {
+    for (let i = Math.floor(c.bbox[0] / CELL); i <= Math.floor(c.bbox[2] / CELL); i++)
+      for (let j = Math.floor(c.bbox[1] / CELL); j <= Math.floor(c.bbox[3] / CELL); j++) {
+        const k = `${i},${j}`;
+        (grid.get(k) ?? grid.set(k, []).get(k)!).push(c);
+      }
+  }
+  const nearby = (bb: [number, number, number, number]): Corridor[] => {
+    const set = new Set<Corridor>();
+    for (let i = Math.floor(bb[0] / CELL); i <= Math.floor(bb[2] / CELL); i++)
+      for (let j = Math.floor(bb[1] / CELL); j <= Math.floor(bb[3] / CELL); j++)
+        for (const c of grid.get(`${i},${j}`) ?? [])
+          if (c.bbox[0] < bb[2] && c.bbox[2] > bb[0] && c.bbox[1] < bb[3] && c.bbox[3] > bb[1]) set.add(c);
+    return [...set];
+  };
+
+  // 1-3'. proyectar, CCW, simplificar, recortar calzada (cada pedazo repite 1 y 2), área mínima
+  const toCand = (ring: Vec2[]): Cand | null => {
+    if (ring.length < 3) return null;
+    const footprint = ensureCCW(simplifyRing(ring, SIMPLIFY_M));
+    if (footprint.length < 3) return null;
+    const area = polygonArea(footprint);
+    if (area < MIN_AREA) return null;
+    return { footprint, area, c: centroid(footprint), bbox: bboxOf(footprint) };
+  };
   let cands: Cand[] = [];
   for (const f of fc.features) {
     let ring: Vec2[] = f.geometry.coordinates[0].map(([lon, lat]) => project(lat, lon));
     const l = ring.length - 1;
     if (l > 0 && ring[0][0] === ring[l][0] && ring[0][1] === ring[l][1]) ring = ring.slice(0, -1);
-    if (ring.length < 3) continue;
-    const footprint = ensureCCW(simplifyRing(ring, SIMPLIFY_M));
-    if (footprint.length < 3) continue;
-    cands.push({ footprint, area: polygonArea(footprint), c: centroid(footprint), bbox: bboxOf(footprint) });
+    const whole = toCand(ring);
+    if (!whole) continue;
+    const near = nearby(whole.bbox);
+    if (near.length === 0) { cands.push(whole); continue; }
+    const subject: Poly = [[...whole.footprint, whole.footprint[0]]];
+    const pieces = polygonClipping.difference(subject, ...near.map((c) => c.poly));
+    for (const piece of pieces) {
+      const outer = piece[0].slice(0, -1) as Vec2[]; // se descartan los huecos
+      const cand = toCand(outer);
+      if (cand) cands.push(cand);
+    }
   }
-
-  // 2. área mínima
-  cands = cands.filter((c) => c.area >= MIN_AREA);
-
-  // 3. sobre eje de calles vehiculares (grilla espacial de 20 m)
-  const CELL = 20;
-  const grid = new Map<string, Vec2[]>();
-  for (const s of roadSamples(roads)) {
-    const k = `${Math.floor(s[0] / CELL)},${Math.floor(s[1] / CELL)}`;
-    (grid.get(k) ?? grid.set(k, []).get(k)!).push(s);
-  }
-  const onRoad = (c: Cand): boolean => {
-    for (let i = Math.floor(c.bbox[0] / CELL); i <= Math.floor(c.bbox[2] / CELL); i++)
-      for (let j = Math.floor(c.bbox[1] / CELL); j <= Math.floor(c.bbox[3] / CELL); j++)
-        for (const s of grid.get(`${i},${j}`) ?? [])
-          if (pointInPolygon(s, c.footprint)) return true;
-    return false;
-  };
-  cands = cands.filter((c) => !onRoad(c));
 
   // 4. superposición: de mayor a menor, se descarta el que queda cubierto > 50 % por uno ya aceptado
   const bySize = [...cands].sort((a, b) => b.area - a.area || a.c[1] - b.c[1] || a.c[0] - b.c[0]);
