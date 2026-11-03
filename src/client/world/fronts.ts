@@ -3,8 +3,8 @@ import type { Vec2 } from '../../shared/geo.ts';
 import type { Building } from '../../shared/mapdata.ts';
 import { cellRect, groundCells, upperCell } from './front-atlas.ts';
 import type { FrontCell } from './front-atlas.ts';
-import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry } from './geometry.ts';
-import type { Builder } from './geometry.ts';
+import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry } from './wall-kit.ts';
+import type { Builder } from './wall-kit.ts';
 
 /** Toldo sobre la puerta y la vidriera: cae de `topY` (en la pared) a `bottomY` a `depth` m; `inset` m de margen por lado. */
 export const AWNING = { topY: 2.3, bottomY: 2.0, depth: 1.0, inset: 0.2 } as const;
@@ -69,16 +69,11 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
   const upper = upperCell(f.arriba, ladrillo);
   const bandCell = upperCell('ciego', ladrillo);
 
-  // Corrida principal: las aristas en orden. Cada una se recorre en el sentido de la corrida: el del vecino; la única, el guardado.
+  // Corrida principal: las aristas en orden (desde → hasta). Cada una se recorre en el sentido guardado, o al revés si
+  // `contra`; fp puede estar dado vuelta respecto de lo guardado, y la normal sale siempre del sentido de fp.
   const main = f.edges.map(edgeOf);
-  const mid = (i: number): Vec2 => [(fp[i][0] + fp[(i + 1) % fp.length][0]) / 2, (fp[i][1] + fp[(i + 1) % fp.length][1]) / 2];
-  const flipped = fp !== bd.footprint;
-  const mainRun = makeRun(fp, main.map((i, k) => {
-    if (main.length < 2) return { i, rev: flipped };
-    const [m0, m1] = k < main.length - 1 ? [mid(i), mid(main[k + 1])] : [mid(main[k - 1]), mid(i)];
-    const q = fp[(i + 1) % fp.length];
-    return { i, rev: (q[0] - fp[i][0]) * (m1[0] - m0[0]) + (q[1] - fp[i][1]) * (m1[1] - m0[1]) < 0 };
-  }));
+  const rev = (fp !== bd.footprint) !== (f.contra === true);
+  const mainRun = makeRun(fp, main.map((i) => ({ i, rev })));
 
   // Corridas de esquina: grupos de aristas contiguas (con vuelta por el índice 0).
   const mainSet = new Set(main);

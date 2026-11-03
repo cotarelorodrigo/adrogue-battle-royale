@@ -85,6 +85,20 @@ describe('frontGeometry', () => {
     for (const q of walls(gfront(bd))) expect(q.n.z).toBeCloseTo(1);
   });
 
+  test('contra: "inicio" cae en el extremo desde, que es el otro extremo físico', () => {
+    const doorAt = (bd: Building): number => {
+      const g = row(walls(gfront(bd)), 0, FLOOR_H);
+      return g.findIndex((q) => inCell(q, 'vidriera-puerta'));
+    };
+    // antihorario: la arista guardada va de x = 0 a x = 9
+    expect(doorAt(lot('a', 9, front()))).toBe(0);
+    expect(doorAt(lot('a', 9, front({ contra: true })))).toBe(2);
+    // horario: la arista guardada 3 va de x = 9 a x = 0
+    const cw = [[0, 0], [0, -12], [9, -12], [9, 0]] as Building['footprint'];
+    expect(doorAt(lot('a', 9, front({ edges: [3] }), { footprint: cw }))).toBe(2);
+    expect(doorAt(lot('a', 9, front({ edges: [3], contra: true }), { footprint: cw }))).toBe(0);
+  });
+
   test('lotes vecinos con colores distintos dan colores distintos (anti-objetivo del spec)', () => {
     const a = quads(gfront(lot('a', 9, front(), { tint: '#d9d2c3' })));
     const b = quads(gfront(lot('b', 9, front(), { tint: '#7a9e6b' })));

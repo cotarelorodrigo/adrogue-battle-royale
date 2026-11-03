@@ -5,7 +5,7 @@ import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts'
 import { parseOsm } from './osm.ts';
 import { applyFrentes } from './frentes.ts';
 import type { FrentesInput } from './frentes-input.ts';
-import { frontEdgesOf } from './lots.ts';
+import { frontEdgesOf, frontIsContra } from './lots.ts';
 import { buildBuildings } from './buildings.ts';
 import type { GeoJSONFeatureCollection } from './buildings.ts';
 import { matchPlaces } from './places.ts';
@@ -57,11 +57,13 @@ export function assembleMap(
     const lot = b.front && fr.fronts.get(b.id);
     if (b.front && lot) {
       // las aristas del frente se buscan sobre la planta ya redondeada
-      const edges = frontEdgesOf(footprint, lot.front.map((p) => v2(p)));
+      const line = lot.front.map((p) => v2(p));
+      const edges = frontEdgesOf(footprint, line);
+      const contra = frontIsContra(footprint, edges[0], line);
       if (edges.length === 0) warnings.push(`${b.id}: el frente no coincide con ninguna arista`);
       const corner = [...new Set(lot.cornerRings.flatMap((c) => { const r = ring(c); return frontEdgesOf(footprint, [...r, r[0]]); }))]
         .filter((e) => !edges.includes(e));
-      buildings.push({ ...b, footprint, height: rn(b.height), front: { ...b.front, edges, corner } });
+      buildings.push({ ...b, footprint, height: rn(b.height), front: { ...b.front, edges, corner, ...(contra ? { contra: true as const } : {}) } });
       continue;
     }
     buildings.push({ ...b, footprint, height: rn(b.height) });

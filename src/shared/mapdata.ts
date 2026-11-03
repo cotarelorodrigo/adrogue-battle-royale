@@ -46,6 +46,9 @@ export type Puerta = 'inicio' | 'medio' | 'fin';
 /** Frente relevado de un lote. `edges`: aristas de `footprint` sobre la línea de edificación, de `desde` a `hasta`;
  *  `corner`: aristas sobre la línea de la calle transversal (lotes de esquina). */
 export interface Front { edges: number[]; corner: number[]; pb: PlantaBaja; arriba: Arriba; puerta: Puerta;
+  /** Presente cuando las aristas de `edges`, en el sentido de la planta guardada (footprint[e] → footprint[e+1]), van de
+   *  `hasta` a `desde`. Todas las del lote comparten sentido; sin la marca van de `desde` a `hasta`. */
+  contra?: true;
   ladrillo?: true; colorPB?: string; toldo?: { color: string; rayas?: true } }
 export interface SignLook { fondo: string; letra: string; marco: string; fuente: Fuente; cursiva?: true }
 export const SIGN_H = 0.9;

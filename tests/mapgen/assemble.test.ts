@@ -231,6 +231,9 @@ describe('assembleMap con el frente de prueba', () => {
       expect(p.sign?.look, id).toBeDefined();
     }
   });
+  test('todos los lotes de la calle recorren su frente en el mismo sentido (contra)', () => {
+    expect(new Set(lots.map((l) => l.front!.contra ?? false)).size).toBe(1);
+  });
   test('cada lote tiene aristas de frente y no se superpone con otro edificio', () => {
     expect(lots).toHaveLength(raw.frentes.frentes[0].lotes.filter((l) => l.pisos > 0).length);
     for (const l of lots) {

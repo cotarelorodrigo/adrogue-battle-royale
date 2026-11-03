@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Arriba, PlantaBaja } from '../../shared/mapdata.ts';
 import { averageLuminance, bars, frame, glass, shutter } from './facades.ts';
-import { BAY_W, FLOOR_H } from './geometry.ts';
+import { BAY_W, FLOOR_H } from './wall-kit.ts';
 
 export const FRONT_CELLS = ['vidriera', 'vidriera-puerta', 'persiana', 'porton', 'puerta', 'ventana-pb', 'banco', 'banco-puerta',
   'acceso', 'pared-pb', 'ventana', 'balcon', 'vidriado', 'pared', 'porton-l', 'puerta-l', 'ventana-pb-l', 'pared-pb-l',

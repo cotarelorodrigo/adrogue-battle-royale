@@ -225,6 +225,27 @@ export function lotSign(l: LotShape, height: number): Sign | null {
   };
 }
 
+/** Posición (m) del punto más cercano de `line` a `p`, medida desde el comienzo de `line`. */
+function alongLine(p: Vec2, line: Vec2[], cum: number[]): number {
+  let best = [Infinity, 0];
+  for (let i = 1; i < line.length; i++) {
+    const [a, b] = [line[i - 1], line[i]];
+    const l2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
+    const t = Math.min(Math.max(((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / l2, 0), 1);
+    const d = distPointSegment(p, a, b);
+    if (d < best[0]) best = [d, cum[i - 1] + t * (cum[i] - cum[i - 1])];
+  }
+  return best[1];
+}
+
+/** true si la arista `edge` de `footprint`, en el sentido guardado (footprint[e] → footprint[e+1]), va de `hasta` a `desde`. */
+export function frontIsContra(footprint: Vec2[], edge: number | undefined, line: Vec2[]): boolean {
+  if (edge === undefined) return false;
+  const cum = cumulative(line);
+  const a = footprint[edge], b = footprint[(edge + 1) % footprint.length];
+  return alongLine(b, line, cum) < alongLine(a, line, cum);
+}
+
 export function frontEdgesOf(footprint: Vec2[], line: Vec2[], tol = 0.15): number[] {
   const dist = (p: Vec2): number => {
     let d = Infinity;
@@ -232,17 +253,7 @@ export function frontEdgesOf(footprint: Vec2[], line: Vec2[], tol = 0.15): numbe
     return d;
   };
   const cum = cumulative(line);
-  const along = (p: Vec2): number => {
-    let best = [Infinity, 0];
-    for (let i = 1; i < line.length; i++) {
-      const [a, b] = [line[i - 1], line[i]];
-      const l2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
-      const t = Math.min(Math.max(((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / l2, 0), 1);
-      const d = distPointSegment(p, a, b);
-      if (d < best[0]) best = [d, cum[i - 1] + t * (cum[i] - cum[i - 1])];
-    }
-    return best[1];
-  };
+  const along = (p: Vec2): number => alongLine(p, line, cum);
   const edges: { i: number; s: number }[] = [];
   footprint.forEach((a, i) => {
     const b = footprint[(i + 1) % footprint.length];

@@ -1,6 +1,6 @@
 import polygonClipping from 'polygon-clipping';
 import { expect, test } from 'vitest';
-import { carveLots, frontEdgesOf, layoutLots, lotBuilding, lotSign } from '../../src/mapgen/lots.ts';
+import { carveLots, frontEdgesOf, frontIsContra, layoutLots, lotBuilding, lotSign } from '../../src/mapgen/lots.ts';
 import { bufferLine, ROAD_SPECS } from '../../src/mapgen/osm.ts';
 import type { Frontage } from '../../src/mapgen/frontage.ts';
 import type { FrenteInput, LoteInput } from '../../src/mapgen/frentes-input.ts';
@@ -137,6 +137,13 @@ test('frontEdgesOf: encuentra la arista del frente con 4 mm de error y no las de
   const fp: Vec2[] = [[0, 0.004], [10, 0], [10, 15], [0, 15]];
   expect(frontEdgesOf(fp, [[0, 0], [10, 0]])).toEqual([0]);
   expect(frontEdgesOf(fp, [[0, 0], [10, 0]], 0.001)).toEqual([]);
+});
+
+test('frontIsContra: la arista guardada va con o contra el sentido desde → hasta', () => {
+  const fp: Vec2[] = [[0, 0], [10, 0], [10, 15], [0, 15]]; // arista 0: (0,0) → (10,0)
+  expect(frontIsContra(fp, 0, [[0, 0], [10, 0]])).toBe(false);
+  expect(frontIsContra(fp, 0, [[10, 0], [0, 0]])).toBe(true);
+  expect(frontIsContra(fp, undefined, [[0, 0], [10, 0]])).toBe(false);
 });
 
 test('lotBuilding: kind, wall y front', () => {
