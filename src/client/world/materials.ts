@@ -79,12 +79,24 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
   const lambert = q === 'baja';
   const maps: MapKind[] = lambert ? ['diff'] : ['diff', 'nor_gl', 'rough'];
 
+  const base = `${import.meta.env.BASE_URL}textures/`;
   const images = new Map<string, HTMLImageElement>();
   await Promise.all(
-    SLOTS.flatMap((slot) => maps.map(async (m) => images.set(`${slot}_${m}`, await loadImage(`/textures/${slot}_${m}.jpg`)))),
+    SLOTS.flatMap((slot) => maps.map(async (m) => images.set(`${slot}_${m}`, await loadImage(`${base}${slot}_${m}.jpg`)))),
   );
   const img = (slot: Slot, m: MapKind): HTMLImageElement => images.get(`${slot}_${m}`)!;
-  const tex = (slot: Slot, m: MapKind): THREE.CanvasTexture => makeTexture(downscale(img(slot, m), size), m === 'diff', anisotropy);
+  /** Una textura por slot y mapa, compartida entre materiales (cada copia de 1024² son ~5,6 MB de GPU). */
+  const textures = new Map<string, THREE.CanvasTexture>();
+  const tex = (slot: Slot, m: MapKind): THREE.CanvasTexture => {
+    const key = `${slot}_${m}`;
+    let t = textures.get(key);
+    if (!t) {
+      t = makeTexture(downscale(img(slot, m), size), m === 'diff', anisotropy);
+      t.name = key;
+      textures.set(key, t);
+    }
+    return t;
+  };
 
   /** Material con los mapas del slot (o `map` propio). `normal: false` lo omite (fachadas). */
   function material(slot: Slot, params: THREE.MeshStandardMaterialParameters = {}, map?: THREE.Texture, normal = true): THREE.Material {
@@ -125,4 +137,15 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
     platform: material('hormigon'),
     rail: material('metal'),
   };
+}
+
+/** Libera los materiales y sus texturas (compartidas o no), cada uno una sola vez. */
+export function disposeMaterials(m: WorldMaterials): void {
+  const materials = new Set<THREE.Material>(Object.values(m));
+  const textures = new Set<THREE.Texture>();
+  for (const mat of materials) {
+    for (const v of Object.values(mat)) if (v instanceof THREE.Texture) textures.add(v);
+  }
+  for (const t of textures) t.dispose();
+  for (const mat of materials) mat.dispose();
 }

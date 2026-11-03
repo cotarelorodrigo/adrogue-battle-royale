@@ -18,3 +18,15 @@ test('un valor guardado inválido vuelve a media', () => {
   localStorage.setItem('adrogue.calidad', 'ultra');
   expect(loadQuality()).toBe('media');
 });
+
+test('con localStorage bloqueado: media por defecto y guardar no explota', () => {
+  const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('bloqueado', 'SecurityError'); });
+  const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('bloqueado', 'SecurityError'); });
+  try {
+    expect(loadQuality()).toBe('media');
+    expect(() => saveQuality('alta')).not.toThrow();
+  } finally {
+    get.mockRestore();
+    set.mockRestore();
+  }
+});

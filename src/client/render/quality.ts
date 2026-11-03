@@ -17,11 +17,21 @@ export const QUALITY: Record<Quality, QualityPreset> = {
 
 const KEY = 'adrogue.calidad';
 
+/** Con el almacenamiento bloqueado (privacidad, iframes) se juega en media y no se recuerda la elección. */
 export function loadQuality(): Quality {
-  const v = localStorage.getItem(KEY);
+  let v: string | null = null;
+  try {
+    v = localStorage.getItem(KEY);
+  } catch {
+    // almacenamiento bloqueado
+  }
   return v === 'baja' || v === 'media' || v === 'alta' ? v : 'media';
 }
 
 export function saveQuality(q: Quality): void {
-  localStorage.setItem(KEY, q);
+  try {
+    localStorage.setItem(KEY, q);
+  } catch {
+    // almacenamiento bloqueado o lleno: no se recuerda
+  }
 }
