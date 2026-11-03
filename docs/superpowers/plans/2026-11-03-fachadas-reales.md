@@ -170,7 +170,7 @@
 
 `usa` mezcla el estilo nombrado y después aplica los campos del lote, que mandan.
 
-**Reglas de validación.** Cada mensaje empieza con `${source}: frente ${id}, lote ${k}` (k desde 1), o con `${source}: frente ${id}` si el error es del frente.
+**Reglas de validación.** Primero se revisan los campos desconocidos y después lo demás. Cada mensaje empieza con `${source}: frente ${id}, lote ${k}` (k desde 1), o con `${source}: frente ${id}` si el error es del frente.
 - Un campo desconocido en cualquier nivel es un error que lo nombra. Así salta un typo como `"colour"`.
 - Los colores tienen la forma `#rrggbb`.
 - `ancho` va de 0 a 60, sin incluir el 0.
@@ -286,7 +286,10 @@ test('data/frentes.json y el fixture de prueba son válidos', () => {
    - Se usa cualquier nombre porque en una esquina pueden cruzarse dos calles, como Mitre y Somellera.
    - Se muestrea la línea estirada cada 0,05 m. El frente empieza después de la última muestra que cae dentro de `corners[0]` y termina antes de la primera muestra que cae dentro de `corners[1]`.
    - Error si no queda nada entre las dos: `el frente queda entero dentro de la esquina`.
-6. **Resultado.** `line` es el tramo entre esos dos puntos, con los vértices intermedios de la cadena. `length` es su largo y `ext` es la línea estirada.
+6. **Resultado.**
+   - `line` es el tramo entre esos dos puntos, con los vértices intermedios de la cadena. `length` es su largo.
+   - Cada punto de corte se refina por bisección entre la última muestra de adentro y la primera de afuera, hasta 1 mm.
+   - `ext` es `line` estirada exactamente 20 m por cada punta sobre la misma línea desplazada del paso 4. Así, la posición `s` de `line` es la `s + 20` de `ext`.
 
 - [ ] **Step 1: Write the failing tests.** Las calles sintéticas se arman con `ROAD_SPECS`.
   - **Calles de prueba:**
@@ -368,7 +371,7 @@ test('datos reales: EA de Bartolomé Mitre a Pellerano resuelve igual que de Som
    - Claim: `[...offsetLine(F, −inward·setback), ...offsetLine(F, inward·(retiro+fondo)).reverse()]`.
 4. **Recorte.**
    - Al edificio y al claim se les resta, con `polygon-clipping`:
-     - los corredores de **todas** las calles vehiculares cercanas (`bufferLine`, media anchura `width/2 + sidewalk`);
+     - los polígonos de `fr.corners[0]` y `fr.corners[1]`, más los corredores de **todas** las calles vehiculares cercanas de `roads` (`bufferLine`, media anchura `width/2 + sidewalk`);
      - y, solo al edificio, la unión de los edificios de los lotes anteriores del mismo frente.
    - Del edificio queda la pieza más grande. Si mide menos de 4 m², error: `frente ${id}, lote ${k}: el lote quedó demasiado chico (${a} m²)`.
    - `front` y `cornerRings` se recalculan sobre lo que quedó:
@@ -424,7 +427,7 @@ test('lotSign: frente, alto y bandera', () => {
      bandera: blade true, normal = [1, 0], width 1.2, ancla a 0.7 de la línea, bottomY 2.6 */
 });
 test('carveLots: recorta, conserva el id de la pieza mayor, numera el resto y tira las de menos de 12 m²', () => {
-  /* b0001 de 40 × 20; un claim de 10 m de ancho en el medio → b0001 (área 200 ± 0,5) y b0001-2 (área 200 ± 0,5, empate:
+  /* b0001 de 40 × 20; un claim de 10 m de ancho en el medio → b0001 (área 300 ± 0,5) y b0001-2 (área 300 ± 0,5, empate:
      la de menor x primero); un claim que deja una franja de 2 × 5 → esa franja no aparece */
 });
 test('frontEdgesOf: encuentra la arista del frente con 4 mm de error y no las de los costados', () => {
@@ -553,7 +556,7 @@ test('carteles de lotes sin lugar van a signs', () => { /* 3 lotes con cartel, 1
 
 - [ ] **Step 1: Write the failing tests.**
   - `parseOsm` marca `sett` en una vía `surface=sett` y no en una `paving_stones`.
-  - Sobre datos reales: la vía `w28314572` sale con `surface: 'sett'` porque así lo dice `data/frentes.json`, y hay al menos 30 vías vehiculares más con `sett`.
+  - Sobre datos reales: la vía `w28314572` sale con `surface: 'sett'` porque así lo dice `data/frentes.json`. Aparte de EA, se cuentan las vías con `sett` que no son footway ni pedestrian. El test fija como piso la cantidad medida y el informe la anota.
   - `createMaterials` devuelve `cobble` y `disposeMaterials` libera sus texturas.
   - En chunks, una calle con `sett` genera una malla `cobble` y ninguna `asphalt`.
 - [ ] **Step 2: Run** `npx vitest run tests/mapgen/osm.test.ts tests/client/materials.test.ts tests/client/geometry.test.ts`. **Expected:** FAIL.
