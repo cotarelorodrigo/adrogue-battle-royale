@@ -149,3 +149,11 @@ test('fixed: el lugar toma el edificio y el cartel dados, sin buscar ni aplicar 
   expect(res.places[0].sign).toBe(sign);
   expect(res.buildings.find((b) => b.id === 'b0001')).toMatchObject({ floors: 2, tint: '#fff', wall: 'plaster' });
 });
+
+test('un lugar sin enlace que cae en un lote relevado no le pisa pisos, tinte ni material', () => {
+  const lot: Building = { ...buildings[0], id: 'lote', front: { edges: [], corner: [], pb: 'vidriera', arriba: 'ventanas', puerta: 'medio' } };
+  const res = matchPlaces([inp('x', 'bank', [10, -14], { floors: 5, tint: '#123456', wall: 'brick' })], [lot], [], roads);
+  expect(res.places[0].buildingId).toBe('lote');
+  expect(res.places[0].sign).toBeDefined();
+  expect(res.buildings[0]).toMatchObject({ floors: 2, height: 6.6, tint: '#fff', wall: 'plaster' });
+});

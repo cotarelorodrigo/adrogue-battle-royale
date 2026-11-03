@@ -52,25 +52,8 @@ function streetDistances(p: Vec2, roads: Road[]): Map<string, number> {
   return out;
 }
 
-const streetCache = new WeakMap<Frontage, string>();
-
-/** La calle del frente: la que se mantiene más cerca de toda la línea (las transversales se alejan a mitad del frente). */
-function streetOf(fr: Frontage, roads: Road[]): string {
-  let name = streetCache.get(fr);
-  if (name !== undefined) return name;
-  const cum = cumulative(fr.line);
-  const far = new Map<string, number>();
-  const n = Math.max(2, Math.ceil(fr.length / 2));
-  for (let k = 0; k <= n; k++) {
-    for (const [street, d] of streetDistances(pointAt(fr.line, cum, (fr.length * k) / n), roads)) far.set(street, Math.max(far.get(street) ?? 0, d));
-  }
-  name = [...far].reduce((m, e) => (e[1] < m[1] ? e : m), ['', Infinity] as [string, number])[0];
-  streetCache.set(fr, name);
-  return name;
-}
-
 /** ¿El punto cae sobre el frente? Dentro de su largo, de −6 m (hacia la calle) a 25 m hacia adentro, y su calle más cercana es la del frente. */
-export function onFace(p: Vec2, fr: Frontage, roads: Road[]): boolean {
+export function onFace(p: Vec2, fr: Frontage, roads: Road[], calle: string): boolean {
   const cum = cumulative(fr.line);
   const last = fr.line.length - 2;
   let best = { d: Infinity, s: 0, side: 0 };
@@ -89,7 +72,7 @@ export function onFace(p: Vec2, fr: Frontage, roads: Road[]): boolean {
   }
   if (best.s < 0 || best.s > fr.length || best.side < ADENTRO_MIN || best.side > ADENTRO_MAX) return false;
   const nearest = [...streetDistances(p, roads)].reduce((m, e) => (e[1] < m[1] ? e : m), ['', Infinity] as [string, number])[0];
-  return nearest === streetOf(fr, roads);
+  return nearest === calle;
 }
 
 export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Building[], places: PlaceInput[], pois: OsmPoi[]): FrentesResult {
@@ -124,7 +107,7 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
   for (const p of places) {
     if (p.type === 'plaza' || p.type === 'monument' || res.fixed.has(p.id)) continue;
     const pos = positions.get(p.id)!;
-    const face = faces.find((x) => onFace(pos, x.fr, roads));
+    const face = faces.find((x) => onFace(pos, x.fr, roads, x.f.calle));
     if (!face) continue;
     const named = face.lots.filter((l) => l.footprint && l.lote.lugar === undefined && l.lote.cartel
       && (nameMatch(l.lote.cartel.texto, p.name) || (p.signText !== undefined && nameMatch(l.lote.cartel.texto, p.signText))));
@@ -135,7 +118,7 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
 
   // locales de OSM sobre cada frente
   for (const { f, fr, lots } of faces) {
-    const onThis = pois.filter((o) => onFace(o.position, fr, roads));
+    const onThis = pois.filter((o) => onFace(o.position, fr, roads, f.calle));
     const ausentes = f.osmAusentes.map(normalizeName);
     for (const o of onThis) {
       const lot = lots.find((l) => l.lote.osm === o.name) ?? lots.find((l) => l.lote.cartel && nameMatch(l.lote.cartel.texto, o.name));

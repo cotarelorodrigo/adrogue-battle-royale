@@ -46,13 +46,18 @@ const run = (f = frente(), ps = places, os = pois) => applyFrentes(input(f), roa
 describe('onFace', () => {
   const fr = resolveFrontage(roads, frente());
   test('sobre la línea, hacia adentro, en la calle del frente', () => {
-    expect(onFace([0, -18], fr, roads)).toBe(true);
-    expect(onFace([0, -5], fr, roads)).toBe(true); // 3 m hacia afuera, dentro de los 6 m
+    expect(onFace([0, -18], fr, roads, 'A')).toBe(true);
+    expect(onFace([0, -5], fr, roads, 'A')).toBe(true); // 3 m hacia afuera, dentro de los 6 m
   });
   test('fuera del largo, demasiado adentro o demasiado afuera', () => {
-    expect(onFace([-47, -18], fr, roads)).toBe(false);
-    expect(onFace([0, -40], fr, roads)).toBe(false);
-    expect(onFace([0, 2], fr, roads)).toBe(false);
+    expect(onFace([-47, -18], fr, roads, 'A')).toBe(false);
+    expect(onFace([0, -40], fr, roads, 'A')).toBe(false);
+    expect(onFace([0, 2], fr, roads, 'A')).toBe(false);
+  });
+  test('más cerca de la transversal que de la calle del frente: no es del frente', () => {
+    // dentro del largo y a 16 m hacia adentro, pero a 10 m del eje de B y a 24 m del de A
+    expect(onFace([-40, -24], fr, roads, 'A')).toBe(false);
+    expect(onFace([-40, -24], fr, [roads[0]], 'A')).toBe(true);
   });
 });
 
@@ -84,7 +89,7 @@ describe('applyFrentes', () => {
   });
 
   test('un lugar más cerca de la transversal no cuenta como del frente', () => {
-    const r = run(frente(), [...places, place('pc', [52, -20], 'Casa Fantasma')]);
+    const r = run(frente(), [...places, place('pc', [-40, -24], 'Casa Fantasma')]);
     expect(r.warnings).toEqual([]);
     expect(r.fixed.has('pc')).toBe(false);
   });
@@ -102,7 +107,7 @@ describe('applyFrentes', () => {
   });
 
   test('un POI que cae sobre otra calle no cuenta', () => {
-    expect(run(frente(), places, [...pois, poi('Guernica', [52, -20])]).warnings).toEqual([]);
+    expect(run(frente(), places, [...pois, poi('Guernica', [-40, -24])]).warnings).toEqual([]);
   });
 
   test('osmAusentes que no está en OSM: aviso', () => {
@@ -121,6 +126,13 @@ describe('applyFrentes', () => {
       const area = polygonClipping.intersection(closed(l.footprint), closed(o.footprint)).reduce((s, p) => s + polygonArea(p[0].slice(0, -1) as Vec2[]), 0);
       expect(area).toBeLessThan(0.01);
     }
+  });
+
+  test('un edificio al otro lado de la transversal conserva su área', () => {
+    const across: Building = { id: 'b0002', footprint: rect(-70, -58, -48, -8), height: 6.6, floors: 2, kind: 'shop', wall: 'plaster', tint: '#fff' };
+    const across2: Building = { id: 'b0003', footprint: rect(58, 70, -48, -8), height: 6.6, floors: 2, kind: 'shop', wall: 'plaster', tint: '#fff' };
+    const r = applyFrentes(input(), roads, [ms, across, across2], places, pois);
+    for (const id of ['b0002', 'b0003']) expect(r.buildings.filter((b) => b.id.startsWith(id)).reduce((a, b) => a + polygonArea(b.footprint), 0)).toBeCloseTo(12 * 40, 6);
   });
 
   test('carteles de lotes sin lugar van a signs', () => {

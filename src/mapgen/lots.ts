@@ -138,7 +138,11 @@ export function layoutLots(f: FrenteInput, fr: Frontage, roads: Road[]): LotShap
     const area = big ? polygonArea(big) : 0;
     if (lote.pisos > 0 && area < MIN_LOT_AREA) throw new Error(`frente ${f.id}, lote ${n}: el lote quedó demasiado chico (${fmt(area)} m²)`);
     const ring = big && area >= MIN_LOT_AREA ? ensureCCW(big) : null;
-    const claim = subtract(rawClaim, near).map((p) => ensureCCW(outer(p)));
+    // del claim solo queda el pedazo del lado del frente: los que cruzan la transversal pertenecerían a la manzana de al lado
+    const claimPieces = subtract(rawClaim, near).map((p) => ensureCCW(outer(p)));
+    const touching = ring ? claimPieces.filter((c) => polygonClipping.intersection(poly(c), poly(ring)).some((x) => polygonArea(outer(x)) > 1e-6)) : [];
+    const nearest = claimPieces.length ? [claimPieces.reduce((m, c) => (gap(c) < gap(m) ? c : m))] : [];
+    const claim = touching.length ? touching : nearest;
     const rings = [...(first ? fr.corners[0] : []), ...(last ? fr.corners[1] : [])];
     if (lote.pisos > 0 && ring) taken.push(ring);
     out.push({

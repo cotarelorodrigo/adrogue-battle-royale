@@ -215,9 +215,10 @@ export function matchPlaces(
     }
     place.buildingId = best.id;
     best.landmarkId ??= inp.id; // con dos lugares en un edificio, manda el primero
-    if (inp.floors !== undefined) { best.floors = inp.floors; best.height = heightFor(inp.floors); }
-    if (inp.tint !== undefined) best.tint = inp.tint;
-    if (inp.wall !== undefined) best.wall = inp.wall;
+    // un lote relevado manda: no se le pisan pisos, tinte ni material
+    if (!best.front && inp.floors !== undefined) { best.floors = inp.floors; best.height = heightFor(inp.floors); }
+    if (!best.front && inp.tint !== undefined) best.tint = inp.tint;
+    if (!best.front && inp.wall !== undefined) best.wall = inp.wall;
     if (inp.type === 'station') best.kind = 'station';
 
     // Cartel: arista candidata con lugar suficiente para todos los carteles del edificio.

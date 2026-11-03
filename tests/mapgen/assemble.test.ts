@@ -13,7 +13,7 @@ import { outwardNormal } from '../../src/mapgen/places.ts';
 import { polygonDist } from '../../src/mapgen/spatial.ts';
 import { climbOut, regionAt } from './pocket-exit.ts';
 import { buildCollisionWorld } from '../../src/shared/collision.ts';
-import { distPointSegment, pointInPolygon } from '../../src/shared/geo.ts';
+import { distPointSegment, pointInPolygon, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { MapData, Prop, Tree } from '../../src/shared/mapdata.ts';
 
@@ -248,6 +248,12 @@ describe('assembleMap con el frente de prueba', () => {
     expect(w.some((x) => x.startsWith('banco-nacion: la foto mide 30 m y el lote '))).toBe(true);
     expect(w.some((x) => x.startsWith('banco-nacion: la foto mide 60 m de ancho y el frente del lote '))).toBe(true);
     expect(res.warnings.some((x) => x.startsWith('banco-nacion:'))).toBe(false);
+  }, 30_000);
+  test('los edificios de Microsoft al otro lado de las transversales no pierden área', () => {
+    const base = assembleMap(loadRaw()).map;
+    const area = (mm: MapData, id: string): number => mm.buildings.filter((b) => b.id === id || b.id.startsWith(`${id}-`))
+      .reduce((a, b) => a + polygonArea(b.footprint), 0);
+    for (const id of ['b0837', 'b0833']) expect(Math.abs(area(m, id) - area(base, id)), id).toBeLessThanOrEqual(0.5);
   }, 30_000);
   test('map.signs: los lotes con cartel y sin lugar', () => {
     const expected = withSign.filter((l) => l.lugar === undefined).length - 1; // LUCCIANO'S se enlaza solo con su lugar
