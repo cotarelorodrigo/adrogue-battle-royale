@@ -1,4 +1,5 @@
 // window.__adrogue: ganchos para los tests e2e y el benchmark. Solo existe con ?debug=1.
+import type { Vec3 } from '../shared/geo.ts';
 import type { PlayerState } from '../shared/player.ts';
 import type { Quality } from './render/quality.ts';
 
@@ -13,6 +14,9 @@ export interface DebugStats {
 export interface AdrogueDebug {
   /** Al spawn del lugar, mirando hacia él. Tira si el id no existe. */
   teleport(placeId: string): void;
+  /** Pies en `pos`, quieto, mirando a `yaw` (pitch 0). No valida que el lugar esté libre: es para los tests (pararse
+   *  al pie de una escalera, mirar desde el borde del mapa). */
+  placeAt(pos: Vec3, yaw: number): void;
   state(): PlayerState;
   stats(): DebugStats;
   /** Igual que elegirla en el menú (también la guarda). La promesa se cumple cuando ya está aplicada. */

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MARGIN_M, pointInPolygon } from '../../shared/geo.ts';
 import type { Vec2 } from '../../shared/geo.ts';
-import type { MapData, Road } from '../../shared/mapdata.ts';
+import type { MapData, Park, Road } from '../../shared/mapdata.ts';
 import { extrudeBuilding, polygonGeometry, ribbon } from './geometry.ts';
 import type { WorldMaterials } from './types.ts';
 
@@ -12,10 +12,19 @@ const PLANAR_UV = 4;
 // Capas del suelo (separadas para evitar z-fighting): césped 0 < vereda < asfalto < sendas/peatonales
 const Y_SIDEWALK = 0.02;
 const Y_ASPHALT = 0.04;
-const Y_PATH = 0.06;
+export const Y_PATH = 0.06;
+
+/** ¿Es un sendero `footway` de plaza? Mira el punto medio del tramo del medio. Esos los dibuja buildParks (sendero);
+ *  el resto, chunks (vereda): así cada footway se dibuja una sola vez. */
+export function isParkFootway(r: Road, parks: Park[]): boolean {
+  if (r.kind !== 'footway' || r.points.length < 2) return false;
+  const k = Math.floor((r.points.length - 1) / 2);
+  const mid: Vec2 = [(r.points[k][0] + r.points[k + 1][0]) / 2, (r.points[k][1] + r.points[k + 1][1]) / 2];
+  return parks.some((p) => pointInPolygon(mid, p.polygon));
+}
 
 /** Liang–Barsky: recorta el segmento a un rectángulo; null si queda afuera. */
-function clipSegment(a: Vec2, b: Vec2, minX: number, minZ: number, maxX: number, maxZ: number): [Vec2, Vec2] | null {
+export function clipSegment(a: Vec2, b: Vec2, minX: number, minZ: number, maxX: number, maxZ: number): [Vec2, Vec2] | null {
   const dx = b[0] - a[0], dz = b[1] - a[1];
   let t0 = 0, t1 = 1;
   const test = (p: number, q: number): boolean => {
@@ -109,9 +118,7 @@ export function buildChunks(map: MapData, materials: WorldMaterials): THREE.Grou
   for (const r of map.roads) {
     if (r.points.length < 2) continue;
     if (r.kind === 'footway') {
-      const k = Math.floor((r.points.length - 1) / 2);
-      const mid: Vec2 = [(r.points[k][0] + r.points[k + 1][0]) / 2, (r.points[k][1] + r.points[k + 1][1]) / 2];
-      if (map.parks.some((p) => pointInPolygon(mid, p.polygon))) continue; // lo dibuja el parque
+      if (isParkFootway(r, map.parks)) continue; // lo dibuja buildParks
       addRibbonRuns(r, r.width, Y_PATH, 'sidewalk');
     } else if (r.kind === 'pedestrian') {
       addRibbonRuns(r, r.width, Y_PATH, 'sidewalk');

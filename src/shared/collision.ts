@@ -553,14 +553,15 @@ function rayPrism(s: Solid, ox: number, oy: number, oz: number, dx: number, dy: 
   return best;
 }
 
-const PLATFORM_H = 1.0;
-const TRUNK_R = 0.3;
-const TRUNK_H = 3;
-const DUMPSTER = { length: 1.8, depth: 1.1, height: 1.4 };
-const BENCH = { length: 1.8, depth: 0.6, height: 0.5 };
-const FOUNTAIN_H = 0.6;
-const PEDESTAL = { side: 3, height: 2.5 };
-const COLUMN = { side: 2, height: 6 };
+// Medidas de los sólidos de los props. El cliente las usa para que lo que se ve coincida con lo que se pisa.
+export const PLATFORM_H = 1.0;
+export const TRUNK_R = 0.3;
+export const TRUNK_H = 3;
+export const DUMPSTER = { length: 1.8, depth: 1.1, height: 1.4 } as const;
+export const BENCH = { length: 1.8, depth: 0.6, height: 0.5 } as const;
+export const FOUNTAIN_H = 0.6;
+export const PEDESTAL = { side: 3, height: 2.5 } as const;
+export const COLUMN = { side: 2, height: 6 } as const;
 
 function octagon([cx, cz]: Vec2, r: number): Vec2[] {
   const out: Vec2[] = [];

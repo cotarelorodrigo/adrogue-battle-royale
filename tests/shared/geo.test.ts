@@ -1,4 +1,4 @@
-import { AREA, ORIGIN, areaRect, ensureCCW, hash01, project, signedAreaFromAbove, unproject } from '../../src/shared/geo.ts';
+import { AREA, ORIGIN, areaRect, ensureCCW, hash01, hashIndex, project, signedAreaFromAbove, unproject } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 
 test('el área mide ~1502 m × ~872 m', () => {
@@ -21,3 +21,19 @@ test('orientación vista desde arriba', () => {
   expect(signedAreaFromAbove(ensureCCW([...sq].reverse()))).toBeGreaterThan(0);
 });
 test('hash01 es determinista y está en [0,1)', () => { expect(hash01('b0001')).toBe(hash01('b0001')); expect(hash01('x')).toBeLessThan(1); });
+
+test('hashIndex: en [0, 1) y sin correlación entre índices consecutivos (sirve para x, y de un punto)', () => {
+  const n = 20_000;
+  const xs = Array.from({ length: n }, (_, i) => hashIndex(2 * i));
+  const ys = Array.from({ length: n }, (_, i) => hashIndex(2 * i + 1));
+  for (const v of [...xs, ...ys]) {
+    expect(v).toBeGreaterThanOrEqual(0);
+    expect(v).toBeLessThan(1);
+  }
+  const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
+  const mx = mean(xs), my = mean(ys);
+  expect(mx).toBeCloseTo(0.5, 1);
+  const cov = mean(xs.map((x, i) => (x - mx) * (ys[i] - my)));
+  expect(Math.abs(cov / (1 / 12))).toBeLessThan(0.03); // correlación de Pearson (varianza de U(0,1) = 1/12)
+  expect(hashIndex(7)).toBe(hashIndex(7));
+});

@@ -33,7 +33,9 @@ const CULL_PAD = CHUNK * 0.71;
 export interface GameScene {
   readonly renderer: THREE.WebGLRenderer;
   addChunks(groups: THREE.Group[]): void;
-  /** Cambia el material de cada malla de los chunks por el de su nombre (= clave de WorldMaterials). */
+  /** Objetos de todo el mapa (estación, plazas, árboles, carteles, props): sin culling por chunk, solo el de three. */
+  addStatic(objects: THREE.Object3D[]): void;
+  /** En chunks y objetos estáticos, cambia el material de cada malla cuyo nombre es una clave de WorldMaterials. */
   setMaterials(m: WorldMaterials): void;
   /** pixelRatio, niebla, camera.far, culling y sombras según el preset. */
   applyQuality(q: Quality): void;
@@ -77,6 +79,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   scene.add(buildOutskirts(outskirts));
 
   const chunks: Chunk[] = [];
+  const statics: THREE.Object3D[] = [];
   let cullRadius = Infinity;
   let shadowsOn = false;
   let shadowX = NaN, shadowZ = NaN;
@@ -112,7 +115,10 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
     shadowsOn = p.shadows !== false;
     renderer.shadowMap.enabled = shadowsOn;
     sun.castShadow = shadowsOn;
-    if (p.shadows) {
+    if (!p.shadows) {
+      sun.shadow.map?.dispose(); // sin sombras no hace falta ocupar la memoria del mapa (se recrea al volver)
+      sun.shadow.map = null;
+    } else {
       const { mapSize, range } = p.shadows;
       if (sun.shadow.mapSize.x !== mapSize) {
         sun.shadow.map?.dispose(); // se vuelve a crear con el tamaño nuevo
@@ -139,12 +145,18 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
         scene.add(group);
       }
     },
-    setMaterials(m) {
-      for (const { group } of chunks) {
-        for (const child of group.children) {
-          if (child instanceof THREE.Mesh && child.name in m) child.material = m[child.name as keyof WorldMaterials];
-        }
+    addStatic(objects) {
+      for (const o of objects) {
+        statics.push(o);
+        scene.add(o);
       }
+    },
+    setMaterials(m) {
+      const swap = (o: THREE.Object3D): void => {
+        if (o instanceof THREE.Mesh && Object.hasOwn(m, o.name)) o.material = m[o.name as keyof WorldMaterials];
+      };
+      for (const { group } of chunks) group.traverse(swap);
+      for (const o of statics) o.traverse(swap);
     },
     applyQuality,
     update(feet, eye, yaw, pitch) {

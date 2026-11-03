@@ -72,3 +72,15 @@ export function hash01(s: string): number {
   }
   return (h >>> 0) / 4294967296;
 }
+
+/** Entero → [0, 1) (lowbias32). A diferencia de hash01 sobre "clave:i", índices consecutivos dan valores sin
+ *  correlación: sirve para sembrar texturas (x e y de un mismo punto no quedan alineados). */
+export function hashIndex(i: number): number {
+  let x = (i + 0x9e3779b9) | 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x ^= x >>> 16;
+  return (x >>> 0) / 4294967296;
+}

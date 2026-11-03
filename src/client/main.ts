@@ -7,14 +7,19 @@ import type { PlayerState } from '../shared/player.ts';
 import { debugEnabled, installDebug } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
-import { loadQuality, saveQuality } from './render/quality.ts';
+import { loadQuality, QUALITY, saveQuality } from './render/quality.ts';
 import type { Quality } from './render/quality.ts';
 import { createScene } from './render/scene.ts';
 import { createHud, FpsMeter } from './ui/hud.ts';
 import { createOverlay, showFatal } from './ui/overlay.ts';
+import type { Overlay } from './ui/overlay.ts';
 import { buildChunks } from './world/chunks.ts';
+import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
+import { buildClimbProps } from './world/props.ts';
+import { buildSigns } from './world/signs.ts';
 import type { WorldMaterials } from './world/types.ts';
+import { buildParks, buildTrees, loadBarkTexture, setTreeDensity } from './world/vegetation.ts';
 
 const MSG_NO_WEBGL2 = 'Tu navegador no soporta WebGL2. Probá con Chrome, Edge o Firefox actualizados.';
 const MSG_CONTEXT_LOST = 'Se perdió el contexto gráfico. Recargá la página.';
@@ -41,6 +46,7 @@ if (debug) {
   };
   installDebug({
     teleport: (id) => need().teleport(id),
+    placeAt: (pos, yaw) => need().placeAt(pos, yaw),
     state: () => need().state(),
     stats: () => need().stats(),
     setQuality: (q) => need().setQuality(q),
@@ -75,18 +81,35 @@ function lockPointer(el: HTMLElement): void {
   }
 }
 
+/** Lo que el manejo de errores de start() necesita saber de la carga en curso. */
+interface Boot { overlay?: Overlay; lost: boolean }
+
 async function start(): Promise<void> {
   if (!supportsWebGL2()) {
     showFatal(root, MSG_NO_WEBGL2);
     throw new Error('Sin WebGL2');
   }
+  const boot: Boot = { lost: false };
+  try {
+    await run(boot);
+  } catch (err) {
+    // Cualquier falla de la carga (mapa, texturas, armado de la escena) termina en el mensaje, nunca en "Cargando…"
+    // para siempre. Si se perdió el contexto, su mensaje ya está en pantalla.
+    console.error(err);
+    if (!boot.lost) {
+      if (boot.overlay) boot.overlay.fatal(MSG_LOAD_FAILED);
+      else showFatal(root, MSG_LOAD_FAILED);
+    }
+    throw err;
+  }
+}
 
+async function run(boot: Boot): Promise<void> {
   const canvas = document.createElement('canvas');
   root.append(canvas);
   const hud = createHud(root);
   const input = createInput(window);
   let quality = loadQuality();
-  let lost = false;
   let raf = 0;
 
   const overlay = createOverlay(root, {
@@ -96,6 +119,7 @@ async function start(): Promise<void> {
     onQuality: (q) => void setQuality(q),
     onPlace: (id) => (id === null ? spawnRandom() : teleport(id)),
   });
+  boot.overlay = overlay;
   document.addEventListener('pointerlockchange', () => overlay.pointerLocked(document.pointerLockElement === canvas));
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F3') {
@@ -108,39 +132,48 @@ async function start(): Promise<void> {
     }
   });
 
-  let map: MapData;
-  try {
-    map = await loadMap();
-  } catch (e) {
-    overlay.fatal(MSG_LOAD_FAILED);
-    throw e;
-  }
+  const map = await loadMap();
   const world = buildCollisionWorld(map);
 
   const scene = createScene(canvas, map.outskirts, quality);
   canvas.addEventListener('webglcontextlost', () => {
-    lost = true;
+    boot.lost = true;
     cancelAnimationFrame(raf);
     input.dispose();
     if (document.pointerLockElement) document.exitPointerLock();
     overlay.fatal(MSG_CONTEXT_LOST);
   });
 
-  let materials: WorldMaterials;
-  try {
-    materials = await createMaterials(quality);
-  } catch (e) {
-    overlay.fatal(MSG_LOAD_FAILED);
-    throw e;
-  }
-  if (lost) throw new Error('Se perdió el contexto WebGL durante la carga');
+  // La corteza es para toda la partida (no depende de la calidad); si falla, troncos de color liso.
+  const [initialMaterials, bark] = await Promise.all([
+    createMaterials(quality),
+    loadBarkTexture(`${import.meta.env.BASE_URL}textures/corteza_diff.jpg`).catch((e: unknown) => {
+      console.error('Sin textura de corteza:', e);
+      return undefined;
+    }),
+  ]);
+  let materials: WorldMaterials = initialMaterials;
+  if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
   scene.addChunks(buildChunks(map, materials));
+  const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark);
+  scene.addStatic([
+    buildStation(map, materials),
+    buildParks(map, materials),
+    buildMonuments(map.props, map.places),
+    buildSigns(map.places),
+    ...trees,
+    ...buildClimbProps(map.props),
+  ]);
 
   let state: PlayerState = initialState([0, 0, 0]);
   function spawnAt(spawn: Vec3, lookAt: Vec2): void {
     state = initialState(spawn);
     const dx = lookAt[0] - spawn[0], dz = lookAt[1] - spawn[2];
     input.setLook(dx === 0 && dz === 0 ? input.read().yaw : Math.atan2(-dx, -dz), 0);
+  }
+  function placeAt(pos: Vec3, yaw: number): void {
+    state = initialState(pos);
+    input.setLook(yaw, 0);
   }
   function teleport(placeId: string): void {
     const place = map.places.find((p) => p.id === placeId);
@@ -169,7 +202,7 @@ async function start(): Promise<void> {
       }
       return;
     }
-    if (seq !== qualitySeq || lost) {
+    if (seq !== qualitySeq || boot.lost) {
       disposeMaterials(next);
       return;
     }
@@ -178,6 +211,7 @@ async function start(): Promise<void> {
     materials = next;
     quality = q;
     scene.applyQuality(q);
+    setTreeDensity(trees, QUALITY[q].treeDensity);
   }
 
   const fps = new FpsMeter();
@@ -202,6 +236,7 @@ async function start(): Promise<void> {
   teleport(INITIAL_PLACE);
   game = {
     teleport,
+    placeAt,
     state: () => structuredClone(state), // copia: desde afuera no se puede tocar el estado del juego
     stats: () => ({ drawCalls: scene.renderer.info.render.calls, triangles: scene.renderer.info.render.triangles, fps: fps.fps }),
     setQuality,
