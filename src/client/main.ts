@@ -2,9 +2,10 @@
 import { buildCollisionWorld } from '../shared/collision.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import type { MapData } from '../shared/mapdata.ts';
-import { eyeHeight, initialState, stepPlayer } from '../shared/player.ts';
+import { eyeHeight, initialState, PLAYER, stepPlayer } from '../shared/player.ts';
 import type { PlayerState } from '../shared/player.ts';
 import photoFacadeData from '../../data/photo-facades.json';
+import { benchSeconds, createBench } from './bench.ts';
 import { debugEnabled, installDebug } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
@@ -19,7 +20,7 @@ import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
 import { buildPhotoFacades } from './world/photo-facades.ts';
 import type { PhotoFacade } from './world/photo-facades.ts';
-import { buildClimbProps } from './world/props.ts';
+import { buildClimbProps, setDumpsterShadows } from './world/props.ts';
 import { buildSigns } from './world/signs.ts';
 import type { WorldMaterials } from './world/types.ts';
 import { buildParks, buildTrees, loadBarkTexture, setTreeDensity } from './world/vegetation.ts';
@@ -33,6 +34,8 @@ type Game = Omit<AdrogueDebug, 'ready' | 'photosReady'>;
 
 const root = document.getElementById('app')!;
 const debug = debugEnabled(location.search);
+/** Segundos del benchmark (?bench=1, ?benchSecs=N) o null para jugar. No necesita ?debug=1. */
+const benchSecs = benchSeconds(location.search);
 let game: Game | null = null;
 let markReady!: () => void;
 let failReady!: (e: unknown) => void;
@@ -172,13 +175,15 @@ async function run(boot: Boot): Promise<void> {
     })
     .catch((e: unknown) => console.warn('Sin fotos de fachada:', e))
     .finally(markPhotosReady);
+  const climbProps = buildClimbProps(map.props);
+  setDumpsterShadows(climbProps, QUALITY[quality].dumpsterShadows);
   scene.addStatic([
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
     buildSigns(map.places),
     ...trees,
-    ...buildClimbProps(map.props),
+    ...climbProps,
   ]);
 
   let state: PlayerState = initialState([0, 0, 0]);
@@ -228,7 +233,20 @@ async function run(boot: Boot): Promise<void> {
     quality = q;
     scene.applyQuality(q);
     setTreeDensity(trees, QUALITY[q].treeDensity);
+    setDumpsterShadows(climbProps, QUALITY[q].dumpsterShadows);
   }
+
+  // Benchmark: la cámara recorre sola el camino fijo; empieza a medir cuando la escena está completa (fotos incluidas).
+  const bench = benchSecs === null ? null : createBench(root, {
+    seconds: benchSecs,
+    quality,
+    onRerun: (q) => {
+      saveQuality(q);
+      location.reload();
+    },
+    onPlay: () => location.assign(location.pathname),
+  });
+  if (bench) void photosReady.then(() => bench.start(performance.now()));
 
   const fps = new FpsMeter();
   let last = performance.now();
@@ -237,9 +255,14 @@ async function run(boot: Boot): Promise<void> {
     raf = requestAnimationFrame(frame);
     const dt = (now - last) / 1000; // stepPlayer recorta a maxDt y descarta dt ≤ 0
     last = now;
-    const cmd = input.read();
-    if (overlay.screen === 'playing') state = stepPlayer(state, cmd, world, dt); // sin puntero capturado, en pausa
-    scene.update(state.pos, eyeHeight(state), cmd.yaw, cmd.pitch);
+    if (bench) {
+      const v = bench.frame(now);
+      scene.update(v.pos, PLAYER.eye, v.yaw, v.pitch);
+    } else {
+      const cmd = input.read();
+      if (overlay.screen === 'playing') state = stepPlayer(state, cmd, world, dt); // sin puntero capturado, en pausa
+      scene.update(state.pos, eyeHeight(state), cmd.yaw, cmd.pitch);
+    }
     scene.render();
     fps.tick(now);
     hud.update(now, fps.fps, scene.renderer.info.render.calls);
@@ -257,6 +280,7 @@ async function run(boot: Boot): Promise<void> {
     stats: () => ({ drawCalls: scene.renderer.info.render.calls, triangles: scene.renderer.info.render.triangles, fps: fps.fps }),
     setQuality,
   };
-  overlay.ready(map.places);
+  if (bench) overlay.bench();
+  else overlay.ready(map.places);
   raf = requestAnimationFrame(frame);
 }

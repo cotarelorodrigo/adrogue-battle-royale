@@ -71,6 +71,20 @@ test('con el puntero capturado se juega; al soltarlo aparece el menú de Esc', (
   expect(o.requestLock).toHaveBeenCalledTimes(1);
 });
 
+test('benchmark: terminada la carga no se muestra nada y M / Esc / pointer lock no cambian la pantalla', () => {
+  overlay.bench();
+  expect(overlay.screen).toBe('bench');
+  expect(buttons()).toEqual([]);
+  expect(visibleText()).toBe('');
+  overlay.togglePlaces();
+  overlay.back();
+  overlay.pointerLocked(true);
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('bench');
+  expect(buttons()).toEqual([]);
+  expect(o.exitLock).not.toHaveBeenCalled();
+});
+
 test('calidad: marca la elegida y avisa', () => {
   overlay.ready(places);
   overlay.pointerLocked(true);

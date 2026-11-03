@@ -2,10 +2,61 @@
 import { readFileSync } from 'node:fs';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import type { Vec2, Vec3 } from '../src/shared/geo.ts';
 import type { MapData } from '../src/shared/mapdata.ts';
 import type {} from '../src/client/debug.ts'; // tipa window.__adrogue
 
 export const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
+
+export const inBounds = ([x, z]: Vec2): boolean => x > map.bounds.minX && x < map.bounds.maxX && z > map.bounds.minZ && z < map.bounds.maxZ;
+
+/** Sobre el eje de una calle que cruza x = maxX − 10: el cruce más cercano a z = 0. */
+export function eastEdge(): Vec3 {
+  const x = map.bounds.maxX - 10;
+  let best: Vec3 | null = null;
+  for (const r of map.roads) {
+    if (r.kind === 'footway' || r.kind === 'pedestrian') continue;
+    for (let i = 0; i + 1 < r.points.length; i++) {
+      const [a, b] = [r.points[i], r.points[i + 1]];
+      if ((a[0] - x) * (b[0] - x) > 0 || a[0] === b[0]) continue;
+      const z = a[1] + ((x - a[0]) / (b[0] - a[0])) * (b[1] - a[1]);
+      if (inBounds([x, z]) && (!best || Math.abs(z) < Math.abs(best[2]))) best = [x, 0, z];
+    }
+  }
+  if (!best) throw new Error('Ninguna calle cruza el borde este');
+  return best;
+}
+
+/** Arriba del edificio más alto (de los empatados, el más cercano al centro), en el promedio de sus vértices. */
+export function tallestRoof(): Vec3 {
+  const top = Math.max(...map.buildings.map((b) => b.height));
+  const centre = (fp: Vec2[]): Vec2 => [fp.reduce((s, p) => s + p[0], 0) / fp.length, fp.reduce((s, p) => s + p[1], 0) / fp.length];
+  const [x, z] = map.buildings.filter((b) => b.height === top).map((b) => centre(b.footprint))
+    .reduce((a, b) => (Math.hypot(...b) < Math.hypot(...a) ? b : a));
+  return [x, top, z];
+}
+
+/** Un punto del recorrido de medición: un lugar (teletransporte) o una posición y hacia dónde mirar. */
+export type TourStop = { id: string } & ({ place: string } | { pos: Vec3; yaw: number });
+
+/** Los 6 puntos de los presupuestos de rendimiento. yaw 0 mira a −z; π/2, a −x. */
+export const TOUR6: TourStop[] = [
+  { id: 'estacion', place: 'estacion-adrogue' },
+  { id: 'plaza-brown', place: 'plaza-almirante-brown' },
+  // sobre la calle Esteban Adrogué, mirando a lo largo de ella hacia el este
+  { id: 'esteban-adrogue', pos: [-180, 0, 109.45], yaw: Math.atan2(-182.74, -35.11) },
+  // sobre la mano este de Avenida Espora, mirando hacia el sur (+z)
+  { id: 'espora', pos: [178.75, 0, -90], yaw: Math.PI },
+  // techo del edificio más alto, mirando hacia el este (+x): la mitad más larga del mapa
+  { id: 'techo', pos: tallestRoof(), yaw: -Math.PI / 2 },
+  // borde este, mirando hacia el oeste: todo el mapa por delante
+  { id: 'borde', pos: eastEdge(), yaw: Math.PI / 2 },
+];
+
+export async function goTo(page: Page, stop: TourStop): Promise<void> {
+  if ('place' in stop) await page.evaluate((id) => window.__adrogue.teleport(id), stop.place);
+  else await page.evaluate(([p, yaw]) => window.__adrogue.placeAt(p, yaw), [stop.pos, stop.yaw] as const);
+}
 
 /** Avisos conocidos que no vienen del juego. */
 const KNOWN_WARNINGS = [

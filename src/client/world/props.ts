@@ -1,11 +1,13 @@
-// Formas de subir: escaleras de mano y contenedores, instanciados (3 draw calls para todo el mapa).
+// Formas de subir: escaleras de mano (2 draw calls para todo el mapa) y contenedores (instanciados, uno por celda).
 // Escaleras: las barandas son una geometría de 1 m de alto que cada instancia estira hasta topY + manijas; los
-// peldaños son otra InstancedMesh con una instancia cada 0,3 m (así no se estiran con la altura).
+// peldaños, un cuadrilátero por escalera con una textura que deja ver solo una franja cada 0,3 m (alpha-test): eran
+// ~11 000 cajitas y ~67 000 triángulos, ahora son 2 triángulos por escalera.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { hash01 } from '../../shared/geo.ts';
 import { DUMPSTER } from '../../shared/collision.ts';
 import type { Prop } from '../../shared/mapdata.ts';
+import { splitByCell } from './cells.ts';
 
 export const LADDER_RUNG_STEP = 0.3;
 /** Entre ejes de las barandas (el volumen de la escalera mide 0,8: la visual entra holgada). */
@@ -16,6 +18,11 @@ const RUNG_T = 0.03;
 const WALL_GAP = 0.05;
 /** Las barandas siguen por encima del techo para agarrarse al pasar (como las escaleras de verdad). */
 const HANDLE = 0.8;
+/** Filas de la textura de los peldaños por cada 0,3 m. El eje del peldaño cae en v = RUNG_V (28/64: el medio de un
+ *  grupo de 8 filas), así los mipmaps no lo parten en dos y se sigue viendo hasta ~30 m, donde ya mide menos de un
+ *  píxel. */
+const RUNG_ROWS = 64;
+const RUNG_V = 28 / RUNG_ROWS;
 /** Franjas del contenedor: zócalo oscuro abajo, cuerpo pintado y tapa un poco más oscura arriba. */
 const DUMPSTER_BASE = 0.15;
 const DUMPSTER_LID = 0.12;
@@ -24,10 +31,16 @@ const PAINT = [new THREE.Color('#2f6b3c'), new THREE.Color('#2b5288')]; // verde
 type Ladder = Extract<Prop, { kind: 'ladder' }>;
 type Dumpster = Extract<Prop, { kind: 'dumpster' }>;
 
-/** Caja de color liso: x × y × z, con la base en y0. */
-function coloredBox(x: number, y: number, z: number, y0: number, color: THREE.Color): THREE.BufferGeometry {
+/** Caras de BoxGeometry, en su orden. */
+const BOX_FACES = ['+x', '-x', '+y', '-y', '+z', '-z'] as const;
+
+/** Caja de color liso: x × y × z, con la base en y0, sin las caras `drop` (las que quedan tapadas). */
+function coloredBox(x: number, y: number, z: number, y0: number, color: THREE.Color,
+  drop: (typeof BOX_FACES)[number][] = []): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(x, y, z);
   g.translate(0, y0 + y / 2, 0);
+  const idx = Array.from(g.index!.array);
+  g.setIndex(BOX_FACES.flatMap((f, k) => (drop.includes(f) ? [] : idx.slice(k * 6, k * 6 + 6))));
   const n = g.getAttribute('position').count;
   g.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: n }, () => [color.r, color.g, color.b]).flat(), 3));
   return g;
@@ -49,20 +62,59 @@ function railsGeometry(): THREE.BufferGeometry {
   }));
 }
 
-/** Peldaño entre barandas: solo arriba, abajo y el frente (las puntas quedan en las barandas y atrás está la pared, a
- *  centímetros). Son ~11 000 peldaños: cada cara de más son 22 000 triángulos. */
-function rungGeometry(): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(LADDER_W, RUNG_T, RUNG_T);
-  g.setIndex(Array.from(g.index!.array).slice(12, 30)); // orden de BoxGeometry: +x, −x, +y, −y, +z, −z
+/** Franjas opacas de RUNG_T cada LADDER_RUNG_STEP (en v), transparente entre medio. El alfa va en .g: el canal que
+ *  lee alphaMap. Con mipmaps: de lejos el peldaño se afina y desaparece en vez de titilar. */
+function rungTexture(): THREE.DataTexture {
+  const data = new Uint8Array(RUNG_ROWS * 4);
+  for (let r = 0; r < RUNG_ROWS; r++) {
+    const dy = ((r + 0.5) / RUNG_ROWS - RUNG_V) * LADDER_RUNG_STEP; // del centro de la fila al eje del peldaño
+    data.fill(Math.abs(dy) < RUNG_T / 2 ? 255 : 0, r * 4, r * 4 + 4);
+  }
+  const t = new THREE.DataTexture(data, 1, RUNG_ROWS);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
+}
+
+/** Un cuadrilátero por escalera en el plano de las barandas, de baranda a baranda y del primer peldaño (0,3 m) al
+ *  último (≤ topY), mirando hacia afuera de la pared; v = y / 0,3 + RUNG_V pone una franja de la textura en cada
+ *  peldaño. Escaleras de menos de 0,3 m no tienen peldaños. */
+function rungsGeometry(ladders: Ladder[]): THREE.BufferGeometry {
+  const pos: number[] = [], nor: number[] = [], uv: number[] = [], idx: number[] = [];
+  const q = new THREE.Quaternion(), along = new THREE.Vector3(), out = new THREE.Vector3();
+  for (const l of ladders) {
+    const n = Math.floor(l.topY / LADDER_RUNG_STEP + 1e-9);
+    if (n === 0) continue;
+    const [x, z] = ladderFrame(l, q);
+    along.set(LADDER_W / 2, 0, 0).applyQuaternion(q);
+    out.set(0, 0, 1).applyQuaternion(q);
+    const y0 = LADDER_RUNG_STEP - RUNG_T / 2, y1 = n * LADDER_RUNG_STEP + RUNG_T / 2;
+    const base = pos.length / 3;
+    for (const [side, y] of [[-1, y0], [1, y0], [1, y1], [-1, y1]] as const) {
+      pos.push(x + side * along.x, y, z + side * along.z);
+      nor.push(out.x, out.y, out.z);
+      uv.push((side + 1) / 2, y / LADDER_RUNG_STEP + RUNG_V);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3); // along × arriba = afuera: antihorario desde la calle
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
   return g;
 }
 
 function dumpsterGeometry(): THREE.BufferGeometry {
   const { length: l, depth: d, height: h } = DUMPSTER;
   return merge([
-    coloredBox(l, DUMPSTER_BASE, d, 0, new THREE.Color(0.22, 0.22, 0.22)),
-    coloredBox(l, h - DUMPSTER_BASE - DUMPSTER_LID, d, DUMPSTER_BASE, new THREE.Color(1, 1, 1)),
-    coloredBox(l, DUMPSTER_LID, d, h - DUMPSTER_LID, new THREE.Color(0.72, 0.72, 0.72)),
+    coloredBox(l, DUMPSTER_BASE, d, 0, new THREE.Color(0.22, 0.22, 0.22), ['+y', '-y']),
+    coloredBox(l, h - DUMPSTER_BASE - DUMPSTER_LID, d, DUMPSTER_BASE, new THREE.Color(1, 1, 1), ['+y', '-y']),
+    coloredBox(l, DUMPSTER_LID, d, h - DUMPSTER_LID, new THREE.Color(0.72, 0.72, 0.72), ['-y']),
   ]);
 }
 
@@ -76,25 +128,24 @@ function ladderFrame(l: Ladder, q: THREE.Quaternion): [number, number] {
   return [l.base[0] + l.normal[0] * WALL_GAP, l.base[1] + l.normal[1] * WALL_GAP];
 }
 
-export function buildClimbProps(props: Prop[]): THREE.InstancedMesh[] {
+export function buildClimbProps(props: Prop[]): THREE.Mesh[] {
   const ladders = props.filter((p): p is Ladder => p.kind === 'ladder');
   const dumpsters = props.filter((p): p is Dumpster => p.kind === 'dumpster');
-  const out: THREE.InstancedMesh[] = [];
+  const out: THREE.Mesh[] = [];
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
 
   if (ladders.length > 0) {
-    const steel = new THREE.MeshLambertMaterial({ color: '#858b90' });
-    const rails = new THREE.InstancedMesh(railsGeometry(), steel, ladders.length);
+    const steel = '#858b90';
+    const rails = new THREE.InstancedMesh(railsGeometry(), new THREE.MeshLambertMaterial({ color: steel }), ladders.length);
     rails.name = 'ladderRails';
-    const rungsPer = ladders.map((l) => Math.floor(l.topY / LADDER_RUNG_STEP + 1e-9));
-    const rungs = new THREE.InstancedMesh(rungGeometry(), steel, rungsPer.reduce((a, b) => a + b, 0));
-    rungs.name = 'ladderRungs';
-    let k = 0;
     ladders.forEach((l, i) => {
       const [x, z] = ladderFrame(l, q);
       rails.setMatrixAt(i, m.compose(p.set(x, 0, z), q, s.set(1, l.topY + HANDLE, 1)));
-      for (let r = 1; r <= rungsPer[i]; r++) rungs.setMatrixAt(k++, m.compose(p.set(x, r * LADDER_RUNG_STEP, z), q, s.set(1, 1, 1)));
     });
+    const rungMat = new THREE.MeshLambertMaterial({ color: steel, alphaMap: rungTexture(), alphaTest: 0.5 });
+    const rungs = new THREE.Mesh(rungsGeometry(ladders), rungMat);
+    rungs.name = 'ladderRungs';
+    rungs.matrixAutoUpdate = false;
     for (const mesh of [rails, rungs]) {
       mesh.receiveShadow = true;
       out.push(mesh);
@@ -111,7 +162,13 @@ export function buildClimbProps(props: Prop[]): THREE.InstancedMesh[] {
     });
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    out.push(mesh);
+    out.push(...splitByCell(mesh));
   }
   return out;
+}
+
+/** Sombras de los contenedores (QUALITY.dumpsterShadows): son ~700 cajas chicas que duplican sus triángulos en la
+ *  pasada de sombras y casi no se notan; solo en alta. */
+export function setDumpsterShadows(meshes: THREE.Object3D[], on: boolean): void {
+  for (const m of meshes) if (m.name === 'dumpster') m.castShadow = on;
 }

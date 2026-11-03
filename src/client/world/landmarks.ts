@@ -6,6 +6,7 @@ import { COLUMN, PEDESTAL, PLATFORM_H } from '../../shared/collision.ts';
 import { distPointSegment, ensureCCW, hashIndex, MARGIN_M } from '../../shared/geo.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import type { MapData, Place, Prop } from '../../shared/mapdata.ts';
+import { splitByCell } from './cells.ts';
 import { clipSegment } from './chunks.ts';
 import { polygonGeometry, ribbon } from './geometry.ts';
 import { SIGN_H, signGeometry, signMaterial, signTexture } from './signs.ts';
@@ -358,7 +359,7 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
     const UP = new THREE.Vector3(0, 1, 0);
     spots.forEach(({ p, d }, i) => sleepers.setMatrixAt(i, m.compose(v.set(p[0], Y_BALLAST, p[1]), q.setFromAxisAngle(UP, Math.atan2(-d[1], d[0])), one)));
     sleepers.receiveShadow = true;
-    group.add(sleepers);
+    group.add(...splitByCell(sleepers)); // una malla por celda: three descarta las que no se ven
 
     const rails = new Builder();
     const o = GAUGE / 2 + RAIL_HEAD / 2; // eje de cada riel: la trocha se mide entre las caras internas

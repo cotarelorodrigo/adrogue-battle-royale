@@ -86,15 +86,25 @@ describe('estación', () => {
     for (let i = 0; i < pos.count; i++) expect(pos.getX(i)).toBeGreaterThan(-2.1);
   });
 
-  test('vías con rieles y durmientes instanciados cada 0,6 m', () => {
+  test('vías con rieles y durmientes instanciados cada 0,6 m, partidos en celdas de 250 m', () => {
     const rails = meshes.filter((m) => m.material === materials.rail);
     expect(rails.length).toBe(1);
     expect(rails[0].name).toBe('rail');
-    const sleepers = meshes.find((m) => m.name === 'sleepers') as THREE.InstancedMesh;
-    expect(sleepers).toBeInstanceOf(THREE.InstancedMesh);
-    // dos vías de 600 m (recortadas al suelo: bounds + 150 m de margen = 500 m) → ~833 durmientes cada una
-    expect(sleepers.count).toBeGreaterThan(2 * 800);
-    expect(sleepers.count).toBeLessThan(2 * 860);
+    const sleepers = meshes.filter((m) => m.name === 'sleepers') as THREE.InstancedMesh[];
+    // las vías van de z −250 a 250 (recortadas al suelo: bounds + 150 m de margen): al menos las celdas z < 0 y z ≥ 0
+    expect(sleepers.length).toBeGreaterThanOrEqual(2);
+    for (const m of sleepers) {
+      expect(m).toBeInstanceOf(THREE.InstancedMesh);
+      const cells = new Set(Array.from({ length: m.count }, (_, i) => {
+        const e = m.instanceMatrix.array;
+        return `${Math.floor(e[i * 16 + 12] / 250)},${Math.floor(e[i * 16 + 14] / 250)}`;
+      }));
+      expect(cells.size).toBe(1); // cada malla, los durmientes de una sola celda
+    }
+    // dos vías de 600 m recortadas a 500 m → ~833 durmientes cada una
+    const total = sleepers.reduce((n, m) => n + m.count, 0);
+    expect(total).toBeGreaterThan(2 * 800);
+    expect(total).toBeLessThan(2 * 860);
   });
 
   test('dos carteles ADROGUÉ por andén', () => {
@@ -103,8 +113,8 @@ describe('estación', () => {
     expect(signs[0].geometry.getAttribute('position').count).toBe(4 * 24); // 4 cajas de 24 vértices
   });
 
-  test('a lo sumo 10 draw calls', () => {
-    expect(meshes.length).toBeLessThanOrEqual(10);
+  test('a lo sumo 9 draw calls más los durmientes (uno por celda)', () => {
+    expect(meshes.filter((m) => m.name !== 'sleepers').length).toBeLessThanOrEqual(9);
   });
 });
 

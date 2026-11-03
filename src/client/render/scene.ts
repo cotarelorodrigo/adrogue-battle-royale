@@ -11,6 +11,9 @@ import type { Quality } from './quality.ts';
 
 /** Color de la niebla, parecido al horizonte del cielo. También es el de las siluetas de las afueras. */
 export const FOG_COLOR = 0xc6d3dc;
+/** El cielo se funde con la niebla de la altura del horizonte para abajo (seno del ángulo de elevación): lo que la
+ *  niebla tapa del todo y lo que corta camera.far quedan del mismo color que el cielo que tienen atrás. */
+const HORIZON_BLEND = 0.1;
 const FOV = 75;
 /** Cerca de la cámara (R15: con las capas del suelo a 2 cm no hay z-fighting a distancia). */
 const NEAR = 0.15;
@@ -66,6 +69,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   u.mieDirectionalG.value = 0.8;
   u.cloudCoverage.value = 0.35;
   (u.sunPosition.value as THREE.Vector3).copy(SUN_DIR);
+  fadeHorizonToFog(sky.material);
   scene.add(sky);
 
   scene.add(new THREE.HemisphereLight(0xd8e6ff, 0x80705a, 2.0));
@@ -169,6 +173,21 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
       renderer.render(scene, camera);
     },
   };
+}
+
+/** La niebla de three se mezcla después de pasar a sRGB (fog.color llega al shader en el espacio de salida): acá se
+ *  mezcla igual, así un objeto con niebla total y el cielo detrás dan exactamente el mismo color. */
+function fadeHorizonToFog(material: THREE.ShaderMaterial): void {
+  const c = new THREE.Color(FOG_COLOR).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
+  const fs = material.fragmentShader;
+  const blend = `gl_FragColor.rgb = mix( horizonColor, gl_FragColor.rgb, smoothstep( 0.0, ${HORIZON_BLEND.toFixed(2)}, direction.y ) );`;
+  const patched = fs.replace('#include <colorspace_fragment>', `#include <colorspace_fragment>\n\t${blend}`);
+  if (patched === fs) {
+    console.warn('Sky: no se pudo fundir el horizonte con la niebla (¿cambió el shader de three?)');
+    return;
+  }
+  material.uniforms.horizonColor = { value: new THREE.Vector3(c.r, c.g, c.b) };
+  material.fragmentShader = `uniform vec3 horizonColor;\n${patched}`;
 }
 
 /** Siluetas de las afueras: paredes y techo planos, sin textura ni colisión, en una sola malla del color de la niebla. */

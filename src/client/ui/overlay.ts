@@ -1,14 +1,15 @@
 // Pantallas sobre el juego: título, menú de Esc, lugares, créditos y errores. Decide qué se ve según el pointer lock:
 // con el puntero capturado se juega; al soltarlo (Esc del navegador, cambio de ventana) aparece el menú.
 import type { Place } from '../../shared/mapdata.ts';
+import { QUALITY_LABEL } from '../render/quality.ts';
 import type { Quality } from '../render/quality.ts';
 import { createCredits } from './credits.ts';
 import { createPlacesMenu } from './places-menu.ts';
 
 export const HELP = 'WASD moverse · Espacio saltar · C agacharse · Mouse mirar · M lugares · Esc menú';
-const QUALITIES: [Quality, string][] = [['baja', 'Baja'], ['media', 'Media'], ['alta', 'Alta']];
+const QUALITIES = Object.entries(QUALITY_LABEL) as [Quality, string][];
 
-export type Screen = 'loading' | 'title' | 'playing' | 'menu' | 'places' | 'credits' | 'error';
+export type Screen = 'loading' | 'title' | 'playing' | 'menu' | 'places' | 'credits' | 'error' | 'bench';
 
 export interface OverlayOptions {
   quality: Quality;
@@ -24,6 +25,8 @@ export interface Overlay {
   readonly screen: Screen;
   /** Terminó la carga: habilita "Hacé click para jugar" y arma el menú de lugares. */
   ready(places: Place[]): void;
+  /** Terminó la carga en modo benchmark (?bench=1): no se muestra nada ni se juega; el benchmark pone su cartel. */
+  bench(): void;
   /** Avisar cada pointerlockchange. */
   pointerLocked(locked: boolean): void;
   /** Tecla M. */
@@ -99,7 +102,7 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
 
   function show(s: Screen): void {
     screen = s;
-    wrap.hidden = s === 'playing';
+    wrap.hidden = s === 'playing' || s === 'bench';
     title.hidden = s !== 'loading' && s !== 'title';
     menu.hidden = s !== 'menu';
     credits.hidden = s !== 'credits';
@@ -134,8 +137,11 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
       play.disabled = false;
       show('title');
     },
+    bench() {
+      show('bench');
+    },
     pointerLocked(locked) {
-      if (screen === 'loading' || screen === 'error') return;
+      if (screen === 'loading' || screen === 'error' || screen === 'bench') return;
       if (locked) {
         started = true;
         afterUnlock = null;
@@ -146,7 +152,7 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
       }
     },
     togglePlaces() {
-      if (screen === 'loading' || screen === 'error') return;
+      if (screen === 'loading' || screen === 'error' || screen === 'bench') return;
       if (screen === 'playing') {
         afterUnlock = 'places'; // se muestra cuando el navegador confirme que soltó el puntero
         o.exitLock();

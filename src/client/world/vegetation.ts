@@ -1,10 +1,12 @@
-// Árboles (tres variantes instanciadas: ≤ 6 draw calls) y plazas (senderos, bancos y fuentes). El pasto de las plazas
-// es el suelo base de chunks.ts: acá no se vuelve a dibujar.
+// Árboles (las tres variantes en un tronco y una copa instanciados, partidos en celdas: 2 draw calls por celda a la
+// vista) y plazas (senderos, bancos y fuentes). El pasto de las plazas es el suelo base de chunks.ts: acá no se vuelve
+// a dibujar.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BENCH, FOUNTAIN_H, TRUNK_R } from '../../shared/collision.ts';
 import { hashIndex } from '../../shared/geo.ts';
 import type { MapData, Prop, Tree } from '../../shared/mapdata.ts';
+import { splitByCell } from './cells.ts';
 import { isParkFootway, Y_PATH } from './chunks.ts';
 import { ribbon } from './geometry.ts';
 import type { WorldMaterials } from './types.ts';
@@ -12,9 +14,8 @@ import type { WorldMaterials } from './types.ts';
 // ─── Árboles ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 interface Variant {
-  /** Alto del tronco visible (llega hasta adentro de la copa) y radio arriba (abajo es TRUNK_R, como la colisión). */
+  /** Alto del tronco visible (llega hasta adentro de la copa). */
   trunkH: number;
-  trunkTop: number;
   /** La copa: base, ancho y alto. */
   crownY: number;
   crownW: number;
@@ -28,27 +29,37 @@ interface Variant {
 
 /** 0: tipa (copa ancha y baja), 1: plátano (copa redonda y alta), 2: jacarandá (copa aireada, florecida en noviembre). */
 const VARIANTS: Variant[] = [
-  { trunkH: 4.2, trunkTop: 0.2, crownY: 2.8, crownW: 8.5, crownH: 5.5, clusters: 1500,
+  { trunkH: 4.2, crownY: 2.8, crownW: 8.5, crownH: 5.5, clusters: 1500,
     leaves: ['#263f1a', '#34522a', '#43642f', '#557837', '#6a8c40'] },
-  { trunkH: 4.6, trunkTop: 0.18, crownY: 2.6, crownW: 6.5, crownH: 6.8, clusters: 1500,
+  { trunkH: 4.6, crownY: 2.6, crownW: 6.5, crownH: 6.8, clusters: 1500,
     leaves: ['#1f3818', '#2c4a22', '#3a5c2a', '#4b6f33', '#5d823c'] },
-  { trunkH: 4.0, trunkTop: 0.16, crownY: 2.9, crownW: 7, crownH: 5, clusters: 1200,
+  { trunkH: 4.0, crownY: 2.9, crownW: 7, crownH: 5, clusters: 1200,
     leaves: ['#2c4220', '#3b5629', '#4b6a31', '#5c7c3a'], bloom: { colors: ['#7f73ad', '#968ac2', '#aa9fcf'], share: 0.3 } },
 ];
+/** Lado de la textura de hojas de cada variante; el atlas las pone una al lado de la otra. */
 const LEAF_TEX = 512;
 const ALPHA_TEST = 0.5;
+/** Las tres variantes comparten un tronco de 1 m (cada instancia lo estira al de su variante): el radio de arriba
+ *  queda en el medio de los de antes (0,16–0,2 m, adentro de la copa) y la corteza repite cada ~1,6 m. */
+const TRUNK_TOP = 0.18;
+const TRUNK_UV_H = 4.3;
+/** La copa también es una sola (de 1 × 1 × 1, estirada por instancia). Sus normales "redondas" se calculan con el
+ *  tamaño promedio de las variantes: a cada una le quedan a menos de 11° de las que tenía con su propia geometría. */
+const CROWN_REF = { w: 7.33, h: 5.77 };
 
 /** ¿Se dibuja el árbol i con esta densidad? Determinista y anidado: con más densidad están los mismos y algunos más. */
 export const keepTree = (i: number, density: number): boolean => density >= 1 || hashIndex(i) < density;
 
-/** Racimos de hojas en una copa más o menos elíptica, sobre fondo transparente. Determinista (sin Math.random): los
- *  de adentro y abajo más oscuros, los del borde de arriba más claros (donde da el sol). */
-function leafCanvas(v: Variant, seed: number): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = c.height = LEAF_TEX;
-  const ctx = c.getContext('2d')!;
+/** Racimos de hojas en una copa más o menos elíptica, sobre fondo transparente, en el cuadrado LEAF_TEX × LEAF_TEX
+ *  de `ctx` que empieza en x0. Determinista (sin Math.random): los de adentro y abajo más oscuros, los del borde de
+ *  arriba más claros (donde da el sol). */
+function drawLeaves(ctx: CanvasRenderingContext2D, v: Variant, seed: number, x0: number): void {
   const h = (k: number): number => hashIndex(seed * 104729 + k);
   const R = LEAF_TEX / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, 0, LEAF_TEX, LEAF_TEX); // los racimos del borde no se pasan a la variante de al lado
+  ctx.clip();
   for (let i = 0; i < v.clusters; i++) {
     const a = h(i * 7) * Math.PI * 2;
     const r = Math.sqrt(h(i * 7 + 1)) * (0.82 + 0.1 * Math.sin(a * 5 + seed) + 0.05 * Math.sin(a * 13)) * R;
@@ -59,46 +70,69 @@ function leafCanvas(v: Variant, seed: number): HTMLCanvasElement {
     const pal = bloom ?? v.leaves;
     ctx.fillStyle = pal[Math.floor(light * pal.length)];
     ctx.beginPath();
-    ctx.ellipse(x, y, size, size * (0.55 + 0.35 * h(i * 7 + 6)), h(i * 7 + 4) * Math.PI, 0, Math.PI * 2);
+    ctx.ellipse(x0 + x, y, size, size * (0.55 + 0.35 * h(i * 7 + 6)), h(i * 7 + 4) * Math.PI, 0, Math.PI * 2);
     ctx.fill();
   }
-  return c;
+  ctx.restore();
 }
 
-/** Tronco octogonal abierto, de TRUNK_R en la base (los vértices coinciden con el octógono de la colisión). */
-function trunkGeometry(v: Variant): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(v.trunkTop, TRUNK_R, v.trunkH, 8, 1, true);
-  g.translate(0, v.trunkH / 2, 0);
+/** Las hojas de las tres variantes en una sola textura: la variante i ocupa el tercio i (en u). */
+function leafAtlas(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = LEAF_TEX * VARIANTS.length;
+  c.height = LEAF_TEX;
+  const ctx = c.getContext('2d')!;
+  VARIANTS.forEach((v, vi) => drawLeaves(ctx, v, vi + 1, vi * LEAF_TEX));
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** Cada copa lee su tercio del atlas: u ← (u + leafSlot) / 3. Para el material y para el de la sombra. */
+function leafSlotUv(shader: { vertexShader: string }): void {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float leafSlot;')
+    .replace('#include <uv_vertex>', `#include <uv_vertex>\n\tvMapUv.x = ( vMapUv.x + leafSlot ) / ${VARIANTS.length}.0;`);
+}
+
+/** Tronco octogonal abierto de 1 m, de TRUNK_R en la base (los vértices coinciden con el octógono de la colisión). */
+function trunkGeometry(): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(TRUNK_TOP, TRUNK_R, 1, 8, 1, true);
+  g.translate(0, 0.5, 0);
   const uv = g.getAttribute('uv');
-  for (let i = 0; i < uv.count; i++) uv.setY(i, (uv.getY(i) * v.trunkH) / 1.6); // la corteza repite cada 1,6 m
+  for (let i = 0; i < uv.count; i++) uv.setY(i, (uv.getY(i) * TRUNK_UV_H) / 1.6); // la corteza repite cada ~1,6 m
   return g;
 }
 
-/** Copa: 3 planos verticales a 60° y 3 horizontales escalonados (se ve con volumen desde la calle y desde los techos).
- *  Normales "redondas", hacia afuera y arriba; el material es de dos caras y las ilumina igual de los dos lados. */
-function crownGeometry(v: Variant): THREE.BufferGeometry {
+/** Copa de 1 × 1 × 1 (x, z en ±0,5; y de 0 a 1): 3 planos verticales a 60° y 3 horizontales escalonados (se ve con
+ *  volumen desde la calle y desde los techos). Cada instancia la estira al ancho y alto de su variante. Normales
+ *  "redondas", hacia afuera y arriba, armadas para que después del estirado queden como en una copa de CROWN_REF; el
+ *  material es de dos caras y las ilumina igual de los dos lados. */
+function crownGeometry(): THREE.BufferGeometry {
   const pos: number[] = [], nor: number[] = [], uv: number[] = [], idx: number[] = [];
-  const cy = v.crownY + v.crownH / 2;
+  const { w: W, h: H } = CROWN_REF;
+  const lift = 0.45 * Math.max(W, H);
   const quad = (corners: [number, number, number][]): void => {
     const base = pos.length / 3;
     const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
     corners.forEach(([x, y, z], k) => {
       pos.push(x, y, z);
-      const n = new THREE.Vector3(x * 0.6, (y - cy) * 0.4, z * 0.6).add(new THREE.Vector3(0, 0.9 * Math.max(v.crownW, v.crownH) / 2, 0)).normalize();
+      // normal de la copa de W × H en ese punto, multiplicada por el estirado (la instancia la divide por él)
+      const n = new THREE.Vector3(0.6 * x * W * W, H * (0.4 * (y - 0.5) * H + lift), 0.6 * z * W * W).normalize();
       nor.push(n.x, n.y, n.z);
       uv.push(uvs[k][0], uvs[k][1]);
     });
     idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   };
-  const w = v.crownW / 2;
+  const w = 0.5;
   for (let k = 0; k < 3; k++) {
     const a = (k * Math.PI) / 3, ca = Math.cos(a) * w, sa = Math.sin(a) * w;
-    quad([[-ca, v.crownY, sa], [ca, v.crownY, -sa], [ca, v.crownY + v.crownH, -sa], [-ca, v.crownY + v.crownH, sa]]);
+    quad([[-ca, 0, sa], [ca, 0, -sa], [ca, 1, -sa], [-ca, 1, sa]]);
   }
   // horizontales: cuadrados de lado 2·w·s a la altura t de la copa, girados rot para que no se alineen
   ([[0.3, 0.85, 0.2], [0.55, 1, 0.9], [0.8, 0.7, 0.5]] as const).forEach(([t, s, rot]) => {
-    const y = v.crownY + v.crownH * t, r = w * s, c = Math.cos(rot), sn = Math.sin(rot);
-    quad(([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([a, b]) => [(a * c - b * sn) * r, y, (a * sn + b * c) * r]));
+    const r = w * s, c = Math.cos(rot), sn = Math.sin(rot);
+    quad(([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([a, b]) => [(a * c - b * sn) * r, t, (a * sn + b * c) * r]));
   });
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -132,38 +166,53 @@ export async function loadBarkTexture(url: string, size = 256): Promise<THREE.Te
   return t;
 }
 
-/** Una InstancedMesh por variante y parte. Las instancias van ordenadas por su hash: con densidad d se dibujan las
- *  primeras (las de hash < d), así setTreeDensity cambia la cantidad sin rehacer nada. */
+/** Un tronco y una copa instanciados con todos los árboles, partidos en celdas (splitByCell). Las instancias van
+ *  ordenadas por su hash, y cada celda conserva ese orden: con densidad d se dibujan las primeras de cada celda (las de
+ *  hash < d), así setTreeDensity cambia la cantidad sin rehacer nada. */
 export function buildTrees(trees: Tree[], density: number, barkMap?: THREE.Texture): THREE.InstancedMesh[] {
+  if (trees.length === 0) return [];
+  const list = trees.map((t, i) => ({ t, h: hashIndex(i) })).sort((a, b) => a.h - b.h);
+  const hashes = Float64Array.from(list, (e) => e.h); // float64: el mismo corte que keepTree
+
+  const leaf = leafAtlas();
+  const crownMat = new THREE.MeshLambertMaterial({ map: leaf, alphaTest: ALPHA_TEST, side: THREE.DoubleSide });
+  crownMat.onBeforeCompile = (shader) => {
+    sameNormalBothSides(shader);
+    leafSlotUv(shader);
+  };
+  const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leaf, alphaTest: ALPHA_TEST });
+  depthMat.onBeforeCompile = leafSlotUv;
+  const crownGeo = crownGeometry();
+  crownGeo.setAttribute('leafSlot', new THREE.InstancedBufferAttribute(Float32Array.from(list, (e) => e.t.variant), 1));
+
   const trunkMat = new THREE.MeshLambertMaterial(barkMap ? { map: barkMap } : { color: '#5b4636' });
-  const out: THREE.InstancedMesh[] = [];
+  const trunk = new THREE.InstancedMesh(trunkGeometry(), trunkMat, list.length);
+  const crown = new THREE.InstancedMesh(crownGeo, crownMat, list.length);
+  trunk.name = 'trunk';
+  crown.name = 'crown';
+  crown.customDepthMaterial = depthMat;
+  crown.castShadow = true;
+  trunk.castShadow = false; // la sombra del tronco casi no se ve y duplica sus triángulos
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
-  VARIANTS.forEach((v, vi) => {
-    const list = trees.map((t, i) => ({ t, h: hashIndex(i) })).filter(({ t }) => t.variant === vi).sort((a, b) => a.h - b.h);
-    if (list.length === 0) return;
-    const leaf = new THREE.CanvasTexture(leafCanvas(v, vi + 1));
-    leaf.colorSpace = THREE.SRGBColorSpace;
-    const crownMat = new THREE.MeshLambertMaterial({ map: leaf, alphaTest: ALPHA_TEST, side: THREE.DoubleSide });
-    crownMat.onBeforeCompile = sameNormalBothSides;
-    const trunk = new THREE.InstancedMesh(trunkGeometry(v), trunkMat, list.length);
-    const crown = new THREE.InstancedMesh(crownGeometry(v), crownMat, list.length);
-    trunk.name = `trunk${vi}`;
-    crown.name = `crown${vi}`;
-    crown.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leaf, alphaTest: ALPHA_TEST });
-    list.forEach(({ t, h }, i) => {
-      p.set(t.position[0], 0, t.position[1]);
-      // el tronco no se ensancha ni se gira: su octógono es el de la colisión
-      trunk.setMatrixAt(i, m.compose(p, q.identity(), s.set(1, t.scale, 1)));
-      crown.setMatrixAt(i, m.compose(p, q.setFromAxisAngle(UP, h * Math.PI * 2), s.setScalar(t.scale)));
-    });
-    for (const mesh of [trunk, crown]) {
-      mesh.userData.hashes = Float64Array.from(list, (e) => e.h); // float64: el mismo corte que keepTree
-      mesh.castShadow = mesh === crown; // la sombra del tronco casi no se ve y duplica sus triángulos
-      mesh.receiveShadow = true;
-      out.push(mesh);
-    }
+  list.forEach(({ t, h }, i) => {
+    const v = VARIANTS[t.variant];
+    // el tronco no se ensancha ni se gira: su octógono es el de la colisión
+    trunk.setMatrixAt(i, m.compose(p.set(t.position[0], 0, t.position[1]), q.identity(), s.set(1, v.trunkH * t.scale, 1)));
+    // la copa de 1 × 1 × 1, estirada al ancho y alto de su variante, girada al azar
+    p.set(t.position[0], v.crownY * t.scale, t.position[1]);
+    s.set(v.crownW, v.crownH, v.crownW).multiplyScalar(t.scale);
+    crown.setMatrixAt(i, m.compose(p, q.setFromAxisAngle(UP, h * Math.PI * 2), s));
   });
+
+  const out: THREE.InstancedMesh[] = [];
+  for (const mesh of [trunk, crown]) {
+    mesh.receiveShadow = true;
+    for (const part of splitByCell(mesh)) {
+      part.userData.hashes = Float64Array.from(part.userData.instances as Uint32Array, (i) => hashes[i]);
+      out.push(part);
+    }
+  }
   setTreeDensity(out, density);
   return out;
 }

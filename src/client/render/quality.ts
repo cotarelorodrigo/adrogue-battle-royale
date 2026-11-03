@@ -3,6 +3,9 @@ export type Quality = 'baja' | 'media' | 'alta';
 export interface QualityPreset {
   pixelRatioMax: number;
   shadows: false | { mapSize: number; range: number };
+  /** Los ~700 contenedores también proyectan sombra (duplican sus triángulos y casi no se notan). */
+  dumpsterShadows: boolean;
+  /** Niebla hasta acá (m) y camera.far un poco más allá: lo que se corta ya es del color del horizonte. */
   drawDistance: number;
   treeDensity: number;
   anisotropy: number;
@@ -10,10 +13,13 @@ export interface QualityPreset {
 }
 
 export const QUALITY: Record<Quality, QualityPreset> = {
-  baja: { pixelRatioMax: 0.75, shadows: false, drawDistance: 250, treeDensity: 0.5, anisotropy: 1, textureSize: 512 },
-  media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024 },
-  alta: { pixelRatioMax: 2, shadows: { mapSize: 2048, range: 150 }, drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024 },
+  baja: { pixelRatioMax: 0.75, shadows: false, dumpsterShadows: false, drawDistance: 250, treeDensity: 0.5, anisotropy: 1, textureSize: 512 },
+  media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, dumpsterShadows: false, drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024 },
+  alta: { pixelRatioMax: 2, shadows: { mapSize: 2048, range: 150 }, dumpsterShadows: true, drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024 },
 };
+
+/** Cómo se llama cada calidad en pantalla (menú de Esc y benchmark). */
+export const QUALITY_LABEL: Record<Quality, string> = { baja: 'Baja', media: 'Media', alta: 'Alta' };
 
 const KEY = 'adrogue.calidad';
 

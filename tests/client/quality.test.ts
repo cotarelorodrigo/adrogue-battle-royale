@@ -7,6 +7,10 @@ test('presets exactos', () => {
   expect(QUALITY.alta.drawDistance).toBe(900);
 });
 
+test('sombras de los contenedores solo en alta', () => {
+  expect([QUALITY.baja.dumpsterShadows, QUALITY.media.dumpsterShadows, QUALITY.alta.dumpsterShadows]).toEqual([false, false, true]);
+});
+
 test('calidad por defecto media y persistida', () => {
   localStorage.clear();
   expect(loadQuality()).toBe('media');

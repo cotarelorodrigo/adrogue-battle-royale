@@ -1,4 +1,4 @@
-// window.__adrogue: ganchos para los tests e2e y el benchmark. Solo existe con ?debug=1.
+// window.__adrogue: ganchos para los tests e2e. Solo existe con ?debug=1 (el benchmark, ?bench=1, no los necesita).
 import type { Vec3 } from '../shared/geo.ts';
 import type { PlayerState } from '../shared/player.ts';
 import type { Quality } from './render/quality.ts';
