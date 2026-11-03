@@ -94,3 +94,26 @@ test('estación: radio 30 m y kind station', () => {
   expect(rs.buildings.find((b) => b.id === 'b0001')!.kind).toBe('station');
   expect(rs.warnings).toHaveLength(0);
 });
+
+const hRoad = (id: string, z: number): Road => ({ id, kind: 'secondary', name: 'Calle', width: 6, sidewalk: 3, points: [[-100, z], [100, z]] });
+const vRoad = (id: string, x: number): Road => ({ id, kind: 'secondary', name: 'Calle', width: 6, sidewalk: 3, points: [[x, -100], [x, 100]] });
+
+test('una arista corta metida hacia adentro (más cercana) pierde contra la larga sobre la calle', () => {
+  // bloque en U abierto al norte; la muesca (13..16,5 × 0..4) tiene un fondo de 3,5 m que mira a una calle en z = −8
+  const u: Vec2[] = [[0, 30], [30, 30], [30, 0], [16.5, 0], [16.5, 4], [13, 4], [13, 0], [0, 0]];
+  const res = matchPlaces([inp('u', 'bar', [15, 2])], [mk('bu', u)], [], [hRoad('rn', -8), hRoad('rs', 45)]);
+  const sign = res.places[0].sign!;
+  expect(sign.anchor[1]).toBeLessThan(0.1); // fachada norte (z = 0), no el fondo de la muesca (z = 4)
+  expect(sign.anchor[1]).toBeGreaterThan(-0.1);
+  expect(sign.normal[1]).toBeCloseTo(-1);
+  expect(res.warnings).toEqual([]);
+});
+
+test('una arista cuyo rayo vuelve a cruzar el edificio no califica', () => {
+  // U abierta al norte con patio de 12 m: la cara interna izquierda mira al brazo derecho; una calle en x = 27 lo "alcanza"
+  const u: Vec2[] = [[0, 30], [40, 30], [40, 0], [22, 0], [22, 25], [10, 25], [10, 0], [0, 0]];
+  const res = matchPlaces([inp('u', 'bar', [12, 12])], [mk('bu', u)], [], [vRoad('rv', 27), hRoad('rs', 45)]);
+  const sign = res.places[0].sign!;
+  expect(sign.normal[1]).toBeCloseTo(1); // fachada sur (z = 30)
+  expect(sign.anchor[1]).toBeGreaterThan(29.9);
+});

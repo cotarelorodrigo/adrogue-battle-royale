@@ -1,6 +1,6 @@
 import { heightFor } from '../../src/mapgen/buildings.ts';
 import { MANTLE_REACH, placeClimbAids, roofClusters } from '../../src/mapgen/climb.ts';
-import { distPointSegment, ensureCCW, polygonArea } from '../../src/shared/geo.ts';
+import { areaRect, distPointSegment, ensureCCW, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, Prop, Road } from '../../src/shared/mapdata.ts';
 
@@ -105,4 +105,16 @@ test('edificio sin arista a calle igual recibe acceso (fallback)', () => {
 
 test('determinista', () => {
   expect(placeClimbAids([h1, h3adj], roads)).toEqual(placeClimbAids([h1, h3adj], roads));
+});
+
+test('una escalera no se ubica a menos de 1 m del borde del área jugable', () => {
+  const r = areaRect();
+  const edge = box('e', r.maxX - 10, 0, r.maxX - 0.5, 10, 2);
+  const [aid] = placeClimbAids([edge], roads);
+  expect(aid.kind).toBe('ladder');
+  const base = (aid as Extract<Prop, { kind: 'ladder' }>).base;
+  expect(base[0]).toBeLessThanOrEqual(r.maxX - 1);
+  expect(base[0]).toBeGreaterThanOrEqual(r.minX + 1);
+  expect(base[1]).toBeGreaterThanOrEqual(r.minZ + 1);
+  expect(base[1]).toBeLessThanOrEqual(r.maxZ - 1);
 });

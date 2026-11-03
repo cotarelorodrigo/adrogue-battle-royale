@@ -46,7 +46,7 @@ const { map, warnings } = assembleMap(loadRaw());
 const world = buildCollisionWorld(map);
 
 describe('assembleMap sobre datos reales', () => {
-  test('sin warnings', () => expect(warnings).toEqual([]));
+  test('sin warnings salvo relajaciones del punto de aparición', () => expect(warnings.filter((w) => !w.includes('punto de aparición'))).toEqual([]));
   test('cantidades razonables', () => {
     expect(map.buildings.length).toBeGreaterThan(1000); expect(map.buildings.length).toBeLessThan(1300);
     expect(map.places).toHaveLength(38); expect(map.parks.length).toBeGreaterThanOrEqual(12);
@@ -59,6 +59,33 @@ describe('assembleMap sobre datos reales', () => {
     expect(world.overlaps(s[0], s[2], 0.35, s[1] + 0.05, s[1] + 1.8)).toBe(false);
     expect(s[0]).toBeGreaterThan(map.bounds.minX); expect(s[0]).toBeLessThan(map.bounds.maxX);
     expect(s[2]).toBeGreaterThan(map.bounds.minZ); expect(s[2]).toBeLessThan(map.bounds.maxZ);
+  }));
+  test('cada spawn de lugar tiene 2,5 m libres, o figura en warnings', () => map.places.forEach((p) => {
+    const s = p.spawn;
+    if (!world.overlaps(s[0], s[2], 0.35 + 2.5, 0.05, 1.8)) return;
+    expect(warnings.some((w) => w.startsWith(`${p.id}:`)), p.id).toBe(true);
+  }));
+  test('cada lugar con cartel ve el cartel desde su spawn, o figura en warnings', () => map.places.forEach((p) => {
+    if (!p.sign) return;
+    const eye: [number, number, number] = [p.spawn[0], 1.6, p.spawn[2]];
+    const t: [number, number, number] = [p.sign.anchor[0], p.sign.bottomY + 0.45, p.sign.anchor[1]];
+    const dir: [number, number, number] = [t[0] - eye[0], t[1] - eye[1], t[2] - eye[2]];
+    const dist = Math.hypot(...dir);
+    const hit = world.raycast(eye, dir, dist);
+    const off: Vec2 = [p.spawn[0] - p.sign.anchor[0], p.spawn[2] - p.sign.anchor[1]];
+    const front = off[0] * p.sign.normal[0] + off[1] * p.sign.normal[1] >= 0.5 * Math.hypot(off[0], off[1]);
+    if (front && (!hit || hit.dist >= dist - 0.3)) return;
+    expect(warnings.some((w) => w.startsWith(`${p.id}:`)), p.id).toBe(true);
+  }));
+  test('ninguna ayuda de ascenso queda a menos de 1 m del borde', () => map.props.forEach((pr) => {
+    const q = pr.kind === 'ladder' ? pr.base : pr.kind === 'dumpster' ? pr.position : null;
+    if (!q) return;
+    expect(q[0]).toBeGreaterThanOrEqual(map.bounds.minX + 1); expect(q[0]).toBeLessThanOrEqual(map.bounds.maxX - 1);
+    expect(q[1]).toBeGreaterThanOrEqual(map.bounds.minZ + 1); expect(q[1]).toBeLessThanOrEqual(map.bounds.maxZ - 1);
+  }));
+  test('no quedan edificios dentro de parques', () => map.buildings.forEach((b) => {
+    const c: Vec2 = [b.footprint.reduce((s, v) => s + v[0], 0) / b.footprint.length, b.footprint.reduce((s, v) => s + v[1], 0) / b.footprint.length];
+    expect(map.parks.some((k) => pointInPolygon(c, k.polygon) && pointInPolygon(b.footprint[0], k.polygon)), b.id).toBe(false);
   }));
   test('ninguna calle vehicular pasa por adentro de un edificio', () => expect(roadPointsInsideBuildings(map)).toEqual([]));
   test('todo cluster de techos tiene acceso', () => roofClusters(map.buildings).forEach((c) => expect(hasAccess(c, map.props), c[0]).toBe(true)));
@@ -103,6 +130,16 @@ describe('findFreeSpot / randomSpawns en un mundo chico', () => {
     expect(a.length).toBeGreaterThan(1);
     for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++)
       expect(Math.hypot(a[i][0] - a[j][0], a[i][2] - a[j][2])).toBeGreaterThanOrEqual(8);
+  });
+  test('findFreeSpot con clearance y accept', () => {
+    // alrededor del origen hay 2 m de pared; con 2,5 m de aire el punto más cercano está más lejos
+    const plain = findFreeSpot(w, [0, 0])!;
+    const clear = findFreeSpot(w, [0, 0], 12, 2.5)!;
+    expect(Math.hypot(clear[0], clear[2])).toBeGreaterThan(Math.hypot(plain[0], plain[2]));
+    expect(w.overlaps(clear[0], clear[2], 0.35 + 2.5, 0.05, 1.8)).toBe(false);
+    const east = findFreeSpot(w, [0, 0], 12, 0, (p) => p[0] > 4)!;
+    expect(east[0]).toBeGreaterThan(4);
+    expect(findFreeSpot(w, [0, 0], 12, 0, () => false)).toBeNull();
   });
 });
 

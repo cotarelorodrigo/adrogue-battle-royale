@@ -57,6 +57,17 @@ function facesRoad(mid: Vec2, n: Vec2, roads: Road[]): boolean {
   return false;
 }
 
+/** ¿El segmento p→q cruza alguna arista del contorno `fp` (salvo la `skip`)? */
+function crossesFootprint(p: Vec2, q: Vec2, fp: Vec2[], skip: number): boolean {
+  for (let i = 0; i < fp.length; i++) {
+    if (i === skip) continue;
+    if (segSegDist(p, q, fp[i], fp[(i + 1) % fp.length]) === 0) return true;
+  }
+  return false;
+}
+
+const signWidth = (len: number): number => Math.min(SIGN_EDGE_FRAC * len, SIGN_MAX_W);
+
 interface Edge { i: number; a: Vec2; b: Vec2; len: number; mid: Vec2; n: Vec2; qualifies: boolean; dist: number }
 
 function edgesOf(b: Building, p: Vec2, roads: Road[]): Edge[] {
@@ -69,7 +80,11 @@ function edgesOf(b: Building, p: Vec2, roads: Road[]): Edge[] {
     if (len < 1e-6) continue;
     const mid: Vec2 = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
     const n = outwardNormal(a, c);
-    out.push({ i, a, b: c, len, mid, n, qualifies: facesRoad(mid, n, roads), dist: distPointSegment(p, a, c) });
+    const start: Vec2 = [mid[0] + n[0] * 1e-3, mid[1] + n[1] * 1e-3];
+    const end: Vec2 = [mid[0] + n[0] * ROAD_REACH_M, mid[1] + n[1] * ROAD_REACH_M];
+    // califica: cabe el cartel con 1 m de aire, el rayo llega a una calle y no vuelve a cruzar el edificio (patios, U, L)
+    const qualifies = len >= signWidth(len) + 1 && facesRoad(mid, n, roads) && !crossesFootprint(start, end, fp, i);
+    out.push({ i, a, b: c, len, mid, n, qualifies, dist: distPointSegment(p, a, c) });
   }
   return out.sort((x, y) => Number(y.qualifies) - Number(x.qualifies) || x.dist - y.dist);
 }
@@ -156,7 +171,7 @@ export function matchPlaces(
       const total = mine.reduce((t, s) => t + s.width, 0) + w + SIGN_GAP * mine.length;
       return mine.length === 0 || total <= SIGN_EDGE_FRAC * e.len;
     };
-    const width = (e: Edge) => Math.min(SIGN_EDGE_FRAC * e.len, SIGN_MAX_W);
+    const width = (e: Edge) => signWidth(e.len);
     // Prefiere aristas que miran a la calle; si no hay ninguna con lugar, cualquiera con lugar; si no, la mejor.
     const chosen = edges.find((e) => e.qualifies && fits(e, width(e))) ?? edges.find((e) => fits(e, width(e))) ?? edges[0];
     const slot: Slot = { text: inp.signText ?? inp.name, p: position, width: width(chosen), edge: chosen };

@@ -14,8 +14,17 @@ export function isFreeSpot(world: CollisionWorld, x: number, z: number): boolean
   return !world.overlaps(x, z, R, 0.05, 1.8) && world.supportHeight(x, z, R, Infinity) === 0;
 }
 
-/** Espiral cada 0,5 m alrededor de `near`: el punto libre más cercano (candidatos redondeados a 2 decimales) o null. */
-export function findFreeSpot(world: CollisionWorld, near: Vec2, maxRadius = 12): Vec3 | null {
+/**
+ * Espiral cada 0,5 m alrededor de `near`: el punto libre más cercano (candidatos redondeados a 2 decimales) o null.
+ * `clearance`: metros libres de todo sólido alrededor del punto, además del radio del jugador. `accept`: filtro extra.
+ */
+export function findFreeSpot(
+  world: CollisionWorld,
+  near: Vec2,
+  maxRadius = 12,
+  clearance = 0,
+  accept?: (p: Vec3) => boolean,
+): Vec3 | null {
   for (let ring = 0; ring * STEP <= maxRadius; ring++) {
     const rad = ring * STEP;
     const n = ring === 0 ? 1 : Math.ceil((2 * Math.PI * rad) / STEP);
@@ -26,6 +35,8 @@ export function findFreeSpot(world: CollisionWorld, near: Vec2, maxRadius = 12):
       const x = r2(near[0] + rad * Math.cos(a));
       const z = r2(near[1] + rad * Math.sin(a));
       if (!isFreeSpot(world, x, z)) continue;
+      if (clearance > 0 && world.overlaps(x, z, R + clearance, 0.05, 1.8)) continue;
+      if (accept && !accept([x, 0, z])) continue;
       const d = Math.hypot(x - near[0], z - near[1]);
       if (d < bestD) { bestD = d; best = [x, 0, z]; }
     }

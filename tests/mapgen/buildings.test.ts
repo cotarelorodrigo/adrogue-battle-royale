@@ -3,7 +3,7 @@ import { buildBuildings, COMMERCIAL_STREETS, FLOOR_H, PARAPET, heightFor } from 
 import type { GeoJSONFeatureCollection } from '../../src/mapgen/buildings.ts';
 import { project, unproject, polygonArea, signedAreaFromAbove, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
-import type { Road } from '../../src/shared/mapdata.ts';
+import type { Park, Road } from '../../src/shared/mapdata.ts';
 
 const fc: GeoJSONFeatureCollection = JSON.parse(
   readFileSync(new URL('../fixtures/buildings-mini.geojson', import.meta.url), 'utf8'),
@@ -92,4 +92,24 @@ test('una calle service no recorta', () => {
   const r = buildBuildings(rectFc(-20, -10, 20, 10), [road]);
   expect(r.buildings).toHaveLength(1);
   expect(polygonArea(r.buildings[0].footprint)).toBeCloseTo(800, 0);
+});
+
+describe('footprints dentro de parques', () => {
+  const rectFeature = (x0: number, z0: number, x1: number, z1: number, props?: Record<string, unknown>): GeoJSONFeatureCollection['features'][number] => {
+    const ring = [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]].map(([x, z]) => {
+      const { lat, lon } = unproject([x, z]);
+      return [lon, lat];
+    });
+    return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, ...(props ? { properties: props } : {}) };
+  };
+  const park: Park = { id: 'p1', name: 'Plaza', polygon: [[-30, 30], [30, 30], [30, -30], [-30, -30]] };
+  const run = (...fs: GeoJSONFeatureCollection['features']) => buildBuildings({ type: 'FeatureCollection', features: fs }, [], [park]).buildings;
+
+  test('un footprint de Microsoft adentro del parque se descarta', () => expect(run(rectFeature(-5, -5, 5, 5))).toHaveLength(0));
+  test('el mismo footprint de OSM se conserva', () => expect(run(rectFeature(-5, -5, 5, 5, { source: 'osm' }))).toHaveLength(1));
+  test('un footprint de Microsoft con < 50 % adentro se conserva', () => {
+    // 20x10 con 8 m adentro del parque (x ∈ [22, 42] → 8 de 20 = 40 %)
+    expect(run(rectFeature(22, -5, 42, 5))).toHaveLength(1);
+  });
+  test('con ≥ 50 % adentro se descarta', () => expect(run(rectFeature(20, -5, 40, 5))).toHaveLength(0));
 });

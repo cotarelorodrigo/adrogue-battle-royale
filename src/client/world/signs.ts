@@ -28,7 +28,7 @@ const STYLES: Record<PlaceType, Style> = {
   bank: { bg: '#163d6e', fg: '#ffffff', frame: '#d6dbe2', family: SANS, weight: 'bold' },
   bar: { bg: '#1d1410', fg: '#eab75c', frame: '#5c3b22', family: SERIF, weight: 'bold', italic: true },
   restaurant: { bg: '#26472f', fg: '#f4ead0', frame: '#9c7b3f', family: SERIF, weight: 'bold' },
-  fastfood: { bg: '#c62828', fg: '#ffffff', frame: '#f2c230', family: SANS, weight: '900' },
+  fastfood: { bg: '#2b2b2b', fg: '#f3e9d2', frame: '#8a8a8a', family: SANS, weight: '900' },
   icecream: { bg: '#fbefd9', fg: '#6b3a22', frame: '#e58fa6', family: ROUNDED, weight: 'bold' },
   cinema: { bg: '#121212', fg: '#f5d04c', frame: '#a51c1c', family: CONDENSED, weight: 'bold' },
   club: { bg: '#0d47a1', fg: '#ffffff', frame: '#f4f4f4', family: SANS, weight: 'bold' },

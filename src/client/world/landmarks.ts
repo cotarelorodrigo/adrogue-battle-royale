@@ -23,7 +23,7 @@ const SLEEPER_STEP = 0.6;
  *  coordenadas del mundo y los dos dibujan lo mismo (no se nota el z-fighting). */
 const BALLAST_W = 4.8;
 const BALLAST_UV = 3;
-/** Entre la vereda (0,02) y el asfalto (0,04): en los pasos a nivel la calle tapa el balasto. */
+/** Entre la vereda (0,02) y el asfalto (0,04): en los pasos a nivel la calle tapa el balasto. polygonOffset −1,5 (vereda −1, asfalto −2). */
 const Y_BALLAST = 0.03;
 
 // Andén: el borde del lado de la vía es una losa de 25 cm que vuela 60 cm sobre un muro retirado (el hueco de
@@ -340,7 +340,7 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
 
   // Vías: balasto, durmientes y rieles
   if (runs.length > 0) {
-    const ballast = new THREE.MeshLambertMaterial({ map: ballastTexture() });
+    const ballast = new THREE.MeshLambertMaterial({ map: ballastTexture(), polygonOffset: true, polygonOffsetFactor: -1.5, polygonOffsetUnits: -1.5 });
     const bed = merge(runs.map((r) => ribbon(r, BALLAST_W, Y_BALLAST)), 'balasto');
     const pos = bed.getAttribute('position'), uv = bed.getAttribute('uv');
     for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / BALLAST_UV, pos.getZ(i) / BALLAST_UV);

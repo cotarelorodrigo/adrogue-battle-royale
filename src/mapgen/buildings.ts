@@ -1,7 +1,7 @@
 import { areaRect, distPointSegment, ensureCCW, hash01, pointInPolygon, polygonArea, project } from '../shared/geo.ts';
 import polygonClipping from 'polygon-clipping';
 import type { Vec2 } from '../shared/geo.ts';
-import type { Building, OutskirtBuilding, Road } from '../shared/mapdata.ts';
+import type { Building, OutskirtBuilding, Park, Road } from '../shared/mapdata.ts';
 
 export interface GeoJSONFeatureCollection {
   type: 'FeatureCollection';
@@ -126,11 +126,39 @@ function overlapFraction(small: Cand, big: Cand): number {
   return total === 0 ? 0 : both / total;
 }
 
+const PARK_MAX_FRAC = 0.5;
+
+const ringArea = (r: [number, number][]): number => {
+  let t = 0;
+  for (let i = 0; i < r.length - 1; i++) t += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
+  return Math.abs(t) / 2;
+};
+const multiArea = (m: polygonClipping.MultiPolygon): number =>
+  m.reduce((s, poly) => s + poly.reduce((a, r, i) => a + (i === 0 ? 1 : -1) * ringArea(r), 0), 0);
+
+/**
+ * `parks`: un footprint de Microsoft con ≥ 50 % de su área dentro de un parque se descarta (pedestales, copas de
+ * árboles). Un feature con `properties.source === 'osm'` se conserva siempre.
+ */
 export function buildBuildings(
   fc: GeoJSONFeatureCollection,
   roads: Road[],
+  parks: Park[] = [],
 ): { buildings: Building[]; outskirts: OutskirtBuilding[] } {
   const rect = areaRect();
+  const parkPolys = parks.map((k): Poly => [[...k.polygon, k.polygon[0]].map((v): [number, number] => [v[0], v[1]])]);
+  const parkUnion = parkPolys.length ? polygonClipping.union(parkPolys[0], ...parkPolys.slice(1)) : [];
+  const parkBoxes = parkUnion.map((poly) => bboxOf(poly[0].slice(0, -1) as Vec2[]));
+  // polygon-clipping modifica los puntos de entrada: siempre se le pasan copias
+  /** Fracción del área del candidato que cae dentro de algún parque. */
+  const parkFraction = (c: Cand): number => {
+    const hit = parkUnion.filter((_, i) => {
+      const k = parkBoxes[i];
+      return k[0] < c.bbox[2] && k[2] > c.bbox[0] && k[1] < c.bbox[3] && k[3] > c.bbox[1];
+    });
+    if (hit.length === 0) return 0;
+    return multiArea(polygonClipping.intersection([[...c.footprint, c.footprint[0]].map((v): [number, number] => [v[0], v[1]])], hit)) / c.area;
+  };
 
   // calzadas (grilla espacial para recortar solo contra las cercanas)
   const CELL = 50;
@@ -167,14 +195,16 @@ export function buildBuildings(
     if (l > 0 && ring[0][0] === ring[l][0] && ring[0][1] === ring[l][1]) ring = ring.slice(0, -1);
     const whole = toCand(ring);
     if (!whole) continue;
+    const ms = f.properties?.source !== 'osm';
+    const accept = (c: Cand): void => { if (!(ms && parkFraction(c) >= PARK_MAX_FRAC)) cands.push(c); };
     const near = nearby(whole.bbox);
-    if (near.length === 0) { cands.push(whole); continue; }
+    if (near.length === 0) { accept(whole); continue; }
     const subject: Poly = [[...whole.footprint, whole.footprint[0]]];
     const pieces = polygonClipping.difference(subject, ...near.map((c) => c.poly));
     for (const piece of pieces) {
       const outer = piece[0].slice(0, -1) as Vec2[]; // se descartan los huecos
       const cand = toCand(outer);
-      if (cand) cands.push(cand);
+      if (cand) accept(cand);
     }
   }
 

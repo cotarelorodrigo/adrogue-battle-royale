@@ -1,4 +1,4 @@
-import { polygonArea } from '../shared/geo.ts';
+import { areaRect, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Prop, Road } from '../shared/mapdata.ts';
 import { heightFor } from './buildings.ts';
@@ -18,6 +18,7 @@ const DUMPSTER_DEPTH = 1.1;
 const DUMPSTER_GAP = 0.2;
 const LADDER_W = 0.8;
 const LADDER_D = 0.6;
+const AREA_MARGIN = 1;
 const NON_VEHICULAR = new Set(['footway', 'pedestrian', 'service']);
 
 interface Index { buildings: Building[]; grid: { query(box: Box): number[] } }
@@ -153,13 +154,20 @@ function isFree(ctx: Ctx, e: Edge, aid: Aid): boolean {
   return free;
 }
 
+/** La ayuda (base y caja) queda a ≥ 1 m del borde del área jugable. */
+function inArea(ctx: Ctx, e: Edge): boolean {
+  const r = areaRect();
+  const aid = makeAid(ctx.ix.buildings[e.bi], e);
+  return [aid.pos, ...aid.box].every(([x, z]) => x >= r.minX + AREA_MARGIN && x <= r.maxX - AREA_MARGIN && z >= r.minZ + AREA_MARGIN && z <= r.maxZ - AREA_MARGIN);
+}
+
 function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edge; tier: number } | null {
   // tier 0: caja libre; tier 1: cualquier arista a calle. Gana el mayor `pick`, luego arista más larga, luego orden.
   for (const tier of [0, 1]) {
     let best: Edge | null = null;
     let bestScore = -Infinity;
     for (const e of cands) {
-      if (!e.street) continue;
+      if (!e.street || !inArea(ctx, e)) continue;
       if (tier === 0 && !isFree(ctx, e, makeAid(ctx.ix.buildings[e.bi], e))) continue;
       const score = pick(e);
       if (best === null || score > bestScore + 1e-9 || (Math.abs(score - bestScore) <= 1e-9 && e.len > best.len + 1e-9)) {
@@ -206,10 +214,19 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
       push(first.edge);
       stats[first.tier === 0 ? 'tier0' : 'tier1']++;
     } else {
-      let longest = lowEdges[0];
-      for (const e of lowEdges) if (e.len > longest.len + 1e-9) longest = e;
-      push(longest);
-      stats.fallback++;
+      let longest: Edge | undefined;
+      for (const e of lowEdges) if (inArea(ctx, e) && (!longest || e.len > longest.len + 1e-9)) longest = e;
+      if (longest) {
+        push(longest);
+        stats.fallback++;
+      } else {
+        // ninguna arista del más bajo sirve (borde del área): otro miembro del cluster
+        const other = bestOf(ctx, members.flatMap((i) => edgesOf(ctx, i)), () => 0);
+        if (other) {
+          push(other.edge);
+          stats[other.tier === 0 ? 'tier0' : 'tier1']++;
+        }
+      }
     }
 
     // accesos extra: arista a calle más lejana de los ya colocados

@@ -1,7 +1,7 @@
 import { ORIGIN, areaRect, pointInPolygon } from '../shared/geo.ts';
-import type { Vec2 } from '../shared/geo.ts';
+import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
-import type { Building, MapData, Park, Place, Prop, Tree } from '../shared/mapdata.ts';
+import type { Building, MapData, Place, Prop, Tree } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
 import { buildBuildings } from './buildings.ts';
 import type { GeoJSONFeatureCollection } from './buildings.ts';
@@ -13,6 +13,11 @@ import { placeTrees } from './trees.ts';
 import { placeProps } from './props.ts';
 import { distToRing } from './spatial.ts';
 import { findFreeSpot, randomSpawns } from './spawns.ts';
+
+const EYE_Y = 1.6;
+const SIGN_CLEAR = 0.3;
+const SPAWN_RADIUS = 16;
+const SPAWN_CLEARANCE = 2.5;
 
 const rn = (n: number, d = 2): number => { const f = 10 ** d; return Math.round(n * f) / f; };
 const v2 = (p: Vec2, d = 2): Vec2 => [rn(p[0], d), rn(p[1], d)];
@@ -42,17 +47,12 @@ export function filterTrees(trees: Tree[], props: Prop[], platforms: Vec2[][]): 
   });
 }
 
-function centroid(park: Park): Vec2 {
-  const n = park.polygon.length;
-  return [park.polygon.reduce((s, p) => s + p[0], 0) / n, park.polygon.reduce((s, p) => s + p[1], 0) / n];
-}
-
 export function assembleMap(
   raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[] },
 ): { map: MapData; warnings: string[]; stats: AidStats } {
   const warnings: string[] = [];
   const { roads, railways, platforms, parks, fountains } = parseOsm(raw.osm);
-  const built = buildBuildings(raw.buildings, roads);
+  const built = buildBuildings(raw.buildings, roads, parks);
   const matched = matchPlaces(raw.places, built.buildings, parks, roads);
   warnings.push(...matched.warnings);
   const { props: aids, stats } = placeClimbAidsWithStats(matched.buildings, roads);
@@ -103,11 +103,32 @@ export function assembleMap(
       ...(p0.sign ? { sign: { ...p0.sign, anchor: v2(p0.sign.anchor), normal: v2(p0.sign.normal, 3), width: rn(p0.sign.width), bottomY: rn(p0.sign.bottomY) } } : {}),
     };
     let near: Vec2 | null = null;
-    if (p.sign) near = [p.sign.anchor[0] + p.sign.normal[0] * 3, p.sign.anchor[1] + p.sign.normal[1] * 3];
-    else if (p.type === 'plaza') { const k = map.parks.find((q) => q.id === p.parkId); if (k) near = centroid(k); }
-    else if (p.type === 'monument') near = [p.position[0], p.position[1] + 4];
+    if (p.sign) near = [p.sign.anchor[0] + p.sign.normal[0] * 7, p.sign.anchor[1] + p.sign.normal[1] * 7];
+    else if (p.type === 'plaza' || p.type === 'monument') near = [p.position[0], p.position[1] + 10];
     if (!near) { warnings.push(`${p.id}: no se pudo ubicar el punto de aparición`); near = p.position; }
-    const spawn = findFreeSpot(world, near);
+    const sign = p.sign;
+    const seesSign = sign
+      ? (s: Vec3): boolean => {
+          // de frente al cartel: a ≤ 60° de la normal (de lo contrario se lo ve de canto, pegado a la fachada)
+          const off: Vec2 = [s[0] - sign.anchor[0], s[2] - sign.anchor[1]];
+          if (off[0] * sign.normal[0] + off[1] * sign.normal[1] < 0.5 * Math.hypot(off[0], off[1])) return false;
+          const eye: Vec3 = [s[0], EYE_Y, s[2]];
+          const target: Vec3 = [sign.anchor[0], sign.bottomY + 0.45, sign.anchor[1]];
+          const dir: Vec3 = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
+          const dist = Math.hypot(dir[0], dir[1], dir[2]);
+          const hit = world.raycast(eye, dir, dist);
+          return !hit || hit.dist >= dist - SIGN_CLEAR;
+        }
+      : undefined;
+    let spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE, seesSign);
+    if (!spawn && seesSign) {
+      spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE);
+      if (spawn) warnings.push(`${p.id}: punto de aparición sin línea de vista de frente al cartel`);
+    }
+    if (!spawn) {
+      spawn = findFreeSpot(world, near, SPAWN_RADIUS, 1);
+      if (spawn) warnings.push(`${p.id}: punto de aparición con solo 1 m libre`);
+    }
     if (!spawn) warnings.push(`${p.id}: sin punto libre cerca de ${near.map((n) => rn(n, 1)).join(', ')}`);
     return { ...p, spawn: spawn ?? [rn(near[0]), 0, rn(near[1])] };
   });
