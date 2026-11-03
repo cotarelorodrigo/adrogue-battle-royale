@@ -33,3 +33,16 @@ test('ROAD_SPECS y validación', () => {
   expect(ROAD_SPECS.footway).toEqual({ width: 2.5, sidewalk: 0 });
   expect(() => parseOsm({})).toThrow(/elements/);
 });
+test('pois: nodos y vías con nombre y shop, amenity, office o craft; las vías en el promedio de sus nodos', () => {
+  const [a, b, c] = [[-34.7992, -58.392], [-34.7992, -58.3918], [-34.7994, -58.3918]];
+  const node = (id: number, [lat, lon]: number[], tags?: Record<string, string>) => ({ type: 'node', id, lat, lon, ...(tags ? { tags } : {}) });
+  const r = parseOsm({ elements: [
+    node(1, a, { name: 'Kiosco Uno', shop: 'kiosk' }), node(2, b), node(3, c),
+    node(4, a, { shop: 'kiosk' }), node(5, a, { name: 'Sin rubro', note: 'x' }),
+    { type: 'way', id: 9, nodes: [2, 3], tags: { name: 'Taller', craft: 'carpenter' } },
+  ] });
+  expect(r.pois.map((p) => [p.id, p.name])).toEqual([['n1', 'Kiosco Uno'], ['w9', 'Taller']]);
+  const [pb, pc] = [project(b[0], b[1]), project(c[0], c[1])];
+  expect(r.pois[1].position[0]).toBeCloseTo((pb[0] + pc[0]) / 2, 6);
+  expect(r.pois[1].position[1]).toBeCloseTo((pb[1] + pc[1]) / 2, 6);
+});

@@ -18,7 +18,11 @@ export interface OsmFeatures {
   platforms: Vec2[][];
   parks: Park[];
   fountains: Vec2[];
+  pois: OsmPoi[];
 }
+
+/** Local de OSM: nodo o vía con nombre y alguna de shop, amenity, office o craft. `id`: `n123` o `w456`; una vía va en el promedio de sus nodos. */
+export interface OsmPoi { id: string; name: string; position: Vec2 }
 
 interface OsmNode { type: 'node'; id: number; lat: number; lon: number; tags?: Record<string, string> }
 interface OsmWay { type: 'way'; id: number; nodes: number[]; tags?: Record<string, string> }
@@ -59,6 +63,9 @@ export function bufferLine(pts: Vec2[], half: number): Vec2[] {
   return ensureCCW([...offsetLine(pts, half), ...offsetLine(pts, -half).reverse()]);
 }
 
+const isPoi = (t: Record<string, string> | undefined): t is Record<string, string> & { name: string } =>
+  !!t?.name && (t.shop !== undefined || t.amenity !== undefined || t.office !== undefined || t.craft !== undefined);
+
 export function parseOsm(raw: unknown): OsmFeatures {
   const elements = (raw as { elements?: unknown } | null)?.elements;
   if (!Array.isArray(elements)) throw new Error('JSON de OSM inválido: falta el arreglo "elements"');
@@ -70,9 +77,10 @@ export function parseOsm(raw: unknown): OsmFeatures {
     else if (e.type === 'way') ways.push(e);
   }
 
-  const out: OsmFeatures = { roads: [], railways: [], platforms: [], parks: [], fountains: [] };
+  const out: OsmFeatures = { roads: [], railways: [], platforms: [], parks: [], fountains: [], pois: [] };
   for (const n of nodes.values()) {
     if (n.tags?.amenity === 'fountain') out.fountains.push(project(n.lat, n.lon));
+    if (isPoi(n.tags)) out.pois.push({ id: `n${n.id}`, name: n.tags.name, position: project(n.lat, n.lon) });
   }
 
   for (const w of ways) {
@@ -83,6 +91,11 @@ export function parseOsm(raw: unknown): OsmFeatures {
     for (const id of ids) {
       const n = nodes.get(id);
       if (n) pts.push(project(n.lat, n.lon));
+    }
+
+    if (isPoi(t) && pts.length > 0) {
+      const c: Vec2 = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
+      out.pois.push({ id: `w${w.id}`, name: t.name, position: c });
     }
 
     const kind = roadKind(t.highway);

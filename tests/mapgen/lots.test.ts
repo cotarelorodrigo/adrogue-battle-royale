@@ -150,3 +150,12 @@ test('lotBuilding: kind, wall y front', () => {
   expect(c.kind).toBe('shop');
   expect(c.front).toMatchObject({ edges: [], corner: [], toldo: { color: '#aa0000', rayas: true } });
 });
+
+test('el lote de esquina queda del lado del frente aunque del otro lado de la transversal haya un pedazo más grande', () => {
+  const corridor: Vec2[] = [[-6, -10], [-1, -10], [-1, 40], [-6, 40]];
+  const fr: Frontage = { ...recta, corners: [[corridor], []] };
+  const [a] = layoutLots(frente([{ ancho: 8 }, { ancho: 92 }]), fr, []);
+  const xs = a.footprint!.map((p) => p[0]);
+  expect(Math.min(...xs)).toBeGreaterThanOrEqual(-1 - 1e-6);
+  expect(Math.max(...xs)).toBeCloseTo(8, 2);
+});

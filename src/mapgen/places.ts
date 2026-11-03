@@ -162,6 +162,8 @@ export function matchPlaces(
   buildings: Building[],
   parks: Park[],
   roads: Road[],
+  /** Lugares ligados a un lote relevado: ya tienen edificio y cartel, y el relevamiento manda (no se les aplica floors/tint/wall). */
+  fixed: Map<string, { buildingId: string; sign: Sign }> = new Map(),
 ): { places: Omit<Place, 'spawn'>[]; buildings: Building[]; warnings: string[] } {
   const blds: Building[] = buildings.map((b) => ({ ...b }));
   const blockers = blockersOf(blds);
@@ -181,6 +183,17 @@ export function matchPlaces(
       const park = parks.find((k) => k.name && normalizeName(k.name) === want) ?? parks.find((k) => pointInPolygon(position, k.polygon));
       if (park) place.parkId = park.id;
       else warnings.push(`${inp.id}: no se encontró el parque`);
+      continue;
+    }
+
+    const lot = fixed.get(inp.id);
+    if (lot) {
+      const b = blds.find((x) => x.id === lot.buildingId);
+      if (b) {
+        place.buildingId = b.id;
+        place.sign = lot.sign;
+        b.landmarkId ??= inp.id;
+      } else warnings.push(`${inp.id}: el lote ${lot.buildingId} no existe`);
       continue;
     }
 

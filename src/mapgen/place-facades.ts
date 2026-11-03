@@ -44,7 +44,7 @@ export const FACADE_BY_TYPE: Record<BuildingPlaceType, { ground: FacadeGround; t
 };
 
 /** Lo que mapgen lee de data/photo-facades.json. */
-export interface PhotoEdge { placeId: string; edgeIndex?: number }
+export interface PhotoEdge { placeId: string; edgeIndex?: number; widthM?: number; heightM?: number }
 
 /** Arista del cartel: la más cercana al ancla entre las que miran para el mismo lado; si ninguna, la más cercana. */
 function signEdge(b: Building, p: Pick<Place, 'sign'>): number {
@@ -74,7 +74,7 @@ export function placeFacades(buildings: Building[], places: Omit<Place, 'spawn'>
   for (const p of places) {
     if (p.type === 'plaza' || p.type === 'monument' || !p.buildingId) continue;
     const b = byId.get(p.buildingId);
-    if (!b) continue;
+    if (!b || b.front) continue; // un lote relevado dibuja su propio frente
     const photoEdge = photoOf.get(p.id)?.edgeIndex;
     let edge: number;
     if (photoEdge !== undefined) {

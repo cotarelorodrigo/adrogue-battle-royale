@@ -1,8 +1,11 @@
 import { ORIGIN, areaRect } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
-import type { Building, MapData, Place, Prop } from '../shared/mapdata.ts';
+import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
+import { applyFrentes } from './frentes.ts';
+import type { FrentesInput } from './frentes-input.ts';
+import { frontEdgesOf } from './lots.ts';
 import { buildBuildings } from './buildings.ts';
 import type { GeoJSONFeatureCollection } from './buildings.ts';
 import { matchPlaces } from './places.ts';
@@ -20,15 +23,20 @@ import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts
 
 const SPAWN_RADIUS = 16;
 const SPAWN_CLEARANCE = 2.5;
+const NO_FRENTES: FrentesInput = { frentes: [], calzadas: {} };
+
+const roundSign = (s: Sign): Sign => ({ ...s, anchor: v2(s.anchor), normal: v2(s.normal, 3), width: rn(s.width), bottomY: rn(s.bottomY) });
 
 /** `photos`: lo que mapgen usa de data/photo-facades.json (la arista de cada foto, para su fachada). */
 export function assembleMap(
-  raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[]; photos?: PhotoEdge[] },
-): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats } {
+  raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[]; photos?: PhotoEdge[]; frentes?: FrentesInput },
+): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats; report: string[] } {
   const warnings: string[] = [];
-  const { roads, railways, platforms, parks, fountains } = parseOsm(raw.osm);
+  const { roads, railways, platforms, parks, fountains, pois } = parseOsm(raw.osm);
   const built = buildBuildings(raw.buildings, roads, parks);
-  const matched = matchPlaces(raw.places, built.buildings, parks, roads);
+  const fr = applyFrentes(raw.frentes ?? NO_FRENTES, roads, built.buildings, raw.places, pois);
+  warnings.push(...fr.warnings);
+  const matched = matchPlaces(raw.places, fr.buildings, parks, roads, fr.fixed);
   warnings.push(...matched.warnings);
   const { props: aids, stats } = placeClimbAidsWithStats(matched.buildings, roads);
   if (stats.noAid > 0) warnings.push(`${stats.noAid} cluster(s) de techos sin ayuda de ascenso aunque tienen aristas adentro del área`);
@@ -41,6 +49,16 @@ export function assembleMap(
   for (const b of matched.buildings) {
     const footprint = ring(b.footprint);
     if (footprint.length < 3) { warnings.push(`${b.id}: la planta se degenera al redondear`); continue; }
+    const lot = b.front && fr.fronts.get(b.id);
+    if (b.front && lot) {
+      // las aristas del frente se buscan sobre la planta ya redondeada
+      const edges = frontEdgesOf(footprint, lot.front.map((p) => v2(p)));
+      if (edges.length === 0) warnings.push(`${b.id}: el frente no coincide con ninguna arista`);
+      const corner = [...new Set(lot.cornerRings.flatMap((c) => { const r = ring(c); return frontEdgesOf(footprint, [...r, r[0]]); }))]
+        .filter((e) => !edges.includes(e));
+      buildings.push({ ...b, footprint, height: rn(b.height), front: { ...b.front, edges, corner } });
+      continue;
+    }
     buildings.push({ ...b, footprint, height: rn(b.height) });
   }
   const outskirts = built.outskirts.flatMap((o) => {
@@ -59,7 +77,7 @@ export function assembleMap(
     platforms: platforms.map(ring),
     parks: parks.map((k) => ({ ...k, polygon: ring(k.polygon) })),
     places: [],
-    signs: [],
+    signs: fr.signs.map(roundSign),
     props: props.map((p): Prop => {
       switch (p.kind) {
         case 'ladder': return { ...p, base: v2(p.base), normal: v2(p.normal, 3), topY: rn(p.topY) };
@@ -81,7 +99,7 @@ export function assembleMap(
     const p: Omit<Place, 'spawn'> = {
       ...p0,
       position: v2(p0.position),
-      ...(p0.sign ? { sign: { ...p0.sign, anchor: v2(p0.sign.anchor), normal: v2(p0.sign.normal, 3), width: rn(p0.sign.width), bottomY: rn(p0.sign.bottomY) } } : {}),
+      ...(p0.sign ? { sign: roundSign(p0.sign) } : {}),
     };
     let near: Vec2 | null = null;
     if (p.sign) near = [p.sign.anchor[0] + p.sign.normal[0] * 7, p.sign.anchor[1] + p.sign.normal[1] * 7];
@@ -103,7 +121,27 @@ export function assembleMap(
   });
   // fachadas por lugar sobre las plantas y los carteles ya redondeados (los índices de arista son los del archivo)
   warnings.push(...placeFacades(map.buildings, map.places, raw.places, raw.photos ?? []));
+  warnings.push(...lotPhotoWarnings(map, raw.photos ?? []));
   map.randomSpawns = randomSpawns(world);
   if (map.randomSpawns.length < 64) warnings.push(`randomSpawns: solo ${map.randomSpawns.length} de 64`);
-  return { map, warnings, stats, pockets: holes.stats };
+  return { map, warnings, stats, pockets: holes.stats, report: fr.report };
+}
+
+/** Una foto de un lugar con lote no manda sobre el relevamiento: va a la arista del cartel y tiene que caber en el frente. */
+function lotPhotoWarnings(map: MapData, photos: PhotoEdge[]): string[] {
+  const out: string[] = [];
+  for (const ph of photos) {
+    const b = map.buildings.find((x) => x.id === map.places.find((p) => p.id === ph.placeId)?.buildingId);
+    if (!b?.front) continue;
+    if (ph.edgeIndex !== undefined) out.push(`${ph.placeId}: la foto de un lugar con lote va a la arista del cartel (sacale edgeIndex)`);
+    if (ph.heightM !== undefined && ph.heightM > b.height + 0.5) out.push(`${ph.placeId}: la foto mide ${ph.heightM} m y el lote ${rn(b.height, 1)} m`);
+    if (ph.widthM !== undefined) {
+      const len = b.front.edges.reduce((sum, e) => {
+        const [a, c] = [b.footprint[e], b.footprint[(e + 1) % b.footprint.length]];
+        return sum + Math.hypot(c[0] - a[0], c[1] - a[1]);
+      }, 0);
+      if (ph.widthM > len + 1) out.push(`${ph.placeId}: la foto mide ${ph.widthM} m de ancho y el frente del lote ${rn(len, 1)} m`);
+    }
+  }
+  return out;
 }

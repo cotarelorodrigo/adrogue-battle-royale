@@ -139,3 +139,13 @@ test('calle angosta: un edificio del otro lado, dentro del alcance, no descalifi
   expect(sign.normal[1]).toBeCloseTo(-1); // norte, hacia la calle angosta
   expect(sign.anchor[1]).toBeLessThan(-19.9);
 });
+
+test('fixed: el lugar toma el edificio y el cartel dados, sin buscar ni aplicar floors/tint/wall', () => {
+  const sign = { text: 'X', anchor: [1, 2] as Vec2, normal: [0, -1] as Vec2, width: 3, bottomY: 2.35 };
+  const res = matchPlaces([inp('lugar-b', 'bank', [70, -14], { floors: 5, tint: '#123456', wall: 'brick' })], buildings, [], roads,
+    new Map([['lugar-b', { buildingId: 'b0001', sign }]]));
+  expect(res.warnings).toEqual([]);
+  expect(res.places[0].buildingId).toBe('b0001');
+  expect(res.places[0].sign).toBe(sign);
+  expect(res.buildings.find((b) => b.id === 'b0001')).toMatchObject({ floors: 2, tint: '#fff', wall: 'plaster' });
+});

@@ -4,6 +4,7 @@ import { assembleMap } from '../../src/mapgen/assemble.ts';
 import { filterTrees } from '../../src/mapgen/trees.ts';
 import { SPAWN_RELAXED, findFreeSpot, isFatalWarning, randomSpawns, seesSign } from '../../src/mapgen/spawns.ts';
 import { loadPlaces } from '../../src/mapgen/places-input.ts';
+import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
 import { parkFractionOf } from '../../src/mapgen/buildings.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
 import { analyzeGround, solidOutlines } from '../../src/mapgen/pockets.ts';
@@ -23,6 +24,7 @@ function loadRaw() {
     buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
     places: loadPlaces(),
     photos,
+    frentes: loadFrentes(),
   };
 }
 
@@ -43,13 +45,34 @@ function roadPointsInsideBuildings(map: MapData): string[] {
   return bad;
 }
 
-function hasAccess(clusterIds: string[], props: Prop[]): boolean {
+function hasAccess(clusterIds: string[], props: Prop[], m: MapData = map): boolean {
   const ids = new Set(clusterIds);
   return props.some((p) => p.kind === 'ladder' && ids.has(p.buildingId)) || props.some((p) => {
     if (p.kind !== 'dumpster') return false;
-    return map.buildings.some((b) => ids.has(b.id) && b.footprint.some((v, i) =>
+    return m.buildings.some((b) => ids.has(b.id) && b.footprint.some((v, i) =>
       distPointSegment(p.position, v, b.footprint[(i + 1) % b.footprint.length]) <= 1.5));
   });
+}
+
+/** Cluster de techos de cada edificio, y los clusters con una ayuda a la que se llega desde la componente principal del suelo. */
+function mainClusters(m: MapData, g: ReturnType<typeof analyzeGround>) {
+  const clusterOf = new Map<string, number>();
+  roofClusters(m.buildings).forEach((c, i) => c.forEach((id) => clusterOf.set(id, i)));
+  const fromMain = new Set<number>();
+  for (const p of m.props) {
+    if (p.kind === 'ladder') {
+      const n = Math.hypot(p.normal[0], p.normal[1]);
+      if (regionAt(g, p.base[0] + (p.normal[0] / n) * 0.45, p.base[1] + (p.normal[1] / n) * 0.45) === 0) fromMain.add(clusterOf.get(p.buildingId)!);
+    } else if (p.kind === 'dumpster') {
+      const perp: Vec2 = [Math.sin(p.rotation), Math.cos(p.rotation)];
+      if (![1, -1].some((s) => regionAt(g, p.position[0] + perp[0] * s * 0.95, p.position[1] + perp[1] * s * 0.95) === 0)) continue;
+      for (const b of m.buildings) {
+        if (b.height > 3.85 || !b.footprint.some((v, i) => distPointSegment(p.position, v, b.footprint[(i + 1) % b.footprint.length]) <= 1)) continue;
+        fromMain.add(clusterOf.get(b.id)!);
+      }
+    }
+  }
+  return { clusterOf, fromMain };
 }
 
 const { map, warnings, stats } = assembleMap(loadRaw());
@@ -170,23 +193,7 @@ describe('assembleMap sobre datos reales', () => {
 
 describe('huecos de suelo (flood fill sobre el mapa final)', () => {
   const g = analyzeGround(world, solidOutlines(map));
-  const clusterOf = new Map<string, number>();
-  roofClusters(map.buildings).forEach((c, i) => c.forEach((id) => clusterOf.set(id, i)));
-  // clusters con una ayuda a la que se llega desde la componente principal del suelo
-  const fromMain = new Set<number>();
-  for (const p of map.props) {
-    if (p.kind === 'ladder') {
-      const n = Math.hypot(p.normal[0], p.normal[1]);
-      if (regionAt(g, p.base[0] + (p.normal[0] / n) * 0.45, p.base[1] + (p.normal[1] / n) * 0.45) === 0) fromMain.add(clusterOf.get(p.buildingId)!);
-    } else if (p.kind === 'dumpster') {
-      const perp: Vec2 = [Math.sin(p.rotation), Math.cos(p.rotation)];
-      if (![1, -1].some((s) => regionAt(g, p.position[0] + perp[0] * s * 0.95, p.position[1] + perp[1] * s * 0.95) === 0)) continue;
-      for (const b of map.buildings) {
-        if (b.height > 3.85 || !b.footprint.some((v, i) => distPointSegment(p.position, v, b.footprint[(i + 1) % b.footprint.length]) <= 1)) continue;
-        fromMain.add(clusterOf.get(b.id)!);
-      }
-    }
-  }
+  const { clusterOf, fromMain } = mainClusters(map, g);
   test('ningún hueco queda sin salida: desde cada uno se sube por una escalera a un techo accesible', () => {
     const stuck = g.pockets.filter((p) => {
       const l = climbOut(world, map, p);
@@ -206,6 +213,73 @@ describe('huecos de suelo (flood fill sobre el mapa final)', () => {
       expect(Math.min(...touching.map((b) => b.height)) - f.height, f.id).toBeCloseTo(0.01, 6);
     }
   });
+});
+
+describe('assembleMap con el frente de prueba', () => {
+  const raw = { ...loadRaw(), frentes: loadFrentes('tests/fixtures/frentes-prueba.json') };
+  const res = assembleMap(raw);
+  const m = res.map;
+  const fw = buildCollisionWorld(m);
+  const lots = m.buildings.filter((b) => b.id.startsWith('ea-prueba-'));
+  const withSign = raw.frentes.frentes.flatMap((f) => f.lotes).filter((l) => l.cartel);
+  test('sin warnings fatales', () => expect(res.warnings.filter(isFatalWarning)).toEqual([]));
+  test('los lugares ligados usan el lote y su cartel', () => {
+    for (const id of ['banco-nacion', 'galicia', 'luccianos']) {
+      const p = m.places.find((x) => x.id === id)!;
+      expect(p.buildingId, id).toMatch(/^ea-prueba-/);
+      expect(p.sign?.look, id).toBeDefined();
+    }
+  });
+  test('cada lote tiene aristas de frente y no se superpone con otro edificio', () => {
+    expect(lots).toHaveLength(raw.frentes.frentes[0].lotes.filter((l) => l.pisos > 0).length);
+    for (const l of lots) {
+      expect(l.front!.edges.length, l.id).toBeGreaterThan(0);
+      for (const o of m.buildings) {
+        if (o === l) continue;
+        const area = polygonClipping.intersection([[...l.footprint, l.footprint[0]]], [[...o.footprint, o.footprint[0]]])
+          .reduce((a, poly) => a + Math.abs(poly[0].slice(0, -1).reduce((t, q, i, r) => t + q[0] * r[(i + 1) % r.length][1] - r[(i + 1) % r.length][0] * q[1], 0)) / 2, 0);
+        expect(area, `${l.id} x ${o.id}`).toBeLessThanOrEqual(0.05);
+      }
+    }
+  });
+  test('fotos de un lugar con lote: avisos de edgeIndex, alto y ancho', () => {
+    const w = assembleMap({ ...raw, photos: [{ placeId: 'banco-nacion', edgeIndex: 1, widthM: 60, heightM: 30 }] }).warnings;
+    expect(w).toContain('banco-nacion: la foto de un lugar con lote va a la arista del cartel (sacale edgeIndex)');
+    expect(w.some((x) => x.startsWith('banco-nacion: la foto mide 30 m y el lote '))).toBe(true);
+    expect(w.some((x) => x.startsWith('banco-nacion: la foto mide 60 m de ancho y el frente del lote '))).toBe(true);
+    expect(res.warnings.some((x) => x.startsWith('banco-nacion:'))).toBe(false);
+  }, 30_000);
+  test('map.signs: los lotes con cartel y sin lugar', () => {
+    const expected = withSign.filter((l) => l.lugar === undefined).length - 1; // LUCCIANO'S se enlaza solo con su lugar
+    expect(m.signs).toHaveLength(expected);
+    m.signs.forEach((sg) => expect(sg.look).toBeDefined());
+  });
+  test('ninguna calle vehicular pasa por adentro de un edificio', () => expect(roadPointsInsideBuildings(m)).toEqual([]));
+  test('todo cluster de techos tiene acceso, salvo los del borde', () => {
+    const b = m.bounds;
+    const deep = ([x, z]: Vec2): boolean => x > b.minX + 2.5 && x < b.maxX - 2.5 && z > b.minZ + 2.5 && z < b.maxZ - 2.5;
+    const byId = new Map(m.buildings.map((bd) => [bd.id, bd]));
+    const without = roofClusters(m.buildings).filter((c) => !hasAccess(c, m.props, m));
+    for (const c of without) {
+      const mids = c.flatMap((id) => byId.get(id)!.footprint.map((p, i, fp): Vec2 => [(p[0] + fp[(i + 1) % fp.length][0]) / 2, (p[1] + fp[(i + 1) % fp.length][1]) / 2]));
+      expect(mids.some(deep), c[0]).toBe(false);
+    }
+    expect(without).toHaveLength(res.stats.noAidOutside);
+  });
+  test('ningún hueco queda sin salida y los spawns están en el suelo principal', () => {
+    const g = analyzeGround(fw, solidOutlines(m));
+    const { clusterOf, fromMain } = mainClusters(m, g);
+    const stuck = g.pockets.filter((p) => {
+      const l = climbOut(fw, m, p);
+      return !l || !fromMain.has(clusterOf.get(l.buildingId)!);
+    });
+    expect(stuck).toHaveLength(0);
+    for (const sp of [...m.places.map((p) => p.spawn), ...m.randomSpawns]) expect(g.regionOf(sp[0], sp[2]), sp.join(',')).toBe(0);
+  });
+  test('cada lugar con cartel lo ve desde su spawn, o figura en warnings', () => m.places.forEach((p) => {
+    if (!p.sign || seesSign(fw, p.sign, p.spawn)) return;
+    expect(res.warnings.some((w) => w.startsWith(`${SPAWN_RELAXED} ${p.id}:`)), p.id).toBe(true);
+  }));
 });
 
 describe('findFreeSpot / randomSpawns en un mundo chico', () => {

@@ -1,5 +1,5 @@
 import polygonClipping from 'polygon-clipping';
-import { distPointSegment, ensureCCW, polygonArea } from '../shared/geo.ts';
+import { distPointSegment, ensureCCW, pointInPolygon, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import { SIGN_H } from '../shared/mapdata.ts';
 import type { Building, Road, Sign } from '../shared/mapdata.ts';
@@ -99,6 +99,7 @@ export function layoutLots(f: FrenteInput, fr: Frontage, roads: Road[]): LotShap
   }
   const k = L / suma;
   const own = fr.corners.flat();
+  const cumLine = cumulative(fr.line);
   const cuts = (box: [number, number, number, number]): Vec2[][] => [
     ...own,
     ...roads.filter((r) => vehicular(r) && r.name !== f.calle).map((r) => bufferLine(r.points, r.width / 2 + r.sidewalk)),
@@ -124,7 +125,16 @@ export function layoutLots(f: FrenteInput, fr: Frontage, roads: Road[]): LotShap
     const near = cuts(box);
 
     const pieces = subtract(raw, [...near, ...taken]);
-    const big = pieces.reduce<Vec2[] | null>((m, p) => (!m || polygonArea(outer(p)) > polygonArea(m) ? outer(p) : m), null);
+    // el pedazo que corresponde al lote es el más cercano a su tramo de la línea (el recorte de una esquina oblicua puede
+    // dejar del otro lado de la transversal uno más grande); a igual distancia, el mayor
+    const mid = pointAt(fr.line, cumLine, (s0 + s1) / 2);
+    const gap = (r: Vec2[]): number => (pointInPolygon(mid, r) ? 0 : distToRing(mid, r));
+    const big = pieces.reduce<Vec2[] | null>((m, p) => {
+      const r = outer(p);
+      if (!m) return r;
+      const [dr, dm] = [gap(r), gap(m)];
+      return dr < dm - 1e-6 || (Math.abs(dr - dm) <= 1e-6 && polygonArea(r) > polygonArea(m)) ? r : m;
+    }, null);
     const area = big ? polygonArea(big) : 0;
     if (lote.pisos > 0 && area < MIN_LOT_AREA) throw new Error(`frente ${f.id}, lote ${n}: el lote quedó demasiado chico (${fmt(area)} m²)`);
     const ring = big && area >= MIN_LOT_AREA ? ensureCCW(big) : null;
