@@ -13,7 +13,7 @@ export interface FacadeOptions {
 type Ctx = CanvasRenderingContext2D;
 
 /** Luminancia media (0..1) de una imagen, muestreada en 16 × 16. */
-function averageLuminance(img: CanvasImageSource): number {
+export function averageLuminance(img: CanvasImageSource): number {
   const c = document.createElement('canvas');
   c.width = c.height = 16;
   const ctx = c.getContext('2d')!;
@@ -30,7 +30,7 @@ function fillRect(ctx: Ctx, img: CanvasImageSource | undefined, fallback: string
   if (img) ctx.drawImage(img, x, y, w, h);
 }
 
-function glass(ctx: Ctx, x: number, y: number, w: number, h: number): void {
+export function glass(ctx: Ctx, x: number, y: number, w: number, h: number): void {
   const g = ctx.createLinearGradient(x, y, x + w, y + h);
   g.addColorStop(0, '#5d7383');
   g.addColorStop(0.5, '#33434f');
@@ -39,14 +39,14 @@ function glass(ctx: Ctx, x: number, y: number, w: number, h: number): void {
   ctx.fillRect(x, y, w, h);
 }
 
-function frame(ctx: Ctx, x: number, y: number, w: number, h: number, t: number, color: string): void {
+export function frame(ctx: Ctx, x: number, y: number, w: number, h: number, t: number, color: string): void {
   ctx.strokeStyle = color;
   ctx.lineWidth = t;
   ctx.strokeRect(x, y, w, h);
 }
 
 /** Reja: barrotes verticales y dos travesaños. */
-function bars(ctx: Ctx, x: number, y: number, w: number, h: number, u: number): void {
+export function bars(ctx: Ctx, x: number, y: number, w: number, h: number, u: number): void {
   ctx.strokeStyle = '#1d1d1d';
   ctx.lineWidth = 0.03 * u;
   const n = 6;
@@ -67,7 +67,7 @@ function bars(ctx: Ctx, x: number, y: number, w: number, h: number, u: number): 
 }
 
 /** Hoja de persiana de madera con tablillas horizontales. */
-function shutter(ctx: Ctx, o: FacadeOptions, x: number, y: number, w: number, h: number, u: number): void {
+export function shutter(ctx: Ctx, o: FacadeOptions, x: number, y: number, w: number, h: number, u: number): void {
   fillRect(ctx, o.wood, '#6b4a2b', x, y, w, h);
   ctx.strokeStyle = 'rgba(0,0,0,0.35)';
   ctx.lineWidth = 0.02 * u;

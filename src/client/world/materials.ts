@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { QUALITY } from '../render/quality.ts';
 import type { Quality } from '../render/quality.ts';
 import { composeFacadeTile } from './facades.ts';
+import { composeFrontAtlas, frontMaterial, packAtlas } from './front-atlas.ts';
 import type { FacadeStyle } from './facades.ts';
 import type { WorldMaterials } from './types.ts';
 
@@ -125,6 +126,22 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
   // Una baldosa cada 2 m (el suelo mapea 4 m por unidad de UV). Solo cobble usa estas texturas.
   for (const m of ['diff', 'nor_gl', 'rough'] as const) if (maps.includes(m)) tex('empedrado', m).repeat.set(2, 2);
 
+  // Atlas de módulos de fachada: un solo material para todos los frentes relevados.
+  const atlasSize = 2 * size;
+  const atlas = composeFrontAtlas(
+    { revoque: img('revoque', 'diff'), ladrillo: img('ladrillo', 'diff'), metal: img('metal', 'diff'), madera: img('madera', 'diff') },
+    atlasSize,
+  );
+  const px = (c: HTMLCanvasElement) => c.getContext('2d')!.getImageData(0, 0, atlasSize, atlasSize).data;
+  const frontMap = new THREE.DataTexture(packAtlas(px(atlas.color), px(atlas.mask), atlasSize), atlasSize, atlasSize, THREE.RGBAFormat);
+  frontMap.name = 'front';
+  frontMap.colorSpace = THREE.SRGBColorSpace;
+  frontMap.generateMipmaps = true;
+  frontMap.minFilter = THREE.LinearMipmapLinearFilter;
+  frontMap.magFilter = THREE.LinearFilter;
+  frontMap.anisotropy = anisotropy;
+  frontMap.needsUpdate = true;
+
   return {
     wallGroundHouse: facade('revoque', 'house'),
     wallGroundShop: facade('revoque', 'shop'),
@@ -140,6 +157,7 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
     path: material('sendero', offset(-3)),
     platform: material('hormigon'),
     rail: material('metal'),
+    front: frontMaterial(frontMap, lambert),
   };
 }
 

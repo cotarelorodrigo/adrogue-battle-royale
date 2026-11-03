@@ -15,4 +15,5 @@ export interface WorldMaterials {
   path: THREE.Material;
   platform: THREE.Material;
   rail: THREE.Material;
+  front: THREE.Material;
 }

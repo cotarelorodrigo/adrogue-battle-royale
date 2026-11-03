@@ -151,7 +151,7 @@ describe('ribbon / polygonGeometry', () => {
 const fake = (): WorldMaterials => {
   const m = () => new THREE.MeshBasicMaterial();
   return { wallGroundHouse: m(), wallGroundShop: m(), wallUpper: m(), brickGround: m(), brickUpper: m(), roof: m(),
-    parapet: m(), asphalt: m(), cobble: m(), sidewalk: m(), grass: m(), path: m(), platform: m(), rail: m() };
+    parapet: m(), asphalt: m(), cobble: m(), sidewalk: m(), grass: m(), path: m(), platform: m(), rail: m(), front: m() };
 };
 const road = (id: string, kind: Road['kind'], points: Vec2[], width = 8, sidewalk = 2): Road => ({ id, kind, width, sidewalk, points });
 const baseMap = (over: Partial<MapData>): MapData => ({

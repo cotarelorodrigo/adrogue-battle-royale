@@ -90,3 +90,18 @@ test('cobble: material propio con baldosa de 2 m (repeat 2x2) y sus texturas se 
   disposeMaterials(m);
   for (const t of [m.cobble.map, m.cobble.normalMap, m.cobble.roughnessMap]) expect(texDispose.mock.contexts).toContain(t);
 });
+
+test('front: un atlas de 2 × textureSize, un solo material, y se libera una vez', async () => {
+  const m = await createMaterials('media');
+  const front = m.front as THREE.MeshStandardMaterial;
+  expect(front).toBeInstanceOf(THREE.MeshStandardMaterial);
+  expect(front.map).toBeInstanceOf(THREE.DataTexture);
+  expect([(front.map!.image as { width: number }).width, (front.map!.image as { height: number }).height]).toEqual([2048, 2048]);
+  expect(front.map!.colorSpace).toBe(THREE.SRGBColorSpace);
+  const baja = await createMaterials('baja');
+  expect(baja.front).toBeInstanceOf(THREE.MeshLambertMaterial);
+  expect(((baja.front as THREE.MeshLambertMaterial).map!.image as { width: number }).width).toBe(1024);
+  const texDispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
+  disposeMaterials(m);
+  expect(texDispose.mock.contexts.filter((t) => t === front.map)).toHaveLength(1);
+});
