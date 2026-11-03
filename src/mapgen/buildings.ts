@@ -20,7 +20,7 @@ export const FLOOR_H = 3.2;
 export const PARAPET = 0.6;
 export const heightFor = (floors: number): number => floors * FLOOR_H + PARAPET;
 
-const MIN_AREA = 12;
+export const MIN_AREA = 12;
 const SIMPLIFY_M = 0.3;
 const CORRIDOR_M = 25;
 const APARTMENT_MIN_AREA = 400;

@@ -25,14 +25,14 @@ const COMPASS: Record<FrenteInput['vereda'], Vec2> = { norte: [0, -1], sur: [0, 
 
 const same = (a: Vec2, b: Vec2): boolean => Math.hypot(a[0] - b[0], a[1] - b[1]) < JOIN_TOL;
 
-function cumulative(pts: Vec2[]): number[] {
+export function cumulative(pts: Vec2[]): number[] {
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
   return cum;
 }
 
 /** Punto a distancia `s` del inicio (s se acota al rango de la polilínea). */
-function pointAt(pts: Vec2[], cum: number[], s: number): Vec2 {
+export function pointAt(pts: Vec2[], cum: number[], s: number): Vec2 {
   const sc = Math.min(Math.max(s, 0), cum[cum.length - 1]);
   let i = 1;
   while (i < pts.length - 1 && cum[i] < sc) i++;
@@ -42,7 +42,7 @@ function pointAt(pts: Vec2[], cum: number[], s: number): Vec2 {
 }
 
 /** Sub-polilínea entre `s0` y `s1`; lo que sobra fuera del rango sigue por la tangente de la punta. */
-function slice(pts: Vec2[], s0: number, s1: number): Vec2[] {
+export function slice(pts: Vec2[], s0: number, s1: number): Vec2[] {
   const cum = cumulative(pts);
   const total = cum[cum.length - 1];
   const a = Math.max(s0, 0);
