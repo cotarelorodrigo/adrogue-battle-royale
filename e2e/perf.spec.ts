@@ -10,10 +10,14 @@ import { collectErrors, frames, goTo, open, play, TOUR6 } from './helpers.ts';
 
 const DIR = 'test-results/perf';
 
+// Presupuestos del spec (el techo): baja 150 draw calls / 800.000 triángulos, media 300 / 1.500.000, alta 450 / 3.000.000.
+// Los de acá son ~1,2 × el máximo medido en los 6 puntos (SwiftShader, 2026-11-03: baja 107 / 108.238, media 204 / 190.633,
+// alta 320 / 252.971), para que una regresión salte mucho antes de llegar al techo. Si un cambio los supera con razón,
+// se vuelve a medir y se suben, sin pasar los del spec.
 const BUDGET: Record<Quality, { drawCalls: number; triangles: number }> = {
-  baja: { drawCalls: 150, triangles: 800_000 },
-  media: { drawCalls: 300, triangles: 1_500_000 },
-  alta: { drawCalls: 450, triangles: 3_000_000 },
+  baja: { drawCalls: 130, triangles: 130_000 },
+  media: { drawCalls: 245, triangles: 230_000 },
+  alta: { drawCalls: 385, triangles: 305_000 },
 };
 
 // SwiftShader dibuja ~3 cuadros por segundo y cada lugar nuevo compila shaders.
