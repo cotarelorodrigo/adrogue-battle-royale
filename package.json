@@ -1,0 +1,29 @@
+{
+  "name": "adrogue-cs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "fetch:osm": "node tools/fetch-osm.ts",
+    "fetch:buildings": "node tools/fetch-buildings.ts",
+    "fetch:textures": "node tools/fetch-textures.ts",
+    "fetch:photos": "node tools/fetch-photos.ts",
+    "build:map": "node tools/build-map.ts"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.1.0"
+  }
+}
