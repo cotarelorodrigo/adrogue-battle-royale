@@ -10,6 +10,7 @@ const { map, warnings, stats, pockets } = assembleMap({
   osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')),
   buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
   places: loadPlaces(),
+  photos: JSON.parse(readFileSync('data/photo-facades.json', 'utf8')),
 });
 const json = JSON.stringify(map);
 mkdirSync('public/map', { recursive: true });
@@ -29,6 +30,8 @@ console.log(`props: ${map.props.length} (${count(map.props)})`);
 console.log(`arboles: ${map.trees.length}, randomSpawns: ${map.randomSpawns.length}`);
 console.log(`ayudas de ascenso: clusters=${stats.clusters} dumpsters=${stats.dumpsters} ladders=${stats.ladders} tier0=${stats.tier0} tier1=${stats.tier1} fallback=${stats.fallback} sinAyuda=${stats.noAid} sinAyudaAfuera=${stats.noAidOutside}`);
 console.log(`huecos de suelo: encontrados=${pockets.pockets} escaleras=${pockets.ladders} rellenos=${pockets.filled}`);
+const facades = map.buildings.flatMap((b) => b.facades ?? []);
+console.log(`fachadas de lugar: ${facades.length} (${count(facades.map((f) => ({ kind: f.ground })))})`);
 console.log(`warnings: ${warnings.length}`);
 for (const w of warnings) console.log(`  - ${w}`);
 console.log(`${OUT}: ${kb} KB`);

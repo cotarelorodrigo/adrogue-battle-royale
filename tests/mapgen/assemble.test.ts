@@ -7,6 +7,8 @@ import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { parkFractionOf } from '../../src/mapgen/buildings.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
 import { analyzeGround, solidOutlines } from '../../src/mapgen/pockets.ts';
+import { FACADE_BY_TYPE } from '../../src/mapgen/place-facades.ts';
+import { outwardNormal } from '../../src/mapgen/places.ts';
 import { polygonDist } from '../../src/mapgen/spatial.ts';
 import { climbOut, regionAt } from './pocket-exit.ts';
 import { buildCollisionWorld } from '../../src/shared/collision.ts';
@@ -14,11 +16,13 @@ import { distPointSegment, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { MapData, Prop, Tree } from '../../src/shared/mapdata.ts';
 
+const photos = JSON.parse(readFileSync('data/photo-facades.json', 'utf8')) as { placeId: string; edgeIndex?: number }[];
 function loadRaw() {
   return {
     osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')) as unknown,
     buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
     places: loadPlaces(),
+    photos,
   };
 }
 
@@ -116,6 +120,38 @@ describe('assembleMap sobre datos reales', () => {
     expect(inside.filter((a) => a > 1e-6)).toEqual([]);
     // y los edificios que cruzan el borde existen (antes eran siluetas sin colisión)
     expect(map.buildings.some((bd) => bd.footprint.some(([x, z]) => x > b.maxX || x < b.minX || z > b.maxZ || z < b.minZ))).toBe(true);
+  });
+  test('cada lugar con cartel y sin foto tiene la fachada de su tipo en la arista del cartel', () => {
+    const inputs = loadPlaces();
+    const byId = new Map(map.buildings.map((b) => [b.id, b]));
+    const signed = map.places.filter((p) => p.sign && !photos.some((f) => f.placeId === p.id));
+    expect(signed.length).toBeGreaterThanOrEqual(25);
+    const firstOnEdge = new Map<string, string>();
+    for (const p of map.places.filter((q) => q.sign)) {
+      const b = byId.get(p.buildingId!)!;
+      const fp = b.footprint;
+      // arista del cartel: pasa a ≤ 10 cm del ancla y mira para el mismo lado
+      const edge = fp.findIndex((a, i) => {
+        const c = fp[(i + 1) % fp.length];
+        const n = outwardNormal(a, c);
+        return distPointSegment(p.sign!.anchor, a, c) < 0.1 && n[0] * p.sign!.normal[0] + n[1] * p.sign!.normal[1] > 0.99;
+      });
+      expect(edge, p.id).toBeGreaterThanOrEqual(0);
+      const key = `${b.id}#${edge}`;
+      if (!firstOnEdge.has(key)) firstOnEdge.set(key, p.id);
+      if (!signed.includes(p)) continue;
+      const f = b.facades?.find((x) => x.edge === edge);
+      expect(f, p.id).toBeDefined();
+      const owner = inputs.find((x) => x.id === firstOnEdge.get(key))!;
+      expect(f!.ground, p.id).toBe(owner.facade?.ground ?? FACADE_BY_TYPE[owner.type as keyof typeof FACADE_BY_TYPE].ground);
+      expect(f!.tint, p.id).toBe(owner.facade?.tint ?? FACADE_BY_TYPE[owner.type as keyof typeof FACADE_BY_TYPE].tint);
+    }
+  });
+  test('las fotos con edgeIndex tienen la fachada en esa arista', () => {
+    for (const ph of photos.filter((f) => f.edgeIndex !== undefined)) {
+      const b = map.buildings.find((x) => x.id === map.places.find((p) => p.id === ph.placeId)!.buildingId)!;
+      expect(b.facades?.some((f) => f.edge === ph.edgeIndex), ph.placeId).toBe(true);
+    }
   });
   test('Estación y Plaza Brown presentes', () => {
     expect(map.buildings.some((b) => b.kind === 'station')).toBe(true);

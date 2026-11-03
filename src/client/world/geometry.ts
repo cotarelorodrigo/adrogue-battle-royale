@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../../shared/geo.ts';
 import { ensureCCW } from '../../shared/geo.ts';
-import type { Building } from '../../shared/mapdata.ts';
+import type { Building, FacadeGround } from '../../shared/mapdata.ts';
 
 /** Alto de un piso (copia de mapgen/buildings.ts; el cliente no importa mapgen). */
 export const FLOOR_H = 3.2;
@@ -58,9 +58,12 @@ function triangulateUp(poly: Vec2[], base: number, idx: number[]): void {
   }
 }
 
-function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, color: THREE.Color): THREE.BufferGeometry {
+/** `colorOf(i)`: color de la arista i de `fp`, o null para saltearla (va en otra banda). */
+function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i: number) => THREE.Color | null): THREE.BufferGeometry {
   const b = newBuilder(true);
   for (let i = 0; i < fp.length; i++) {
+    const color = colorOf(i);
+    if (!color) continue;
     const a = fp[i], c = fp[(i + 1) % fp.length];
     const dx = c[0] - a[0], dz = c[1] - a[1];
     const len = Math.hypot(dx, dz);
@@ -120,13 +123,25 @@ function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color):
   return toGeometry(b);
 }
 
+/**
+ * `walls.ground` es la planta baja de las aristas comunes; las de `bd.facades` van aparte en `walls.overrides`, una
+ * geometría por tipo de planta baja (el que dibuja las suma al merge de ese material, sin draw calls nuevos).
+ */
 export function extrudeBuilding(bd: Building): {
-  walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry };
+  walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry; overrides: { ground: FacadeGround; geometry: THREE.BufferGeometry }[] };
   roof: THREE.BufferGeometry;
   parapet: THREE.BufferGeometry;
 } {
   const fp = ensureCCW(bd.footprint);
   const color = tintColor(bd.tint);
+  // facades cuenta aristas sobre el footprint guardado; si ensureCCW lo dio vuelta, la arista i es la n − 2 − i
+  const n = fp.length;
+  const flipped = fp !== bd.footprint;
+  const own = new Map<number, { ground: FacadeGround; color: THREE.Color }>();
+  for (const f of bd.facades ?? []) {
+    own.set(flipped ? (2 * n - 2 - f.edge) % n : f.edge, { ground: f.ground, color: f.tint ? tintColor(f.tint) : color });
+  }
+
   const cum: number[] = [0];
   for (let i = 0; i < fp.length; i++) {
     const c = fp[(i + 1) % fp.length];
@@ -137,11 +152,17 @@ export function extrudeBuilding(bd: Building): {
   for (const [x, z] of fp) vert(rb, [x, bd.height, z], [0, 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
   triangulateUp(fp, 0, rb.idx);
 
+  const groundH = Math.min(FLOOR_H, bd.height);
+  const grounds = [...new Set([...own.values()].map((o) => o.ground))].sort();
   return {
     walls: {
-      ground: wallBand(fp, cum, 0, Math.min(FLOOR_H, bd.height), color),
+      ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) ? null : color)),
       // edificio más bajo que un piso: sin banda superior (geometría vacía)
-      upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, color) : toGeometry(newBuilder(true)),
+      upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, () => color) : toGeometry(newBuilder(true)),
+      overrides: grounds.map((ground) => ({
+        ground,
+        geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }),
+      })),
     },
     roof: toGeometry(rb),
     // un relleno de hueco (mapgen/pockets.ts) es un parche de techo entre vecinos: sin pretil propio

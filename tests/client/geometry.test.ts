@@ -215,6 +215,53 @@ describe('buildChunks', () => {
     expect(namesIn(gs, 0, 0)).not.toContain('wallGroundHouse');
   });
 
+  describe('fachada por lugar (facades): la banda baja de esa arista cambia de material y de tinte', () => {
+    // casa de revoque 10 × 10 con la arista 0 ((10,20) → (20,20), z = 20) como local; mismo chunk (0,0)
+    const shop = mk('L', sq(10, 20), { facades: [{ edge: 0, ground: 'shop', tint: '#ff0000' }] });
+    const mesh = (gs: THREE.Group[], name: string) => meshes(gs).find((m) => m.name === name);
+    const quadsOf = (m: THREE.Mesh | undefined) => {
+      if (!m) return [];
+      const out: { mid: THREE.Vector3; color: THREE.Color }[] = [];
+      const col = m.geometry.getAttribute('color');
+      faces(m.geometry, (_n, _a, mid) => out.push({ mid, color: new THREE.Color() }));
+      triangles(m.geometry).forEach((_, t) => out[t].color.fromBufferAttribute(col as THREE.BufferAttribute, m.geometry.index!.array[t * 3]));
+      return out;
+    };
+    test('la arista 0 va al merge de wallGroundShop con su tinte; las otras quedan en wallGroundHouse', () => {
+      const gs = buildChunks(baseMap({ buildings: [shop] }), fake());
+      const shopQuads = quadsOf(mesh(gs, 'wallGroundShop'));
+      const houseQuads = quadsOf(mesh(gs, 'wallGroundHouse'));
+      expect(shopQuads).toHaveLength(2); // un cuadrilátero = 2 triángulos
+      for (const q of shopQuads) {
+        expect(q.mid.z).toBeCloseTo(20);
+        expect([q.color.r, q.color.g, q.color.b]).toEqual([1, 0, 0]);
+      }
+      expect(houseQuads).toHaveLength(6);
+      for (const q of houseQuads) expect(q.mid.z).not.toBeCloseTo(20);
+      // la banda alta no cambia: las 4 aristas en wallUpper
+      expect(quadsOf(mesh(gs, 'wallUpper'))).toHaveLength(8);
+      // mismos merges que dos edificios cualquiera: un mesh por material y chunk
+      expect(namesIn(gs, 0, 0)).toEqual(['grass', 'parapet', 'roof', 'wallGroundHouse', 'wallGroundShop', 'wallUpper']);
+    });
+    test('sin tint usa el del edificio; brick en un local de revoque va a brickGround', () => {
+      const gs = buildChunks(baseMap({ buildings: [mk('K', sq(10, 20), { kind: 'shop', facades: [{ edge: 2, ground: 'brick' }] })] }), fake());
+      const brick = quadsOf(mesh(gs, 'brickGround'));
+      expect(brick).toHaveLength(2);
+      for (const q of brick) {
+        expect(q.mid.z).toBeCloseTo(10); // arista 2: (20,10) → (10,10)
+        expect(q.color.getHexString()).toBe(new THREE.Color('#d8c8a8').getHexString());
+      }
+      expect(quadsOf(mesh(gs, 'wallGroundShop'))).toHaveLength(6);
+    });
+    test('la arista se cuenta sobre el footprint guardado aunque esté en sentido horario', () => {
+      const cw = [...sq(10, 20)].reverse(); // arista 0: (10,10) → (20,10)
+      const gs = buildChunks(baseMap({ buildings: [mk('W', cw, { facades: [{ edge: 0, ground: 'shop' }] })] }), fake());
+      const q = quadsOf(mesh(gs, 'wallGroundShop'));
+      expect(q).toHaveLength(2);
+      for (const f of q) expect(f.mid.z).toBeCloseTo(10);
+    });
+  });
+
   test('ruta que cruza el límite de chunk deja cinta en ambos', () => {
     const asphaltPos = (i: number) => {
       const m = groups.find((gr) => gr.userData.chunk[0] === i && gr.userData.chunk[1] === 0)!.children.find((c) => c.name === 'asphalt') as THREE.Mesh;

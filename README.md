@@ -52,6 +52,23 @@ npm run fetch:photos      # Wikimedia Commons → public/photos (rechaza licenci
 Los lugares (nombre, tipo, dónde están) se editan en `data/places.json`; qué foto va en cada fachada, en
 `data/photo-facades.json`. Después de tocarlos, `npm run build:map` (y `npm run fetch:photos` si cambió una foto).
 
+La pared del cartel de cada lugar (o la de su foto, si la foto trae `edgeIndex`) tiene planta baja propia según el tipo:
+locales con vidriera para bancos, bares, restaurantes, heladerías, cines, la clínica, la Casa de la Cultura y la
+estación; ladrillo para la escuela y los clubes (la tabla está en `src/mapgen/place-facades.ts`). Para cambiarla en un
+lugar, agregale `facade` a su entrada en `data/places.json`; los dos campos son opcionales y lo que falte sale del tipo:
+
+```json
+"facade": { "ground": "brick", "tint": "#e4e2dc" }
+```
+
+| Campo | Valores | Qué cambia |
+|---|---|---|
+| `ground` | `"shop"` (vidriera con persiana), `"house"` (puerta y ventana con reja), `"brick"` (ladrillo) | la planta baja de esa pared |
+| `tint` | color `#rrggbb` | el tinte de esa planta baja |
+
+Plazas y monumentos no llevan `facade` (no tienen edificio). Un valor que no está en la lista corta el `build:map` con
+el lugar y el campo que falló.
+
 ## Medir el rendimiento en otra notebook
 
 Con `?bench=1` el juego no espera al jugador: la cámara recorre sola, siempre igual, la estación, Esteban Adrogué,

@@ -12,6 +12,8 @@ import type { AidStats } from './climb.ts';
 import { filterTrees, placeTrees } from './trees.ts';
 import { exitPockets } from './pockets.ts';
 import type { PocketStats } from './pockets.ts';
+import { placeFacades } from './place-facades.ts';
+import type { PhotoEdge } from './place-facades.ts';
 import { placeProps } from './props.ts';
 import { ring, rn, v2 } from './round.ts';
 import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts';
@@ -19,8 +21,9 @@ import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts
 const SPAWN_RADIUS = 16;
 const SPAWN_CLEARANCE = 2.5;
 
+/** `photos`: lo que mapgen usa de data/photo-facades.json (la arista de cada foto, para su fachada). */
 export function assembleMap(
-  raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[] },
+  raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[]; photos?: PhotoEdge[] },
 ): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats } {
   const warnings: string[] = [];
   const { roads, railways, platforms, parks, fountains } = parseOsm(raw.osm);
@@ -97,6 +100,8 @@ export function assembleMap(
     if (!spawn) warnings.push(`${p.id}: sin punto libre cerca de ${near.map((n) => rn(n, 1)).join(', ')}`);
     return { ...p, spawn: spawn ?? [rn(near[0]), 0, rn(near[1])] };
   });
+  // fachadas por lugar sobre las plantas y los carteles ya redondeados (los índices de arista son los del archivo)
+  warnings.push(...placeFacades(map.buildings, map.places, raw.places, raw.photos ?? []));
   map.randomSpawns = randomSpawns(world);
   if (map.randomSpawns.length < 64) warnings.push(`randomSpawns: solo ${map.randomSpawns.length} de 64`);
   return { map, warnings, stats, pockets: holes.stats };

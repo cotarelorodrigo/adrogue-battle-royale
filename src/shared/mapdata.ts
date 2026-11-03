@@ -3,8 +3,15 @@ import type { Vec2, Vec3 } from './geo.ts';
 export type RoadKind = 'secondary'|'tertiary'|'residential'|'living_street'|'service'|'pedestrian'|'footway';
 export type PlaceType = 'bank'|'bar'|'restaurant'|'fastfood'|'icecream'|'cinema'|'club'|'clinic'|'school'|'culture'|'station'|'monument'|'plaza';
 export interface Bounds { minX: number; maxX: number; minZ: number; maxZ: number }
+/** Planta baja de una fachada: local (vidriera con persiana), casa (puerta y ventana con reja) o casa de ladrillo. */
+export type FacadeGround = 'shop'|'house'|'brick';
+/** La banda de planta baja de la arista `edge` (índice sobre `footprint`: de footprint[edge] a footprint[edge + 1])
+ *  se dibuja como `ground`, con `tint` (si no, el del edificio). Las otras aristas no cambian. */
+export interface FacadeOverride { edge: number; ground: FacadeGround; tint?: string }
 export interface Building { id: string; footprint: Vec2[]; height: number; floors: number;
   kind: 'house'|'shop'|'apartments'|'station'; wall: 'plaster'|'brick'; tint: string; landmarkId?: string;
+  /** Fachadas procedurales de los lugares con cartel (spec 4.3): una por arista con cartel o foto. */
+  facades?: FacadeOverride[];
   /** Relleno de un hueco de suelo sin salida (mapgen/pockets.ts): un sólido al ras del techo vecino más bajo, no un
    *  edificio real. Se dibuja sin pretil. */
   fill?: true }
