@@ -29,7 +29,7 @@ const MSG_CONTEXT_LOST = 'Se perdió el contexto gráfico. Recargá la página.'
 const MSG_LOAD_FAILED = 'No se pudo cargar el mapa. Recargá la página.';
 const INITIAL_PLACE = 'estacion-adrogue';
 
-type Game = Omit<AdrogueDebug, 'ready'>;
+type Game = Omit<AdrogueDebug, 'ready' | 'photosReady'>;
 
 const root = document.getElementById('app')!;
 const debug = debugEnabled(location.search);
@@ -39,6 +39,11 @@ let failReady!: (e: unknown) => void;
 const ready = new Promise<void>((resolve, reject) => {
   markReady = resolve;
   failReady = reject;
+});
+/** Se cumple cuando las fotos de fachada ya están en la escena (o no se pudieron cargar): el arranque no las espera. */
+let markPhotosReady: () => void = () => {};
+const photosReady = new Promise<void>((resolve) => {
+  markPhotosReady = resolve;
 });
 ready.catch(() => {}); // si la carga falla el mensaje ya está en pantalla; solo los tests esperan esta promesa
 
@@ -54,6 +59,7 @@ if (debug) {
     stats: () => need().stats(),
     setQuality: (q) => need().setQuality(q),
     ready,
+    photosReady,
   });
 }
 
@@ -159,13 +165,17 @@ async function run(boot: Boot): Promise<void> {
   if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
   scene.addChunks(buildChunks(map, materials));
   const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark);
-  const photos = await buildPhotoFacades(map, photoFacadeData as PhotoFacade[], import.meta.env.BASE_URL, QUALITY[quality].textureSize, QUALITY[quality].anisotropy);
-  if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
+  // Las fotos (~1,7 MB y la rectificación) se suman cuando llegan: el juego no las espera.
+  buildPhotoFacades(map, photoFacadeData as PhotoFacade[], import.meta.env.BASE_URL, QUALITY[quality].textureSize, QUALITY[quality].anisotropy)
+    .then((group) => {
+      if (!boot.lost) scene.addStatic([group]);
+    })
+    .catch((e: unknown) => console.warn('Sin fotos de fachada:', e))
+    .finally(markPhotosReady);
   scene.addStatic([
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
-    photos,
     buildSigns(map.places),
     ...trees,
     ...buildClimbProps(map.props),

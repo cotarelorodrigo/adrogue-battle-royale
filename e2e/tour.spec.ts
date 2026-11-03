@@ -45,6 +45,7 @@ test('recorrido: 10 capturas sin errores', async ({ page }) => {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
   await open(page);
+  await page.evaluate(() => window.__adrogue.photosReady);
   await play(page); // sin la interfaz encima; también hace falta para subir la escalera
   const files: string[] = [];
   const shot = async (id: string): Promise<void> => {

@@ -1,5 +1,6 @@
-import { facadeQuad } from '../../src/client/world/photo-facades.ts';
-import type { Building, Place } from '../../src/shared/mapdata.ts';
+// @vitest-environment jsdom
+import { buildPhotoFacades, facadeQuad } from '../../src/client/world/photo-facades.ts';
+import type { Building, MapData, Place } from '../../src/shared/mapdata.ts';
 
 // Cuadra de 40 × 20 m, h = 3,8, antihoraria: sur (z = 0, normal +z) de x = 0 a 40.
 const building: Building = {
@@ -42,4 +43,20 @@ test('edgeIndex elige otra arista y la centra en la posición del lugar', () => 
   const q = facadeQuad(building, place([12, 0.1], [20, -8]), { widthM: 10, heightM: 3, edgeIndex: 2 }); // norte, normal −z
   expect(q.center).toBeCloseTo2D([20, -20.03], 6);
   expect(Math.abs(q.yaw)).toBeCloseTo(Math.PI, 9);
+});
+
+describe('buildPhotoFacades', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  test('una foto que no carga no deja malla: avisa con console.warn y nunca con console.error', async () => {
+    class FailingImage { onerror: (() => void) | null = null; set src(_: string) { queueMicrotask(() => this.onerror?.()); } }
+    vi.stubGlobal('Image', FailingImage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const map = { places: [place([12, 0.1], [20, -10])], buildings: [building] } as unknown as MapData;
+    const group = await buildPhotoFacades(map, [{ placeId: 'p', commonsFile: 'x.jpg', corners: [[0, 0], [1, 0], [1, 1], [0, 1]], widthM: 10, heightM: 3 }], '/', 512, 1);
+    expect(group.children).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+  });
 });

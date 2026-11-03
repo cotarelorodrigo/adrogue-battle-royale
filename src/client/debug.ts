@@ -23,6 +23,8 @@ export interface AdrogueDebug {
   setQuality(q: Quality): Promise<void>;
   /** Se cumple con el mapa y los materiales cargados y el primer cuadro dibujado; se rechaza si la carga falla. */
   ready: Promise<void>;
+  /** Se cumple cuando las fotos de fachada ya están en la escena (o fallaron): se cargan sin frenar el arranque. */
+  photosReady: Promise<void>;
 }
 
 declare global {

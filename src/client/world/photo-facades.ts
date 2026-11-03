@@ -48,6 +48,7 @@ export function facadeQuad(building: Building, place: Place, f: Pick<PhotoFacade
     for (let i = 0; i < fp.length; i++) {
       const [a, b] = edge(i);
       const len2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+      if (len2 === 0) continue;
       const t = Math.min(1, Math.max(0, ((refPoint[0] - a[0]) * (b[0] - a[0]) + (refPoint[1] - a[1]) * (b[1] - a[1])) / len2));
       const d = Math.hypot(a[0] + t * (b[0] - a[0]) - refPoint[0], a[1] + t * (b[1] - a[1]) - refPoint[1]);
       if (d < best) { best = d; index = i; }
@@ -55,6 +56,7 @@ export function facadeQuad(building: Building, place: Place, f: Pick<PhotoFacade
   }
   const [a, b] = edge(index);
   const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (len === 0) throw new Error(`Arista degenerada en el edificio ${building.id}`);
   const dir: Vec2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
   const normal: Vec2 = [-dir[1], dir[0]]; // hacia afuera en un polígono antihorario visto desde arriba
   const width = Math.min(f.widthM, len);
