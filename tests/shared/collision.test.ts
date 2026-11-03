@@ -135,6 +135,19 @@ describe('pushOut caminando a 5 m/s con subpasos de 1/120 s', () => {
     const end = walk([box(0, -20, 10, 0), box(10.6, -20, 30, 0)], [10.3, 1], [0, -1], 3, (p) => expect(p[1]).toBeGreaterThanOrEqual(stop - 1e-3));
     expect(end).toBeCloseTo2D([10.3, 0.1803], 3);
   });
+  test('boca de 0,6 m del otro lado (el hueco abre hacia −z): mismo tope', () => {
+    const stop = Math.sqrt(0.35 ** 2 - 0.3 ** 2);
+    const end = walk([box(0, 0, 10, 20), box(10.6, 0, 30, 20)], [10.3, -1], [0, 1], 3, (p) => expect(p[1]).toBeLessThanOrEqual(-stop + 1e-3));
+    expect(end).toBeCloseTo2D([10.3, -0.1803], 3);
+  });
+  test.each([1, -1])('pegado a una pared hasta la esquina de un poste a 0,6 m (sentido %i): se frena a r de los dos', (sg) => {
+    // pared z ≤ 0; poste con una esquina en (0, 0,6); el disco va por z = 0,35 apretado contra la pared
+    const wall = box(-20, -5, 20, 0);
+    const postBox = sg > 0 ? box(0, 0.6, 1, 1.6) : box(-1, 0.6, 0, 1.6);
+    const stop = Math.sqrt(0.35 ** 2 - 0.25 ** 2); // 0,2449: |x| al tocar la esquina estando a r de la pared
+    const end = walk([wall, postBox], [-2 * sg, 0.35], [sg, -0.1], 2, (p) => expect(sg * p[0]).toBeLessThanOrEqual(-stop + 1e-3));
+    expect(end).toBeCloseTo2D([-sg * 0.2449, 0.35], 3);
+  });
   test('pasaje que se angosta 1° por lado (1,0 m en la boca): no pasa del tope', () => {
     const α = Math.PI / 180;
     const d = 20 * Math.tan(α); // cada pared entra d en 20 m
@@ -180,6 +193,111 @@ describe('pushOut caminando a 5 m/s con subpasos de 1/120 s', () => {
   test('se desliza por la fachada de dos casas pegadas sin trabarse en la medianera', () => {
     const end = walk([box(0, -10, 10, 0), box(10, -10, 20, 0)], [2, 0.4], [1, -0.3], 3);
     expect(end).toBeCloseTo2D([2 + 15 / Math.sqrt(1.09), 0.35], 3); // conserva la componente tangencial: x ≈ 16,367
+  });
+});
+
+describe('pushOut desde adentro no salta lejos', () => {
+  const R2 = 0.35 * Math.SQRT2;
+  /** Caja de semilados hx × hz centrada en (cx, cz), girada θ alrededor de su centro. */
+  const rotBox = (cx: number, cz: number, hx: number, hz: number, θ: number): Prism => {
+    const c = Math.cos(θ), s = Math.sin(θ);
+    const pts: Vec2[] = [[-hx, hz], [hx, hz], [hx, -hz], [-hx, -hz]];
+    return { polygon: pts.map(([u, v]) => [cx + u * c - v * s, cz + u * s + v * c] as Vec2), minY: 0, maxY: 6 };
+  };
+  const ringDist = (p: Vec2, poly: Vec2[]): number => Math.min(...poly.map((a, i) => distPointSegment(p, a, poly[(i + 1) % poly.length])));
+
+  test.each([0.25, 0.4, 0.6].flatMap((gap) => [0.005, 0.02, 0.05].map((θ) => [gap, θ])))(
+    'centro 1 cm adentro con un vecino a %f m girado %f rad: poco movimiento o sigue superpuesto',
+    (gap, θ) => {
+      const A: Prism = { polygon: [[0, 0], [10, 0], [10, -10], [0, -10]], minY: 0, maxY: 6 };
+      const s = new CollisionWorld([A, rotBox(10 + gap + 5, -5, 5, 5, θ)], [], bounds);
+      const [x, z] = s.pushOut(9.99, -5, 0.35, 0, 1.8);
+      const moved = Math.hypot(x - 9.99, z + 5);
+      expect(moved <= 0.01 + R2 + 1e-6 || s.overlaps(x, z, 0.35, 0, 1.8), `→ ${[x, z]} (${moved} m)`).toBe(true);
+    },
+  );
+  test.each([0.005, 0.02, 0.05])('vecino corto (1 m) a 0,4 m girado %f rad: no se escurre lejos por el hueco', (θ) => {
+    const A: Prism = { polygon: [[0, 0], [10, 0], [10, -10], [0, -10]], minY: 0, maxY: 6 };
+    const s = new CollisionWorld([A, rotBox(10.4 + 0.5, -5.3, 0.5, 0.5, θ)], [], bounds); // termina a 0,2 m del arranque
+    const [x, z] = s.pushOut(9.99, -5, 0.35, 0, 1.8);
+    const moved = Math.hypot(x - 9.99, z + 5);
+    expect(moved <= 0.01 + R2 + 1e-6 || s.overlaps(x, z, 0.35, 0, 1.8), `→ ${[x, z]} (${moved} m)`).toBe(true);
+  });
+  test('adentro de dos prismas sale del más hundido', () => {
+    const big: Prism = { polygon: [[0, 0], [10, 0], [10, -10], [0, -10]], minY: 0, maxY: 6 };
+    const nested: Prism = { polygon: [[8, -4], [9.5, -4], [9.5, -6], [8, -6]], minY: 0, maxY: 3 }; // adentro del grande
+    const s = new CollisionWorld([nested, big], [], bounds);
+    const p = s.pushOut(9.4, -5, 0.35, 0, 1.8); // 0,1 m del borde del chico, 0,6 m del grande
+    expect(p).toBeCloseTo2D([10.35, -5], 4);
+    expect(s.overlaps(p[0], p[1], 0.35, 0, 1.8)).toBe(false);
+  });
+  test('salida desde afuera a más de 1,2 m: devuelve superpuesto y no se arrastra hacia el cruce lejano', () => {
+    // rincón en V de 4°: el cruce libre más cercano está a ~7 m, más lejos que el salto máximo (hondura + r + margen)
+    const a = (2 * Math.PI) / 180;
+    const [sn, cs] = [Math.sin(a), Math.cos(a)];
+    const A: Prism = { polygon: [[0, 0], [-20 * sn, 20 * cs], [-30, 20 * cs], [-30, -10], [0, -10]], minY: 0, maxY: 6 };
+    const B: Prism = { polygon: [[0, 0], [0, -10], [30, -10], [30, 20 * cs], [20 * sn, 20 * cs]], minY: 0, maxY: 6 };
+    const s = new CollisionWorld([A, B], [], bounds);
+    const [x, z] = s.pushOut(0, 3, 0.35, 0, 1.8);
+    expect(Math.hypot(x, z - 3)).toBeLessThanOrEqual(1.2 + 1e-6);
+    expect(s.overlaps(x, z, 0.35, 0, 1.8)).toBe(true);
+    expect([x, z]).toBeCloseTo2D([0, 3], 6); // ningún candidato al alcance: se queda donde estaba
+  });
+  test.each([0, 0.005, 0.02, 0.05])('pies 2 cm bajo la tapa de un contenedor girado %f rad a 0,25 m de una fachada', (θ) => {
+    const facade: Prism = { polygon: [[0, 0], [20, 0], [20, -10], [0, -10]], minY: 0, maxY: 6 };
+    const dumpster: Prism = { ...rotBox(10, 0.8, 0.9, 0.55, θ), maxY: 1.4 }; // su espalda queda a 0,25 m de z = 0
+    const s = new CollisionWorld([facade, dumpster], [], bounds);
+    for (const p of [[10.2, 0.4], [9.5, 0.45]] as Vec2[]) {
+      const [x, z] = s.pushOut(p[0], p[1], 0.35, 1.38, 3.18);
+      const moved = Math.hypot(x - p[0], z - p[1]);
+      const depth = ringDist(p, dumpster.polygon);
+      expect(moved <= depth + R2 + 1e-6 || s.overlaps(x, z, 0.35, 1.38, 3.18), `${p} → ${[x, z]} (${moved} m)`).toBe(true);
+    }
+  });
+  test('no encadena salidas a lo largo de una hilera de prismas pegados', () => {
+    // seis prismas de 0,6 m pegados: salir de uno cae adentro del siguiente; encadenando llegaría libre a x ≈ 3,95
+    const row = Array.from({ length: 6 }, (_, i): Prism => ({ polygon: [[0.6 * i, 0], [0.6 * i + 0.6, 0], [0.6 * i + 0.6, -20], [0.6 * i, -20]], minY: 0, maxY: 6 }));
+    const s = new CollisionWorld(row, [], bounds);
+    const [x, z] = s.pushOut(0.55, -10, 0.35, 0, 1.8);
+    expect([x, z]).toBeCloseTo2D([0.95, -10], 4); // una sola salida, por la medianera más cercana
+    expect(s.overlaps(x, z, 0.35, 0, 1.8)).toBe(true); // el que llama lo detecta y rechaza el paso
+  });
+  test('arranques 1–34 cm adentro de casas en hilera (vecinos a 0,2–1 m, levemente giradas): nunca un salto largo', () => {
+    const rand = rng(11);
+    const houses: Prism[] = [];
+    for (let row = 0; row < 4; row++) {
+      let right = -150;
+      for (let n = 0; n < 15; n++) {
+        const θ = (rand() * 2 - 1) * 0.05;
+        const house = rotBox(0, 0, 3 + rand() * 3, 7.5 + rand() * 5, θ);
+        const minX = Math.min(...house.polygon.map((q) => q[0]));
+        const dx = right + 0.2 + rand() * 0.8 - minX; // borde izquierdo a 0,2–1 m del vecino
+        house.polygon = house.polygon.map(([qx, qz]) => [qx + dx, qz - 40 * row] as Vec2);
+        right = Math.max(...house.polygon.map((q) => q[0]));
+        houses.push(house);
+      }
+    }
+    const s = new CollisionWorld(houses, [], { minX: -200, maxX: 200, minZ: -200, maxZ: 50 });
+    let starts = 0, free = 0;
+    for (const { polygon: fp } of houses) {
+      for (let i = 0; i < fp.length; i++) {
+        const [a, c] = [fp[i], fp[(i + 1) % fp.length]];
+        const ex = c[0] - a[0], ez = c[1] - a[1], el = Math.hypot(ex, ez);
+        for (const t of [0.02, 0.5, 0.98]) {
+          for (const off of [0.01, 0.05, 0.1, 0.2, 0.34]) {
+            const p: Vec2 = [a[0] + ex * t + (ez / el) * off, a[1] + ez * t - (ex / el) * off]; // hacia adentro
+            if (!pointInPolygon(p, fp)) continue;
+            starts++;
+            const [x, z] = s.pushOut(p[0], p[1], 0.35, 0, 1.8);
+            const stuck = s.overlaps(x, z, 0.35, 0, 1.8);
+            if (!stuck) free++;
+            expect(Math.hypot(x - p[0], z - p[1]) <= 2.5 || stuck, `${p} → ${[x, z]}`).toBe(true);
+          }
+        }
+      }
+    }
+    expect(starts).toBeGreaterThan(3000);
+    expect(free / starts).toBeGreaterThan(0.85); // la gran mayoría se resuelve (no vale quedarse quieto)
   });
 });
 
