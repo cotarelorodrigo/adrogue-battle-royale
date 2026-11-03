@@ -1,4 +1,4 @@
-import { distPointSegment, pointInPolygon } from '../shared/geo.ts';
+import { pointInPolygon } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Road } from '../shared/mapdata.ts';
 import { bufferLine, offsetLine } from './osm.ts';
@@ -119,26 +119,6 @@ function crossings(chain: Vec2[], roads: Road[], name: string): number[] {
 
 const avgDot = (pts: Vec2[], k: Vec2): number => pts.reduce((s, p) => s + p[0] * k[0] + p[1] * k[1], 0) / pts.length;
 
-/**
- * Una calle que termina contra la calle propia (empalme en T, sin otro tramo suyo que siga) cierra el frente también del otro lado:
- * se la prolonga EXTEND metros por la tangente para que su corredor cruce toda la calle propia.
- */
-function throughRoad(r: Road, chain: Vec2[], roads: Road[]): Road {
-  const continues = (p: Vec2): boolean =>
-    roads.some((o) => o !== r && o.name === r.name && (same(o.points[0], p) || same(o.points[o.points.length - 1], p)));
-  const touches = (p: Vec2): boolean =>
-    !continues(p) && chain.some((_, i) => i > 0 && distPointSegment(p, chain[i - 1], chain[i]) < 0.5);
-  const pts = r.points.slice();
-  const n = pts.length;
-  const push = (from: Vec2, to: Vec2): Vec2 => {
-    const l = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
-    return [to[0] + ((to[0] - from[0]) / l) * EXTEND, to[1] + ((to[1] - from[1]) / l) * EXTEND];
-  };
-  if (touches(pts[n - 1])) pts.push(push(pts[n - 2], pts[n - 1]));
-  if (touches(pts[0])) pts.unshift(push(pts[1], pts[0]));
-  return { ...r, points: pts };
-}
-
 /** Corredores de las vías vehiculares (salvo la propia) que cortan el tramo `[s0, s1]` de `line`. */
 function cornerBuffers(roads: Road[], own: string, line: Vec2[], cum: number[], s0: number, s1: number): Vec2[][] {
   const samples: Vec2[] = [];
@@ -174,7 +154,6 @@ function resolve(roads: Road[], f: Pick<FrenteInput, 'id' | 'calle' | 'desde' | 
   let tramo = slice(chain, Math.min(sA, sB) - EXTEND, Math.max(sA, sB) + EXTEND);
   if (sA > sB) tramo = tramo.reverse();
 
-  const closing = roads.map((r) => (r.name === f.desde || r.name === f.hasta ? throughRoad(r, chain, roads) : r));
   const setback = own.width / 2 + own.sidewalk;
   const compass = COMPASS[f.vereda];
   const plus = offsetLine(tramo, setback);
@@ -189,8 +168,8 @@ function resolve(roads: Road[], f: Pick<FrenteInput, 'id' | 'calle' | 'desde' | 
 
   const cum = cumulative(off);
   const total = cum[cum.length - 1];
-  const corners0 = cornerBuffers(closing, f.calle, off, cum, 0, Math.min(CORNER_REACH, total));
-  const corners1 = cornerBuffers(closing, f.calle, off, cum, Math.max(total - CORNER_REACH, 0), total);
+  const corners0 = cornerBuffers(roads, f.calle, off, cum, 0, Math.min(CORNER_REACH, total));
+  const corners1 = cornerBuffers(roads, f.calle, off, cum, Math.max(total - CORNER_REACH, 0), total);
   const inside = (polys: Vec2[][]) => (s: number): boolean => {
     const p = pointAt(off, cum, s);
     return polys.some((poly) => pointInPolygon(p, poly));
@@ -209,15 +188,16 @@ function resolve(roads: Road[], f: Pick<FrenteInput, 'id' | 'calle' | 'desde' | 
     return aIn ? hi : lo;
   };
 
-  let c0 = 0;
+  // Sin corredor en una punta (empalme en T desde el otro lado), el frente termina justo en el cruce.
+  let c0 = EXTEND;
   let lastIn = -1;
   for (let k = 0; k * STEP <= total; k++) if (in0(k * STEP)) lastIn = k;
-  if (lastIn >= 0) {
+  if (corners0.length > 0 && lastIn >= 0) {
     if ((lastIn + 1) * STEP > total) throw new Error('el frente queda entero dentro de la esquina');
     c0 = refine(lastIn * STEP, (lastIn + 1) * STEP, true, in0);
   }
-  let c1 = total;
-  for (let k = 0; k * STEP <= total; k++) {
+  let c1 = total - EXTEND;
+  for (let k = 0; corners1.length > 0 && k * STEP <= total; k++) {
     if (!in1(k * STEP)) continue;
     if (k === 0) throw new Error('el frente queda entero dentro de la esquina');
     c1 = refine((k - 1) * STEP, k * STEP, false, in1);

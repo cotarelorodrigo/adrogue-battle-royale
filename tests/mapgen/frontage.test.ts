@@ -45,6 +45,17 @@ test('esquina oblicua a 60°: la punta queda sobre la línea de edificación de 
   expect(Math.abs(dist - 7)).toBeLessThan(0.06);
 });
 
+test('empalme en T: sin corredor del otro lado el frente termina en el cruce; del lado de la T, recorta', () => {
+  const tee = [...roads, road('T', 'residential', [[0, 60], [0, 0]])];
+  const n = resolveFrontage(tee, { id: 't', calle: 'A', desde: 'B', hasta: 'T', vereda: 'norte' });
+  expect(Math.abs(n.line.at(-1)![0])).toBeLessThan(0.01);
+  expect(n.corners[1]).toHaveLength(0);
+  expect(n.line[0][0]).toBeCloseTo(-43, 1);
+  const s = resolveFrontage(tee, { id: 't', calle: 'A', desde: 'B', hasta: 'T', vereda: 'sur' });
+  expect(Math.abs(s.line.at(-1)![0] + 7)).toBeLessThan(0.06);
+  expect(s.corners[1]).toHaveLength(1);
+});
+
 test('errores claros', () => {
   expect(() => resolveFrontage(roads, { id: 't', calle: 'Z', desde: 'B', hasta: 'C', vereda: 'sur' })).toThrow('frente t: no hay ninguna calle "Z"');
   expect(() => resolveFrontage(roads, { id: 't', calle: 'A', desde: 'B', hasta: 'D', vereda: 'sur' })).toThrow('frente t: "D" no cruza "A"');
