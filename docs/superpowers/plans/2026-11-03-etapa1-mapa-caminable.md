@@ -273,6 +273,17 @@ test('determinista', () => expect(buildBuildings(fc, roads)).toEqual(buildBuildi
 - [ ] **Step 2–4:** verificar que falla, implementar y verificar que pasa (`npx vitest run tests/mapgen/buildings.test.ts`).
 - [ ] **Step 5:** Commit: `feat(mapgen): limpieza, clasificación y alturas de edificios`.
 
+#### Enmienda 4b (decisión del controlador tras ver los datos reales)
+
+La regla 3 descartaba 22 footprints del área. Entre ellos había manzanas enteras del centro, de 6000 a 12 700 m², que Microsoft unió por encima de una calle, y también el McDonald's y La Veneciana, porque el carril de su autoservicio (`service`, "AutoMac" y "AutoHelado") pasa por adentro del edificio. Por eso 8 de los 38 lugares quedaban sin edificio. La regla 3 se reemplaza por esta:
+
+3'. **Recortar en lugar de descartar.** A cada footprint se le resta la calzada de las calles cuyo `kind` no es `footway`, `pedestrian` ni `service`. La calzada es el ensanche de la línea central a `width/2` a cada lado. Los pedazos resultantes se tratan como edificios independientes y pasan por las reglas 1 y 2 (simplificar, CCW, área ≥ 12 m²). Para el recorte se usa la librería `polygon-clipping` (MIT, JS puro, solo en mapgen). Las calles `service` no recortan.
+
+- Tests nuevos:
+  - Un footprint de 40 × 20 m cruzado al medio por una `residential` de 8 m queda en 2 edificios de unos 16 × 20 m cada uno, con hueco libre en la calzada.
+  - Un footprint atravesado por una `service` queda intacto.
+  - Volver a correr el test de supervivientes de la fixture, ajustando el caso `sobre-calle` al nuevo comportamiento: ahora queda recortado, no descartado.
+
 ---
 
 ### Task 5: Ubicar los 38 lugares y sus carteles
@@ -460,7 +471,7 @@ test('todo lugar no-plaza/no-monumento tiene edificio y cartel', () => map.place
 test('todos los spawns libres y dentro del área', () => [...map.places.map(p => p.spawn), ...map.randomSpawns].forEach(s => {
   expect(world.overlaps(s[0], s[2], 0.35, s[1] + 0.05, s[1] + 1.8)).toBe(false);
   expect(s[0]).toBeGreaterThan(map.bounds.minX); expect(s[0]).toBeLessThan(map.bounds.maxX); }));
-test('ninguna calle vehicular pasa por adentro de un edificio', () => /* muestreo cada 2 m */ expect(roadPointsInsideBuildings(map)).toEqual([]));
+test('ninguna calle vehicular (sin footway/pedestrian/service) pasa por adentro de un edificio', () => /* muestreo cada 2 m */ expect(roadPointsInsideBuildings(map)).toEqual([]));
 test('todo cluster de techos tiene acceso', () => roofClusters(map.buildings).forEach(c => expect(hasAccess(c, map.props), c[0]).toBe(true)));
 test('Estación y Plaza Brown presentes', () => { expect(map.buildings.some(b => b.kind === 'station')).toBe(true);
   expect(map.places.find(p => p.id === 'plaza-almirante-brown')!.parkId).toBeDefined(); });
