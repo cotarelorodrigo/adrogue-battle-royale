@@ -1,0 +1,176 @@
+{
+ "version": 0.6,
+ "elements": [
+  {
+   "type": "node",
+   "id": 1,
+   "lat": -34.797,
+   "lon": -58.392
+  },
+  {
+   "type": "node",
+   "id": 2,
+   "lat": -34.797,
+   "lon": -58.39
+  },
+  {
+   "type": "node",
+   "id": 3,
+   "lat": -34.797,
+   "lon": -58.388
+  },
+  {
+   "type": "node",
+   "id": 4,
+   "lat": -34.798,
+   "lon": -58.391
+  },
+  {
+   "type": "node",
+   "id": 5,
+   "lat": -34.798,
+   "lon": -58.39
+  },
+  {
+   "type": "node",
+   "id": 6,
+   "lat": -34.7975,
+   "lon": -58.391
+  },
+  {
+   "type": "node",
+   "id": 7,
+   "lat": -34.7975,
+   "lon": -58.3905
+  },
+  {
+   "type": "node",
+   "id": 10,
+   "lat": -34.796,
+   "lon": -58.389
+  },
+  {
+   "type": "node",
+   "id": 11,
+   "lat": -34.796,
+   "lon": -58.388
+  },
+  {
+   "type": "node",
+   "id": 12,
+   "lat": -34.7965,
+   "lon": -58.388
+  },
+  {
+   "type": "node",
+   "id": 13,
+   "lat": -34.7965,
+   "lon": -58.389
+  },
+  {
+   "type": "node",
+   "id": 20,
+   "lat": -34.799,
+   "lon": -58.392
+  },
+  {
+   "type": "node",
+   "id": 21,
+   "lat": -34.799,
+   "lon": -58.388
+  },
+  {
+   "type": "node",
+   "id": 22,
+   "lat": -34.7992,
+   "lon": -58.392
+  },
+  {
+   "type": "node",
+   "id": 23,
+   "lat": -34.7992,
+   "lon": -58.3915
+  },
+  {
+   "type": "node",
+   "id": 30,
+   "lat": -34.7968,
+   "lon": -58.3885,
+   "tags": {
+    "amenity": "fountain"
+   }
+  },
+  {
+   "type": "way",
+   "id": 100,
+   "nodes": [
+    1,
+    2,
+    3
+   ],
+   "tags": {
+    "highway": "secondary",
+    "name": "Avenida Espora"
+   }
+  },
+  {
+   "type": "way",
+   "id": 101,
+   "nodes": [
+    4,
+    5
+   ],
+   "tags": {
+    "highway": "footway"
+   }
+  },
+  {
+   "type": "way",
+   "id": 102,
+   "nodes": [
+    6,
+    7
+   ],
+   "tags": {
+    "highway": "steps"
+   }
+  },
+  {
+   "type": "way",
+   "id": 103,
+   "nodes": [
+    10,
+    11,
+    12,
+    13,
+    10
+   ],
+   "tags": {
+    "leisure": "park",
+    "name": "Plaza Almirante Brown"
+   }
+  },
+  {
+   "type": "way",
+   "id": 104,
+   "nodes": [
+    20,
+    21
+   ],
+   "tags": {
+    "railway": "rail"
+   }
+  },
+  {
+   "type": "way",
+   "id": 105,
+   "nodes": [
+    22,
+    23
+   ],
+   "tags": {
+    "railway": "platform"
+   }
+  }
+ ]
+}
