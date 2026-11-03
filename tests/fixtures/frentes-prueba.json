@@ -1,0 +1,247 @@
+{
+  "estilos": {},
+  "calles": [
+    {
+      "calle": "Esteban Adrogué",
+      "calzada": "empedrado",
+      "frentes": [
+        {
+          "id": "ea-prueba",
+          "desde": "Bartolomé Mitre",
+          "hasta": "Pellerano",
+          "vereda": "sur",
+          "fecha": "2024-03",
+          "osmAusentes": [],
+          "lotes": [
+            {
+              "ancho": 8.7,
+              "pisos": 2,
+              "color": "#d9d2c3",
+              "colorPB": "#2b2b2b",
+              "pb": "banco",
+              "arriba": "vidriado",
+              "cartel": {
+                "texto": "BANCO NACIÓN",
+                "fondo": "#1b4f8a",
+                "letra": "#ffffff",
+                "posicion": "alto"
+              },
+              "lugar": "banco-nacion",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 9,
+              "pisos": 3,
+              "color": "#d9d2c3",
+              "pb": "banco",
+              "arriba": "ventanas",
+              "cartel": {
+                "texto": "GALICIA",
+                "fondo": "#e8731a",
+                "letra": "#ffffff",
+                "posicion": "alto"
+              },
+              "lugar": "galicia",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 7,
+              "pisos": 1,
+              "color": "#d9d2c3",
+              "pb": "vidriera",
+              "arriba": "ciego",
+              "cartel": {
+                "texto": "LUCCIANO'S",
+                "fondo": "#3b1f14",
+                "letra": "#f1d9a8",
+                "fuente": "serif",
+                "cursiva": true
+              },
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 6,
+              "pisos": 2,
+              "color": "#d9d2c3",
+              "pb": "vidriera",
+              "arriba": "ventanas",
+              "osm": "Farrnacia Central",
+              "cartel": {
+                "texto": "FARMACIA CENTRAL",
+                "fondo": "#ffffff",
+                "letra": "#1f8a4c",
+                "posicion": "bandera"
+              },
+              "toldo": {
+                "color": "#2e6b3a",
+                "rayas": true
+              },
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 10,
+              "pisos": 4,
+              "color": "#d9d2c3",
+              "pb": "banco",
+              "arriba": "vidriado",
+              "cartel": {
+                "texto": "SUPERVIELLE",
+                "fondo": "#c8102e",
+                "letra": "#ffffff",
+                "posicion": "alto"
+              },
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 8,
+              "pisos": 2,
+              "color": "#d9d2c3",
+              "pb": "vidriera",
+              "arriba": "balcones",
+              "cartel": {
+                "texto": "BONAFIDE",
+                "fondo": "#5b2a12",
+                "letra": "#f7e7c4",
+                "fuente": "condensada"
+              },
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 9,
+              "pisos": 5,
+              "color": "#c9c9c9",
+              "pb": "acceso",
+              "arriba": "vidriado",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 7,
+              "pisos": 1,
+              "color": "#a05a3a",
+              "pb": "persiana",
+              "arriba": "ciego",
+              "material": "ladrillo",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 6,
+              "pisos": 2,
+              "color": "#e9e2d0",
+              "pb": "porton",
+              "arriba": "ventanas",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 8,
+              "pisos": 3,
+              "color": "#cdbf9e",
+              "pb": "pared",
+              "arriba": "balcones",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 9,
+              "pisos": 1,
+              "color": "#e9e2d0",
+              "pb": "puerta",
+              "arriba": "ventanas",
+              "puerta": "medio",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 7,
+              "pisos": 2,
+              "color": "#bfc9c4",
+              "pb": "vidriera",
+              "arriba": "ventanas",
+              "puerta": "fin",
+              "toldo": {
+                "color": "#8a1c1c",
+                "rayas": true
+              },
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 6,
+              "pisos": 0,
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 10,
+              "pisos": 2,
+              "color": "#e4d3b0",
+              "pb": "vidriera",
+              "arriba": "ventanas",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 8,
+              "pisos": 1,
+              "color": "#d6c7a8",
+              "pb": "puerta",
+              "arriba": "ciego",
+              "retiro": 3,
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 9,
+              "pisos": 3,
+              "color": "#d9d2c3",
+              "pb": "vidriera",
+              "arriba": "balcones",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 7,
+              "pisos": 2,
+              "color": "#c2b49a",
+              "pb": "persiana",
+              "arriba": "ventanas",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 8,
+              "pisos": 4,
+              "color": "#cfcfcf",
+              "pb": "acceso",
+              "arriba": "ventanas",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 9,
+              "pisos": 2,
+              "color": "#e9e2d0",
+              "pb": "vidriera",
+              "arriba": "ventanas",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 8,
+              "pisos": 1,
+              "color": "#b9a88a",
+              "pb": "vidriera",
+              "arriba": "ciego",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 7,
+              "pisos": 2,
+              "color": "#e0d6c0",
+              "pb": "puerta",
+              "arriba": "ventanas",
+              "nota": "inventado para tests"
+            },
+            {
+              "ancho": 8,
+              "pisos": 2,
+              "color": "#d9d2c3",
+              "pb": "vidriera",
+              "arriba": "balcones",
+              "nota": "inventado para tests"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

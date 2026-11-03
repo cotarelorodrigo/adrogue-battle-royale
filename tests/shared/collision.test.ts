@@ -390,6 +390,7 @@ const map: MapData = {
   platforms: [[[20, 0], [30, 0], [30, -4], [20, -4]]],
   parks: [],
   places: [],
+  signs: [],
   props: [
     { kind: 'ladder', base: [5, 0], normal: [0, 1], topY: 6.6, buildingId: 'b7' },
     { kind: 'dumpster', position: [-10, 10], rotation: Math.PI / 4 },

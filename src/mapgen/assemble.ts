@@ -59,6 +59,7 @@ export function assembleMap(
     platforms: platforms.map(ring),
     parks: parks.map((k) => ({ ...k, polygon: ring(k.polygon) })),
     places: [],
+    signs: [],
     props: props.map((p): Prop => {
       switch (p.kind) {
         case 'ladder': return { ...p, base: v2(p.base), normal: v2(p.normal, 3), topY: rn(p.topY) };

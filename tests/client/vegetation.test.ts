@@ -193,7 +193,7 @@ describe('plazas', () => {
   const map = {
     version: 1, origin: { lat: 0, lon: 0 }, bounds: { minX: -50, maxX: 150, minZ: -100, maxZ: 50 },
     buildings: [], outskirts: [], roads, railways: [], platforms: [], parks: [{ id: 'p1', polygon: park }],
-    places: [], props, trees: [], randomSpawns: [],
+    places: [], props, trees: [], randomSpawns: [], signs: [],
   } satisfies MapData;
 
   const group = buildParks(map, materials);

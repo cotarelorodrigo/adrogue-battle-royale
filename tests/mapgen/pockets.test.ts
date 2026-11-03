@@ -13,7 +13,7 @@ const box = (id: string, x0: number, z0: number, x1: number, z1: number, floors:
 });
 const mapOf = (buildings: Building[], props: Prop[]): MapData => ({
   version: 1, origin: { lat: 0, lon: 0 }, bounds: { minX: -30, maxX: 30, minZ: -30, maxZ: 30 },
-  buildings, outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props, trees: [], randomSpawns: [],
+  buildings, outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props, trees: [], randomSpawns: [], signs: [],
 });
 // escalera de afuera, sobre la pared norte del bloque N: el techo de los cuatro (un solo cluster) es accesible
 const outsideLadder: Prop = { kind: 'ladder', base: [0, -10], normal: [0, -1], topY: heightFor(2), buildingId: 'N' };

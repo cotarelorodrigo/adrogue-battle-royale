@@ -2,10 +2,10 @@
 // Un material por cartel (cada uno con su textura): son 28 carteles, a lo sumo 28 draw calls, y el frustum culling deja
 // afuera los que no se ven.
 import * as THREE from 'three';
+import { SIGN_D, SIGN_H } from '../../shared/mapdata.ts';
 import type { Place, PlaceType } from '../../shared/mapdata.ts';
 
-export const SIGN_H = 0.9;
-export const SIGN_D = 0.12;
+export { SIGN_H, SIGN_D };
 /** Píxeles por metro: un nombre de 0,3 m de alto ocupa ~48 px, de sobra para leerlo a 20 m. */
 const PX_PER_M = 160;
 /** Marco, en fracción del alto. Las caras de canto (y la de atrás) se pintan con este color. */
