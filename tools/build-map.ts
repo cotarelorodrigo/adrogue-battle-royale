@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { assembleMap } from '../src/mapgen/assemble.ts';
+import { isFatalWarning } from '../src/mapgen/spawns.ts';
 import { loadPlaces } from '../src/mapgen/places-input.ts';
 
 const OUT = 'public/map/adrogue.map.json';
@@ -25,10 +26,10 @@ console.log(`outskirts: ${map.outskirts.length}`);
 console.log(`calles: ${map.roads.length}, parques: ${map.parks.length}, lugares: ${map.places.length}`);
 console.log(`props: ${map.props.length} (${count(map.props)})`);
 console.log(`arboles: ${map.trees.length}, randomSpawns: ${map.randomSpawns.length}`);
-console.log(`ayudas de ascenso: clusters=${stats.clusters} dumpsters=${stats.dumpsters} ladders=${stats.ladders} tier0=${stats.tier0} tier1=${stats.tier1} fallback=${stats.fallback}`);
+console.log(`ayudas de ascenso: clusters=${stats.clusters} dumpsters=${stats.dumpsters} ladders=${stats.ladders} tier0=${stats.tier0} tier1=${stats.tier1} fallback=${stats.fallback} sinAyuda=${stats.noAid}`);
 console.log(`warnings: ${warnings.length}`);
 for (const w of warnings) console.log(`  - ${w}`);
 console.log(`${OUT}: ${kb} KB`);
 if (kb >= MAX_KB) { console.error('El JSON supera 3 MB'); process.exit(1); }
 // las relajaciones del punto de aparición son avisos esperados; el resto rompe el build
-if (warnings.some((w) => !w.includes('punto de aparición'))) process.exit(1);
+if (warnings.some(isFatalWarning)) process.exit(1);

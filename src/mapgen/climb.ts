@@ -65,6 +65,8 @@ interface Edge {
   n: Vec2;
   d: Vec2; // tangente unitaria a→b
   street: boolean;
+  aid?: Aid; // ayuda que iría en esta arista (perezoso)
+  inside?: boolean; // la ayuda queda a ≥ 1 m del borde del área (perezoso)
   free?: boolean; // caja del acceso fuera de calzada y de otros edificios (perezoso)
 }
 
@@ -76,6 +78,7 @@ interface Ctx {
   roadGrid: { query(box: Box): number[] };
   vehicular: Road[];
   edges: Map<number, Edge[]>;
+  rect: { minX: number; maxX: number; minZ: number; maxZ: number };
 }
 
 function edgesOf(ctx: Ctx, bi: number): Edge[] {
@@ -155,10 +158,16 @@ function isFree(ctx: Ctx, e: Edge, aid: Aid): boolean {
 }
 
 /** La ayuda (base y caja) queda a ≥ 1 m del borde del área jugable. */
+function aidOf(ctx: Ctx, e: Edge): Aid {
+  return (e.aid ??= makeAid(ctx.ix.buildings[e.bi], e));
+}
+
 function inArea(ctx: Ctx, e: Edge): boolean {
-  const r = areaRect();
-  const aid = makeAid(ctx.ix.buildings[e.bi], e);
-  return [aid.pos, ...aid.box].every(([x, z]) => x >= r.minX + AREA_MARGIN && x <= r.maxX - AREA_MARGIN && z >= r.minZ + AREA_MARGIN && z <= r.maxZ - AREA_MARGIN);
+  if (e.inside !== undefined) return e.inside;
+  const r = ctx.rect;
+  const aid = aidOf(ctx, e);
+  e.inside = [aid.pos, ...aid.box].every(([x, z]) => x >= r.minX + AREA_MARGIN && x <= r.maxX - AREA_MARGIN && z >= r.minZ + AREA_MARGIN && z <= r.maxZ - AREA_MARGIN);
+  return e.inside;
 }
 
 function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edge; tier: number } | null {
@@ -168,7 +177,7 @@ function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edg
     let bestScore = -Infinity;
     for (const e of cands) {
       if (!e.street || !inArea(ctx, e)) continue;
-      if (tier === 0 && !isFree(ctx, e, makeAid(ctx.ix.buildings[e.bi], e))) continue;
+      if (tier === 0 && !isFree(ctx, e, aidOf(ctx, e))) continue;
       const score = pick(e);
       if (best === null || score > bestScore + 1e-9 || (Math.abs(score - bestScore) <= 1e-9 && e.len > best.len + 1e-9)) {
         best = e;
@@ -180,17 +189,17 @@ function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edg
   return null;
 }
 
-export interface AidStats { clusters: number; dumpsters: number; ladders: number; tier0: number; tier1: number; fallback: number }
+export interface AidStats { clusters: number; dumpsters: number; ladders: number; tier0: number; tier1: number; fallback: number; noAid: number }
 
 /** Como `placeClimbAids`, pero devuelve además cuántos clusters cayeron en cada nivel de preferencia. */
 export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): { props: Prop[]; stats: AidStats } {
   const ix = indexOf(buildings);
   const vehicular = roads.filter((r) => !NON_VEHICULAR.has(r.kind));
   const roadBoxes = vehicular.map((r) => bboxOf(r.points, r.width / 2));
-  const ctx: Ctx = { ix, roadBoxes, roadGrid: createGrid(roadBoxes), vehicular, edges: new Map() };
+  const ctx: Ctx = { ix, roadBoxes, roadGrid: createGrid(roadBoxes), vehicular, edges: new Map(), rect: areaRect() };
   const idx = new Map(buildings.map((b, i) => [b.id, i]));
   const props: Prop[] = [];
-  const stats: AidStats = { clusters: 0, dumpsters: 0, ladders: 0, tier0: 0, tier1: 0, fallback: 0 };
+  const stats: AidStats = { clusters: 0, dumpsters: 0, ladders: 0, tier0: 0, tier1: 0, fallback: 0, noAid: 0 };
 
   for (const cluster of clustersOf(ix)) {
     stats.clusters++;
@@ -199,7 +208,7 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
     const count = 1 + Math.floor(area / AREA_PER_AID);
     const placed: Aid[] = [];
     const push = (e: Edge): void => {
-      const aid = makeAid(buildings[e.bi], e);
+      const aid = aidOf(ctx, e);
       placed.push(aid);
       props.push(aid.prop);
       stats[aid.prop.kind === 'dumpster' ? 'dumpsters' : 'ladders']++;
@@ -225,6 +234,8 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
         if (other) {
           push(other.edge);
           stats[other.tier === 0 ? 'tier0' : 'tier1']++;
+        } else {
+          stats.noAid++; // todas las aristas candidatas quedan fuera del área jugable
         }
       }
     }

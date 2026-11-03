@@ -1,6 +1,7 @@
 import { hash01 } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import type { CollisionWorld } from '../shared/collision.ts';
+import type { Sign } from '../shared/mapdata.ts';
 
 const R = 0.35;
 const STEP = 0.5;
@@ -61,4 +62,26 @@ export function randomSpawns(world: CollisionWorld, count = 64, spacings: number
     if (out.length >= count) break;
   }
   return out;
+}
+
+/** Prefijo de los avisos de relajación del punto de aparición: son esperados y no rompen el build. */
+export const SPAWN_RELAXED = 'spawn-relajado:';
+/** Un aviso rompe el build salvo que sea una relajación esperada del punto de aparición. */
+export const isFatalWarning = (w: string): boolean => !w.startsWith(SPAWN_RELAXED);
+export const EYE_Y = 1.6;
+/** El rayo al cartel puede chocar solo en los últimos 0,3 m (la propia fachada). */
+export const SIGN_CLEAR = 0.3;
+/** De frente al cartel: coseno del ángulo máximo con la normal (60°). */
+export const SIGN_FRONT_COS = 0.5;
+
+/** ¿Se ve el cartel desde el punto `s`? De frente (≤ 60° de la normal) y sin nada en el medio. */
+export function seesSign(world: CollisionWorld, sign: Sign, s: Vec3): boolean {
+  const off: Vec2 = [s[0] - sign.anchor[0], s[2] - sign.anchor[1]];
+  if (off[0] * sign.normal[0] + off[1] * sign.normal[1] < SIGN_FRONT_COS * Math.hypot(off[0], off[1])) return false;
+  const eye: Vec3 = [s[0], EYE_Y, s[2]];
+  const target: Vec3 = [sign.anchor[0], sign.bottomY + 0.45, sign.anchor[1]];
+  const dir: Vec3 = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
+  const dist = Math.hypot(dir[0], dir[1], dir[2]);
+  const hit = world.raycast(eye, dir, dist);
+  return !hit || hit.dist >= dist - SIGN_CLEAR;
 }

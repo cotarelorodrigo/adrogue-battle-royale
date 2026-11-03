@@ -136,6 +136,24 @@ const ringArea = (r: [number, number][]): number => {
 const multiArea = (m: polygonClipping.MultiPolygon): number =>
   m.reduce((s, poly) => s + poly.reduce((a, r, i) => a + (i === 0 ? 1 : -1) * ringArea(r), 0), 0);
 
+/** Devuelve `f(fp)`: fracción (0..1) del área del footprint que cae dentro de la unión de los parques. */
+export function parkFractionOf(parks: Park[]): (fp: Vec2[]) => number {
+  // polygon-clipping modifica los puntos de entrada: siempre se le pasan copias
+  const closed = (fp: Vec2[]): Poly => [[...fp, fp[0]].map((v): [number, number] => [v[0], v[1]])];
+  const polys = parks.map((k) => closed(k.polygon));
+  const union = polys.length ? polygonClipping.union(polys[0], ...polys.slice(1)) : [];
+  const boxes = union.map((poly) => bboxOf(poly[0].slice(0, -1) as Vec2[]));
+  return (fp) => {
+    const bb = bboxOf(fp);
+    const hit = union.filter((_, i) => {
+      const k = boxes[i];
+      return k[0] < bb[2] && k[2] > bb[0] && k[1] < bb[3] && k[3] > bb[1];
+    });
+    if (hit.length === 0) return 0;
+    return multiArea(polygonClipping.intersection(closed(fp), hit)) / polygonArea(fp);
+  };
+}
+
 /**
  * `parks`: un footprint de Microsoft con ≥ 50 % de su área dentro de un parque se descarta (pedestales, copas de
  * árboles). Un feature con `properties.source === 'osm'` se conserva siempre.
@@ -146,19 +164,7 @@ export function buildBuildings(
   parks: Park[] = [],
 ): { buildings: Building[]; outskirts: OutskirtBuilding[] } {
   const rect = areaRect();
-  const parkPolys = parks.map((k): Poly => [[...k.polygon, k.polygon[0]].map((v): [number, number] => [v[0], v[1]])]);
-  const parkUnion = parkPolys.length ? polygonClipping.union(parkPolys[0], ...parkPolys.slice(1)) : [];
-  const parkBoxes = parkUnion.map((poly) => bboxOf(poly[0].slice(0, -1) as Vec2[]));
-  // polygon-clipping modifica los puntos de entrada: siempre se le pasan copias
-  /** Fracción del área del candidato que cae dentro de algún parque. */
-  const parkFraction = (c: Cand): number => {
-    const hit = parkUnion.filter((_, i) => {
-      const k = parkBoxes[i];
-      return k[0] < c.bbox[2] && k[2] > c.bbox[0] && k[1] < c.bbox[3] && k[3] > c.bbox[1];
-    });
-    if (hit.length === 0) return 0;
-    return multiArea(polygonClipping.intersection([[...c.footprint, c.footprint[0]].map((v): [number, number] => [v[0], v[1]])], hit)) / c.area;
-  };
+  const parkFraction = parkFractionOf(parks);
 
   // calzadas (grilla espacial para recortar solo contra las cercanas)
   const CELL = 50;
@@ -195,8 +201,9 @@ export function buildBuildings(
     if (l > 0 && ring[0][0] === ring[l][0] && ring[0][1] === ring[l][1]) ring = ring.slice(0, -1);
     const whole = toCand(ring);
     if (!whole) continue;
+    // convención: un feature con properties.source === 'osm' se trata como edificio de OSM (hoy el GeoJSON es todo de Microsoft)
     const ms = f.properties?.source !== 'osm';
-    const accept = (c: Cand): void => { if (!(ms && parkFraction(c) >= PARK_MAX_FRAC)) cands.push(c); };
+    const accept = (c: Cand): void => { if (!(ms && parkFraction(c.footprint) >= PARK_MAX_FRAC)) cands.push(c); };
     const near = nearby(whole.bbox);
     if (near.length === 0) { accept(whole); continue; }
     const subject: Poly = [[...whole.footprint, whole.footprint[0]]];

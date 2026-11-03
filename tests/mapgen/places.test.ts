@@ -117,3 +117,14 @@ test('una arista cuyo rayo vuelve a cruzar el edificio no califica', () => {
   expect(sign.normal[1]).toBeCloseTo(1); // fachada sur (z = 30)
   expect(sign.anchor[1]).toBeGreaterThan(29.9);
 });
+
+test('una arista con otro edificio entre ella y la calle no califica', () => {
+  // la cara norte del edificio A (más cercana al lugar) mira a una calle en z = −10, pero B tapa el camino;
+  // la cara sur (más lejos) da a otra calle libre
+  const a = mk('ba', rect(0, 30, -20, -8)); // cara norte en z = −20
+  const blocker = mk('bb', rect(0, 30, -34, -26));
+  const res = matchPlaces([inp('x', 'bar', [15, -19])], [a, blocker], [], [hRoad('rn', -38), hRoad('rs', 0)]);
+  const sign = res.places[0].sign!;
+  expect(res.places[0].buildingId).toBe('ba');
+  expect(sign.normal[1]).toBeCloseTo(1); // sur (z = −8), no norte
+});

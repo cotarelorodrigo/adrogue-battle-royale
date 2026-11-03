@@ -12,10 +12,8 @@ import type { AidStats } from './climb.ts';
 import { placeTrees } from './trees.ts';
 import { placeProps } from './props.ts';
 import { distToRing } from './spatial.ts';
-import { findFreeSpot, randomSpawns } from './spawns.ts';
+import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts';
 
-const EYE_Y = 1.6;
-const SIGN_CLEAR = 0.3;
 const SPAWN_RADIUS = 16;
 const SPAWN_CLEARANCE = 2.5;
 
@@ -56,6 +54,7 @@ export function assembleMap(
   const matched = matchPlaces(raw.places, built.buildings, parks, roads);
   warnings.push(...matched.warnings);
   const { props: aids, stats } = placeClimbAidsWithStats(matched.buildings, roads);
+  if (stats.noAid > 0) warnings.push(`${stats.noAid} cluster(s) de techos sin ayuda de ascenso: todas las aristas caen fuera del área`);
   const bounds = areaRect();
   const trees = placeTrees(roads, matched.buildings, parks, bounds);
   const props = [...aids, ...placeProps(parks, fountains, matched.places, roads)];
@@ -107,27 +106,15 @@ export function assembleMap(
     else if (p.type === 'plaza' || p.type === 'monument') near = [p.position[0], p.position[1] + 10];
     if (!near) { warnings.push(`${p.id}: no se pudo ubicar el punto de aparición`); near = p.position; }
     const sign = p.sign;
-    const seesSign = sign
-      ? (s: Vec3): boolean => {
-          // de frente al cartel: a ≤ 60° de la normal (de lo contrario se lo ve de canto, pegado a la fachada)
-          const off: Vec2 = [s[0] - sign.anchor[0], s[2] - sign.anchor[1]];
-          if (off[0] * sign.normal[0] + off[1] * sign.normal[1] < 0.5 * Math.hypot(off[0], off[1])) return false;
-          const eye: Vec3 = [s[0], EYE_Y, s[2]];
-          const target: Vec3 = [sign.anchor[0], sign.bottomY + 0.45, sign.anchor[1]];
-          const dir: Vec3 = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
-          const dist = Math.hypot(dir[0], dir[1], dir[2]);
-          const hit = world.raycast(eye, dir, dist);
-          return !hit || hit.dist >= dist - SIGN_CLEAR;
-        }
-      : undefined;
-    let spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE, seesSign);
-    if (!spawn && seesSign) {
+    const accept = sign ? (v: Vec3): boolean => seesSign(world, sign, v) : undefined;
+    let spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE, accept);
+    if (!spawn && accept) {
       spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE);
-      if (spawn) warnings.push(`${p.id}: punto de aparición sin línea de vista de frente al cartel`);
+      if (spawn) warnings.push(`${SPAWN_RELAXED} ${p.id}: punto de aparición sin línea de vista de frente al cartel`);
     }
     if (!spawn) {
       spawn = findFreeSpot(world, near, SPAWN_RADIUS, 1);
-      if (spawn) warnings.push(`${p.id}: punto de aparición con solo 1 m libre`);
+      if (spawn) warnings.push(`${SPAWN_RELAXED} ${p.id}: punto de aparición con solo 1 m libre`);
     }
     if (!spawn) warnings.push(`${p.id}: sin punto libre cerca de ${near.map((n) => rn(n, 1)).join(', ')}`);
     return { ...p, spawn: spawn ?? [rn(near[0]), 0, rn(near[1])] };

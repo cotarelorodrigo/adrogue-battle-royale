@@ -2,6 +2,7 @@ import { distPointSegment, pointInPolygon, polygonArea, project } from '../share
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Park, Place, Road, Sign } from '../shared/mapdata.ts';
 import { heightFor } from './buildings.ts';
+import { bboxOf, createGrid, segToPolygonDist } from './spatial.ts';
 import type { PlaceInput } from './places-input.ts';
 
 const NEAR_M = 15;
@@ -68,9 +69,25 @@ function crossesFootprint(p: Vec2, q: Vec2, fp: Vec2[], skip: number): boolean {
 
 const signWidth = (len: number): number => Math.min(SIGN_EDGE_FRAC * len, SIGN_MAX_W);
 
+/** Índice espacial de los edificios para ver si algo se interpone entre una arista y la calle. */
+interface Blockers { buildings: Building[]; grid: { query(box: ReturnType<typeof bboxOf>): number[] } }
+
+function blockersOf(buildings: Building[]): Blockers {
+  return { buildings, grid: createGrid(buildings.map((b) => bboxOf(b.footprint))) };
+}
+
+/** ¿El rayo p→q toca algún edificio distinto de `self`? */
+function blockedByOther(p: Vec2, q: Vec2, self: Building, bl: Blockers): boolean {
+  for (const j of bl.grid.query(bboxOf([p, q]))) {
+    const o = bl.buildings[j];
+    if (o !== self && segToPolygonDist(p, q, o.footprint) === 0) return true;
+  }
+  return false;
+}
+
 interface Edge { i: number; a: Vec2; b: Vec2; len: number; mid: Vec2; n: Vec2; qualifies: boolean; dist: number }
 
-function edgesOf(b: Building, p: Vec2, roads: Road[]): Edge[] {
+function edgesOf(b: Building, p: Vec2, roads: Road[], bl: Blockers): Edge[] {
   const fp = b.footprint;
   const out: Edge[] = [];
   for (let i = 0; i < fp.length; i++) {
@@ -82,8 +99,9 @@ function edgesOf(b: Building, p: Vec2, roads: Road[]): Edge[] {
     const n = outwardNormal(a, c);
     const start: Vec2 = [mid[0] + n[0] * 1e-3, mid[1] + n[1] * 1e-3];
     const end: Vec2 = [mid[0] + n[0] * ROAD_REACH_M, mid[1] + n[1] * ROAD_REACH_M];
-    // califica: cabe el cartel con 1 m de aire, el rayo llega a una calle y no vuelve a cruzar el edificio (patios, U, L)
-    const qualifies = len >= signWidth(len) + 1 && facesRoad(mid, n, roads) && !crossesFootprint(start, end, fp, i);
+    // califica: cabe el cartel con 1 m de aire, el rayo llega a una calle y no cruza ningún edificio (ni el propio: patios, U, L)
+    const qualifies = len >= signWidth(len) + 1 && facesRoad(mid, n, roads)
+      && !crossesFootprint(start, end, fp, i) && !blockedByOther(start, end, b, bl);
     out.push({ i, a, b: c, len, mid, n, qualifies, dist: distPointSegment(p, a, c) });
   }
   return out.sort((x, y) => Number(y.qualifies) - Number(x.qualifies) || x.dist - y.dist);
@@ -120,6 +138,7 @@ export function matchPlaces(
   roads: Road[],
 ): { places: Omit<Place, 'spawn'>[]; buildings: Building[]; warnings: string[] } {
   const blds: Building[] = buildings.map((b) => ({ ...b }));
+  const blockers = blockersOf(blds);
   const warnings: string[] = [];
   const places: Omit<Place, 'spawn'>[] = [];
   const slotsByBuilding = new Map<string, Slot[]>();
@@ -165,7 +184,7 @@ export function matchPlaces(
     // Cartel: arista candidata con lugar suficiente para todos los carteles del edificio.
     const slots = slotsByBuilding.get(best.id) ?? [];
     slotsByBuilding.set(best.id, slots);
-    const edges = edgesOf(best, position, roads);
+    const edges = edgesOf(best, position, roads, blockers);
     const fits = (e: Edge, w: number) => {
       const mine = slots.filter((s) => s.edge.i === e.i);
       const total = mine.reduce((t, s) => t + s.width, 0) + w + SIGN_GAP * mine.length;
