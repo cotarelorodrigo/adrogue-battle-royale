@@ -11,7 +11,7 @@ test('calles con ancho y vereda por tipo', () => {
   expect([espora.width, espora.sidewalk]).toEqual([12, 3]);
   expect(espora.id).toBe('w100');
   expect(f.roads.some((r) => r.kind === 'footway')).toBe(true);
-  expect(f.roads).toHaveLength(2);
+  expect(f.roads).toHaveLength(4); // Espora, el sendero y las dos transversales (Somellera y Macías)
 });
 test('plaza en CCW sin vértice de cierre duplicado', () => {
   const p = f.parks[0];

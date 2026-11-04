@@ -1,0 +1,40 @@
+{
+  "plantas": [
+    {
+      "lugar": "guernica-bar",
+      "fecha": "2026-11",
+      "marco": { "calle": "Avenida Espora", "vereda": "sur", "desde": "Somellera", "hasta": "Macías", "s": 80 },
+      "planta": [[0, 4], [9.6, 4], [9.6, 21], [0, 21]],
+      "patios": [[[0, 0], [9.6, 0], [9.6, 4], [0, 4]]],
+      "frente": [0],
+      "pisos": 2,
+      "alto": 7.5,
+      "reemplaza": [],
+      "puertas": [{ "arista": 0, "centro": 4.8, "ancho": 1.6, "alto": 2.4, "piso": 0 }],
+      "vidrios": [{ "arista": 0, "desde": 0.4, "hasta": 3.8, "abajo": 0.3, "arriba": 2.6, "piso": 0 }],
+      "color": "#3a3a3a",
+      "pb": "vidriera",
+      "arriba": "ventanas",
+      "puerta": "medio",
+      "cartel": { "texto": "GUERNICA", "fondo": "#2b2b2b", "letra": "#f2c14e" },
+      "nota": "inventado para tests: sobre la vereda sur de Espora, tapa parte del bloque b0001 de buildings-mini"
+    },
+    {
+      "lugar": "mcdonalds",
+      "fecha": "2026-11",
+      "marco": { "lat": -34.797530141, "lon": -58.390173264, "rumbo": 90 },
+      "planta": [[0, 0], [8, 0], [8, 6], [0, 6]],
+      "frente": [0],
+      "pisos": 1,
+      "reemplaza": ["b0002"],
+      "puertas": [{ "arista": 0, "centro": 4, "ancho": 1.2, "alto": 2.2, "piso": 0 }],
+      "vidrios": [{ "arista": 0, "desde": 0.3, "hasta": 3.2, "abajo": 0.2, "arriba": 2.8, "piso": 0 }],
+      "color": "#b5121b",
+      "pb": "vidriera",
+      "arriba": "ciego",
+      "puerta": "medio",
+      "cartel": { "texto": "McDonald's", "fondo": "#b5121b", "letra": "#ffc72c", "fuente": "redondeada" },
+      "nota": "inventado para tests: marco geográfico en (45, 10), tapa un cuarto de b0002 y lo reemplaza entero"
+    }
+  ]
+}

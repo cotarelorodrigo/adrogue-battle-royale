@@ -1,18 +1,19 @@
 // Frentes relevados en el mapa: lotes con su cartel, recorte de los edificios de Microsoft, enlace con los lugares de
-// data/places.json y cotejo con los locales de OSM.
+// data/places.json y cotejo con los locales de OSM. Las plantas relevadas (data/plantas.json) entran como lotes sueltos.
 import { distPointSegment, project } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Road, Sign } from '../shared/mapdata.ts';
-import { heightFor } from './buildings.ts';
 import type { AidSlots, LotFront } from './climb.ts';
 import { cumulative, pointAt, resolveFrontage, vehicular } from './frontage.ts';
 import type { Frontage } from './frontage.ts';
 import type { FrenteInput, FrentesInput } from './frentes-input.ts';
-import { aidEnds, carveLots, layoutLots, lotBuilding, lotOverlap, lotSign } from './lots.ts';
+import { aidEnds, carveLots, layoutLots, lotBuilding, lotHeight, lotOverlap, lotSign } from './lots.ts';
 import type { LotShape } from './lots.ts';
 import type { OsmPoi } from './osm.ts';
 import { normalizeName } from './places.ts';
 import type { PlaceInput } from './places-input.ts';
+import { streetWarnings } from './plantas.ts';
+import type { PlantaShape } from './plantas.ts';
 
 const ADENTRO_MIN = -6;
 const ADENTRO_MAX = 25;
@@ -22,6 +23,8 @@ const NAME_MIN = 3;
  *  propia línea, y queda una astilla de 1 o 2 cm de ancho: esa no cuenta. */
 const OVERLAP_AREA = 0.05;
 const OVERLAP_WIDTH = 0.05;
+/** Una planta relevada se pisa con un lote o con otra planta si comparten más de esto (m²): no viene de un empalme en T. */
+const PLANTA_OVERLAP = 0.05;
 
 export interface FrentesResult {
   buildings: Building[]; // Microsoft recortados + lotes
@@ -32,6 +35,7 @@ export interface FrentesResult {
   climb: Map<string, LotFront>;
   lots: LotShape[];
   linked: Set<string>; // ids de los lotes ligados a un lugar (su cartel es el del lugar)
+  plantas: Map<string, PlantaShape>; // por id del lugar: su planta relevada (data/plantas.json)
   warnings: string[];
   report: string[]; // informativo: distancia de cada lote enlazado a su punto de OSM o del lugar
 }
@@ -45,7 +49,7 @@ export function lotSigns(fr: Pick<FrentesResult, 'lots' | 'linked'>, slots: AidS
   const signs: Sign[] = [];
   const byLot = new Map<string, Sign>();
   for (const l of fr.lots) {
-    const sign = lotSign(l, heightFor(l.lote.pisos), slots.get(l.id), warnings);
+    const sign = lotSign(l, lotHeight(l.lote), slots.get(l.id), warnings);
     if (!sign) continue;
     if (fr.linked.has(l.id)) byLot.set(l.id, sign);
     else signs.push(sign);
@@ -102,11 +106,17 @@ export function onFace(p: Vec2, fr: Frontage, roads: Road[], calle: string): boo
   return nearest === calle;
 }
 
-export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Building[], places: PlaceInput[], pois: OsmPoi[]): FrentesResult {
+/**
+ * `plantas`: las plantas relevadas, ya en el mundo (placePlantas). Entran a los lotes: reciben el recorte, el enlace con
+ * su lugar, el cartel, el frente para el atlas y las puntas para las ayudas de ascenso como cualquier otro.
+ */
+export function applyFrentes(
+  input: FrentesInput, roads: Road[], buildings: Building[], places: PlaceInput[], pois: OsmPoi[], plantas: PlantaShape[] = [],
+): FrentesResult {
   const res: FrentesResult = {
-    buildings, fixed: new Map(), signs: [], fronts: new Map(), climb: new Map(), lots: [], linked: new Set(), warnings: [], report: [],
+    buildings, fixed: new Map(), signs: [], fronts: new Map(), climb: new Map(), lots: [], linked: new Set(), plantas: new Map(), warnings: [], report: [],
   };
-  if (input.frentes.length === 0) return res;
+  if (input.frentes.length === 0 && plantas.length === 0) return res;
 
   const faces: { f: FrenteInput; fr: Frontage; lots: LotShape[] }[] = input.frentes.map((f) => {
     const fr = resolveFrontage(roads, f);
@@ -121,6 +131,20 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
       res.warnings.push(`frente ${a.f.id}, lote ${i + 1} se pisa con frente ${b.f.id}, lote ${j + 1} (${fmt(o.area)} m²)`);
     }
   }))));
+  // una planta se pisa con un lote o con otra planta, o pisa la calle
+  plantas.forEach((p, i) => {
+    for (const { f, lots } of faces) {
+      lots.forEach((l, j) => {
+        const o = l.footprint ? lotOverlap(p.footprint, l.footprint).area : 0;
+        if (o > PLANTA_OVERLAP) res.warnings.push(`planta de ${p.planta.lugar} se pisa con frente ${f.id}, lote ${j + 1} (${fmt(o)} m²)`);
+      });
+    }
+    for (const q of plantas.slice(0, i)) {
+      const o = lotOverlap(p.footprint, q.footprint).area;
+      if (o > PLANTA_OVERLAP) res.warnings.push(`planta de ${p.planta.lugar} se pisa con planta de ${q.planta.lugar} (${fmt(o)} m²)`);
+    }
+    res.warnings.push(...streetWarnings(p, roads));
+  });
   const frontMid = (l: LotShape): Vec2 => pointAt(l.front, cumulative(l.front), cumulative(l.front).at(-1)! / 2);
   const placeLot = new Map<string, string>(); // id del lugar → id del lote (el cartel va al final, con lotSigns)
   const link = (placeId: string, l: LotShape, pos: Vec2): void => {
@@ -130,13 +154,14 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
     res.report.push(`${placeId} -> ${l.id}: a ${fmt(Math.hypot(m[0] - pos[0], m[1] - pos[1]))} m del punto del lugar`);
   };
 
+  // las plantas son lotes sueltos: después de los de los frentes, con su lugar en lote.lugar
+  const lots = [...faces.flatMap((x) => x.lots), ...plantas];
+  for (const p of plantas) res.plantas.set(p.planta.lugar, p);
   const positions = new Map(places.map((p) => [p.id, project(p.lat, p.lon)]));
-  for (const { lots } of faces) {
-    for (const l of lots) {
-      if (l.lote.lugar === undefined) continue;
-      if (!l.footprint) res.warnings.push(`${l.id}: tiene "lugar" pero no tiene edificio (pisos 0)`);
-      else link(l.lote.lugar, l, positions.get(l.lote.lugar) ?? frontMid(l));
-    }
+  for (const l of lots) {
+    if (l.lote.lugar === undefined) continue;
+    if (!l.footprint) res.warnings.push(`${l.id}: tiene "lugar" pero no tiene edificio (pisos 0)`);
+    else link(l.lote.lugar, l, positions.get(l.lote.lugar) ?? frontMid(l));
   }
 
   // enlace automático: lugares sin lote explícito que caen sobre un frente
@@ -170,9 +195,18 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
     });
   }
 
-  const lots = faces.flatMap((x) => x.lots);
+  // antes de recortar, se borran enteros los bloques de Microsoft que nombra una planta en "reemplaza" (D8)
+  const microsoft = new Set(buildings.map((b) => b.id));
+  const gone = new Set<string>();
+  for (const p of plantas) {
+    for (const id of p.planta.reemplaza) {
+      if (microsoft.has(id)) gone.add(id);
+      else res.warnings.push(`planta de ${p.planta.lugar}: "reemplaza" nombra ${id}, que no es un edificio de Microsoft`);
+    }
+  }
   res.lots = lots;
-  res.buildings = [...carveLots(buildings, lots.flatMap((l) => l.claim)), ...lots.flatMap((l) => lotBuilding(l) ?? [])];
+  const kept = gone.size > 0 ? buildings.filter((b) => !gone.has(b.id)) : buildings;
+  res.buildings = [...carveLots(kept, lots.flatMap((l) => l.claim)), ...lots.flatMap((l) => lotBuilding(l) ?? [])];
   for (const l of lots) {
     res.fronts.set(l.id, { front: l.front, cornerRings: l.cornerRings });
     if (l.footprint) res.climb.set(l.id, { line: l.front, puntas: aidEnds(l) });

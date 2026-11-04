@@ -2,7 +2,7 @@ import polygonClipping from 'polygon-clipping';
 import { distPointSegment, ensureCCW, pointInPolygon, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import { SIGN_H } from '../shared/mapdata.ts';
-import type { Building, Road, Sign } from '../shared/mapdata.ts';
+import type { Building, Puerta, Road, Sign } from '../shared/mapdata.ts';
 import { heightFor, MIN_AREA } from './buildings.ts';
 import type { Punta } from './climb.ts';
 import { cumulative, pointAt, slice, vehicular } from './frontage.ts';
@@ -26,6 +26,13 @@ const RECTO = 0.05;
 const MIN_SIGN_W = 0.5;
 /** Ancho de un módulo de fachada (copia de BAY_W de client/world/wall-kit.ts: mapgen no importa el cliente). */
 const BAY_W = 3.0;
+
+/** Las bahías de una fachada de `len` m, como las dibuja el cliente (client/world/fronts.ts): `n` de ancho len / n, y
+ *  la bahía (desde 0, contando desde la punta de `desde`) donde el atlas pinta la puerta. */
+export function doorBay(len: number, puerta: Puerta): { n: number; bay: number } {
+  const n = Math.max(1, Math.round(len / BAY_W));
+  return { n, bay: puerta === 'inicio' ? 0 : puerta === 'fin' ? n - 1 : Math.floor((n - 1) / 2) };
+}
 
 export interface LotShape {
   id: string; // `${frente.id}-${k}`, con k desde 1
@@ -204,11 +211,14 @@ export function carveLots(buildings: Building[], claims: Vec2[][]): Building[] {
   return out;
 }
 
+/** Alto del edificio de un lote: el de sus pisos, salvo que la planta relevada traiga `alto` (D9). */
+export const lotHeight = (o: LoteInput): number => o.alto ?? heightFor(o.pisos);
+
 export function lotBuilding(l: LotShape): Building | null {
   if (!l.footprint) return null;
   const o = l.lote;
   return {
-    id: l.id, footprint: l.footprint, height: heightFor(o.pisos), floors: o.pisos, tint: o.color,
+    id: l.id, footprint: l.footprint, height: lotHeight(o), floors: o.pisos, tint: o.color,
     kind: o.pisos >= 3 ? 'apartments' : o.pb === 'puerta' ? 'house' : 'shop',
     wall: o.material === 'ladrillo' ? 'brick' : 'plaster',
     front: {
@@ -309,8 +319,7 @@ export function lotSign(l: LotShape, height: number, ayuda?: Partial<Record<Punt
  * queda ninguna, `fin`: la bandera choca con la escalera; la puerta, no.
  */
 export function aidEnds(l: LotShape): Punta[] {
-  const n = Math.max(1, Math.round(cumulative(l.front).at(-1)! / BAY_W));
-  const door = l.lote.puerta === 'inicio' ? 0 : l.lote.puerta === 'fin' ? n - 1 : Math.floor((n - 1) / 2);
+  const { n, bay: door } = doorBay(cumulative(l.front).at(-1)!, l.lote.puerta);
   const ends: Punta[] = [];
   if (n === 1 || door !== n - 1) ends.push('fin');
   if ((n === 1 || door !== 0) && l.lote.cartel?.posicion !== 'bandera') ends.push('inicio');

@@ -5,11 +5,14 @@ import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts'
 import { parseOsm } from './osm.ts';
 import { applyFrentes, lotSigns } from './frentes.ts';
 import type { FrentesInput } from './frentes-input.ts';
-import { frontEdgesOf, frontIsContra } from './lots.ts';
+import { frontEdgesOf, frontIsContra, lotOverlap } from './lots.ts';
 import { buildBuildings } from './buildings.ts';
 import type { GeoJSONFeatureCollection } from './buildings.ts';
 import { matchPlaces } from './places.ts';
 import type { PlaceInput } from './places-input.ts';
+import { SIN_LOTE } from './plantas-input.ts';
+import type { PlantaInput } from './plantas-input.ts';
+import { doorWarnings, placePlantas } from './plantas.ts';
 import { placeClimbAidsWithStats } from './climb.ts';
 import type { AidStats } from './climb.ts';
 import { filterTrees, placeTrees } from './trees.ts';
@@ -25,12 +28,17 @@ import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts
 const SPAWN_RADIUS = 16;
 const SPAWN_CLEARANCE = 2.5;
 const NO_FRENTES: FrentesInput = { frentes: [], calzadas: {} };
+/** D8: un edificio que pisa un andén más que esto (m²) rompe el build. La esquina de b0769 pisa 0,3 m² y no salta. */
+const ANDEN_MAX = 1;
+
+const fmt = (n: number): string => n.toFixed(1).replace('.', ',');
 
 const roundSign = (s: Sign): Sign => ({ ...s, anchor: v2(s.anchor), normal: v2(s.normal, 3), width: rn(s.width), bottomY: rn(s.bottomY) });
 
-/** `photos`: lo que mapgen usa de data/photo-facades.json (la arista de cada foto, para su fachada). */
+/** `photos`: lo que mapgen usa de data/photo-facades.json (la arista de cada foto, para su fachada). `plantas`: las de
+ *  data/plantas.json; si vienen, avisa por cada lugar de SIN_LOTE que no tiene la suya. */
 export function assembleMap(
-  raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[]; photos?: PhotoEdge[]; frentes?: FrentesInput },
+  raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[]; photos?: PhotoEdge[]; frentes?: FrentesInput; plantas?: PlantaInput[] },
 ): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats; report: string[] } {
   const warnings: string[] = [];
   const { roads, railways, platforms, parks, fountains, pois } = parseOsm(raw.osm);
@@ -43,7 +51,10 @@ export function assembleMap(
     if (!roads.some((r) => r.name === name)) warnings.push(`calle "${name}": OSM no tiene ninguna calle con ese nombre (la calzada no se aplica)`);
   }
   const built = buildBuildings(raw.buildings, roads, parks);
-  const fr = applyFrentes(raw.frentes ?? NO_FRENTES, roads, built.buildings, raw.places, pois);
+  if (raw.plantas) {
+    for (const l of SIN_LOTE) if (!raw.plantas.some((p) => p.lugar === l)) warnings.push(`${l}: falta relevar la planta (data/plantas.json)`);
+  }
+  const fr = applyFrentes(raw.frentes ?? NO_FRENTES, roads, built.buildings, raw.places, pois, placePlantas(raw.plantas ?? [], roads));
   warnings.push(...fr.warnings);
   const matched = matchPlaces(raw.places, fr.buildings, parks, roads, fr.fixed);
   warnings.push(...matched.warnings);
@@ -116,6 +127,9 @@ export function assembleMap(
   // huecos de suelo sin salida: escalera adentro o relleno (antes de los spawns, que usan el mundo final)
   const holes = exitPockets(map);
   warnings.push(...holes.warnings);
+  // sobre los edificios finales, con los rellenos de los huecos: las puertas de las plantas y los andenes
+  warnings.push(...doorWarnings([...fr.plantas.values()], map.buildings));
+  warnings.push(...platformWarnings(map.buildings, map.platforms));
 
   // los lugares todavía no tienen spawn, pero la estación ya ubica sus postes: el mundo es el mismo que el del juego
   const world = buildCollisionWorld({ ...map, places: matched.places.map((p) => ({ type: p.type, position: v2(p.position) })) });
@@ -153,6 +167,16 @@ export function assembleMap(
   map.lootSpots = loot.spots;
   warnings.push(...loot.warnings);
   return { map, warnings, stats, pockets: holes.stats, report: fr.report };
+}
+
+/** Los edificios que pisan un andén más de ANDEN_MAX (D8). */
+function platformWarnings(buildings: Building[], platforms: Vec2[][]): string[] {
+  const out: string[] = [];
+  for (const b of buildings) {
+    const area = platforms.reduce((a, p) => a + lotOverlap(b.footprint, p).area, 0);
+    if (area > ANDEN_MAX) out.push(`${b.id}: pisa un andén (${fmt(area)} m²)`);
+  }
+  return out;
 }
 
 /** Una foto de un lugar con lote no manda sobre el relevamiento: va a la arista del cartel y tiene que caber en el frente. */

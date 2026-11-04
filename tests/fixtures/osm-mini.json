@@ -101,6 +101,30 @@
    }
   },
   {
+   "type": "node",
+   "id": 40,
+   "lat": -34.7962,
+   "lon": -58.3915
+  },
+  {
+   "type": "node",
+   "id": 41,
+   "lat": -34.7978,
+   "lon": -58.3915
+  },
+  {
+   "type": "node",
+   "id": 42,
+   "lat": -34.7962,
+   "lon": -58.3895
+  },
+  {
+   "type": "node",
+   "id": 43,
+   "lat": -34.7978,
+   "lon": -58.3895
+  },
+  {
    "type": "way",
    "id": 100,
    "nodes": [
@@ -170,6 +194,30 @@
    ],
    "tags": {
     "railway": "platform"
+   }
+  },
+  {
+   "type": "way",
+   "id": 106,
+   "nodes": [
+    40,
+    41
+   ],
+   "tags": {
+    "highway": "residential",
+    "name": "Somellera"
+   }
+  },
+  {
+   "type": "way",
+   "id": 107,
+   "nodes": [
+    42,
+    43
+   ],
+   "tags": {
+    "highway": "residential",
+    "name": "Macías"
    }
   }
  ]

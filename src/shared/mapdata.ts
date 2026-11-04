@@ -58,5 +58,8 @@ export interface Front { edges: number[]; corner: number[]; pb: PlantaBaja; arri
    *  de `desde` (`inicio`) o la de `hasta` (`fin`): el toldo y el cartel dejan ese tramo libre. */
   ayuda?: { inicio?: number; fin?: number } }
 export interface SignLook { fondo: string; letra: string; marco: string; fuente: Fuente; cursiva?: true }
+/** Marco local de una planta relevada (data/plantas.json): el punto local (u, v) va al mundo como origin + u·U + v·V.
+ *  `u` y `v` son unitarios y perpendiculares; `u` corre a lo largo del frente y `v` entra al edificio. */
+export interface Frame { origin: Vec2; u: Vec2; v: Vec2 }
 export const SIGN_H = 0.9;
 export const SIGN_D = 0.12;

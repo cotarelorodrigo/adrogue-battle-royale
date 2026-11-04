@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { Arriba, Fuente, PlantaBaja, Puerta } from '../shared/mapdata.ts';
+import { heightFor } from './buildings.ts';
 import { loadPlaces } from './places-input.ts';
 
 export interface CartelInput {
@@ -10,6 +11,8 @@ export interface LoteInput {
   ancho: number; pisos: number; fondo: number; retiro: number; color: string; colorPB?: string;
   pb: PlantaBaja; arriba: Arriba; material: 'revoque' | 'ladrillo'; puerta: Puerta;
   toldo?: { color: string; rayas: boolean }; cartel?: CartelInput; lugar?: string; osm?: string; nota?: string;
+  /** Alto del edificio, si no es el de sus pisos (heightFor): solo en las plantas relevadas (data/plantas.json). */
+  alto?: number;
 }
 export interface FrenteInput {
   id: string; calle: string; desde: string; hasta: string; vereda: 'norte' | 'sur' | 'este' | 'oeste';
@@ -36,20 +39,20 @@ const FRENTE_KEYS = ['id', 'desde', 'hasta', 'vereda', 'fecha', 'osmAusentes', '
 const CALLE_KEYS = ['calle', 'calzada', 'frentes'];
 const RAIZ_KEYS = ['estilos', 'calles'];
 
-type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+export type Obj = Record<string, unknown>;
+export const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 /** Ids de frente: van a los ids de los edificios (`<id>-k`) y a una RegExp de los tests e2e. */
 const ID = /^[a-z0-9-]+$/;
 /** Como los edificios de Microsoft (b0837): sus pedazos recortados se llaman b0837-2, como el lote 2 de un frente así. */
 const ID_MICROSOFT = /^b\d+$/;
-const dec = (n: number): string => String(n).replace('.', ',');
+export const dec = (n: number): string => String(n).replace('.', ',');
 
 export function loadFrentes(path = 'data/frentes.json', placeIds: readonly string[] = loadPlaces().map((p) => p.id)): FrentesInput {
   return validateFrentes(JSON.parse(readFileSync(path, 'utf8')), path, placeIds);
 }
 
-function unknownField(where: string, o: Obj, allowed: readonly string[]): void {
+export function unknownField(where: string, o: Obj, allowed: readonly string[]): void {
   for (const k of Object.keys(o)) {
     if (!allowed.includes(k)) throw new Error(`${where}: campo desconocido "${k}" (van ${allowed.join(', ')})`);
   }
@@ -86,32 +89,32 @@ function checkUnknownFields(data: Obj, source: string): void {
   }
 }
 
-function checkSubFields(where: string, l: Obj): void {
+export function checkSubFields(where: string, l: Obj): void {
   if (isObj(l.cartel)) unknownField(`${where}: cartel`, l.cartel, CARTEL_KEYS);
   if (isObj(l.toldo)) unknownField(`${where}: toldo`, l.toldo, TOLDO_KEYS);
 }
 
-function oneOf(where: string, field: string, v: unknown, list: readonly string[]): string {
+export function oneOf(where: string, field: string, v: unknown, list: readonly string[]): string {
   if (typeof v !== 'string' || !list.includes(v)) throw new Error(`${where}: ${field} tiene que ser uno de ${list.join(', ')} (vino "${String(v)}")`);
   return v;
 }
-function color(where: string, field: string, v: unknown): string {
+export function color(where: string, field: string, v: unknown): string {
   if (typeof v !== 'string' || !COLOR.test(v)) throw new Error(`${where}: ${field} tiene que ser #rrggbb (vino "${String(v)}")`);
   return v;
 }
-function num(where: string, field: string, v: unknown, min: number, max: number, opts: { int?: boolean; excludeMin?: boolean } = {}): number {
+export function num(where: string, field: string, v: unknown, min: number, max: number, opts: { int?: boolean; excludeMin?: boolean } = {}): number {
   const ok = typeof v === 'number' && Number.isFinite(v) && (opts.excludeMin ? v > min : v >= min) && v <= max && (!opts.int || Number.isInteger(v));
   if (!ok) {
     throw new Error(`${where}: ${field} tiene que ser ${opts.int ? 'un entero' : 'un número'} entre ${dec(min)}${opts.excludeMin ? ' (sin incluirlo)' : ''} y ${dec(max)} (vino ${JSON.stringify(v)})`);
   }
   return v as number;
 }
-function str(where: string, field: string, v: unknown, max = 200): string {
+export function str(where: string, field: string, v: unknown, max = 200): string {
   if (typeof v !== 'string' || !v.trim() || v.length > max) throw new Error(`${where}: ${field} tiene que ser un texto de 1 a ${max} caracteres`);
   return v;
 }
 
-function validateLote(raw: Obj, where: string, estilos: Obj, placeIds: readonly string[]): LoteInput {
+export function validateLote(raw: Obj, where: string, estilos: Obj, placeIds: readonly string[]): LoteInput {
   let merged: Obj = raw;
   if (raw.usa !== undefined) {
     if (typeof raw.usa !== 'string' || !isObj(estilos[raw.usa])) throw new Error(`${where}: no existe el estilo "${String(raw.usa)}"`);
@@ -134,6 +137,13 @@ function validateLote(raw: Obj, where: string, estilos: Obj, placeIds: readonly 
   if (merged.color !== undefined) lote.color = color(where, 'color', merged.color);
   if (merged.colorPB !== undefined) lote.colorPB = color(where, 'colorPB', merged.colorPB);
   for (const k of ['osm', 'nota'] as const) if (merged[k] !== undefined) lote[k] = str(where, k, merged[k]);
+  if (merged.alto !== undefined) {
+    // un alto que no es el de los pisos (D9: la sala con gradas del cine); nunca menos que lo que piden los pisos
+    const alto = num(where, 'alto', merged.alto, 0, 100, { excludeMin: true });
+    const min = heightFor(pisos);
+    if (alto < min - 1e-6) throw new Error(`${where}: alto tiene que ser de al menos pisos · 3,2 + 0,6 = ${dec(Math.round(min * 100) / 100)} m (vino ${alto})`);
+    lote.alto = alto;
+  }
 
   if (merged.toldo !== undefined) {
     if (!isObj(merged.toldo)) throw new Error(`${where}: toldo tiene que ser un objeto como { "color": "#2e6b3a", "rayas": true }`);

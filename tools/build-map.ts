@@ -3,17 +3,20 @@ import { assembleMap } from '../src/mapgen/assemble.ts';
 import { isFatalWarning } from '../src/mapgen/spawns.ts';
 import { loadPlaces } from '../src/mapgen/places-input.ts';
 import { loadFrentes } from '../src/mapgen/frentes-input.ts';
+import { SIN_LOTE, loadPlantas } from '../src/mapgen/plantas-input.ts';
 
 const OUT = 'public/map/adrogue.map.json';
 const MAX_KB = 3 * 1024;
 
 const frentes = loadFrentes();
+const plantas = loadPlantas(frentes);
 const { map, warnings, stats, pockets, report } = assembleMap({
   osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')),
   buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
   places: loadPlaces(),
   photos: JSON.parse(readFileSync('data/photo-facades.json', 'utf8')),
   frentes,
+  plantas,
 });
 const json = JSON.stringify(map);
 mkdirSync('public/map', { recursive: true });
@@ -38,6 +41,7 @@ const facades = map.buildings.flatMap((b) => b.facades ?? []);
 console.log(`fachadas de lugar: ${facades.length} (${count(facades.map((f) => ({ kind: f.ground })))})`);
 const lots = map.buildings.filter((b) => b.front);
 console.log(`frentes: ${frentes.frentes.length}, lotes: ${lots.length}, carteles de lotes: ${map.signs.length + map.places.filter((p) => lots.some((b) => b.id === p.buildingId)).length}`);
+console.log(`plantas: ${plantas.length} (de ${SIN_LOTE.length})`);
 for (const l of report) console.log(`  ${l}`);
 console.log(`warnings: ${warnings.length}`);
 for (const w of warnings) console.log(`  - ${w}`);
