@@ -54,6 +54,8 @@ export interface AdrogueDebug {
   /** Partida nueva con esa semilla y esos maniquíes, como "Jugar de nuevo". */
   newMatch(seed: number, dummies: number): void;
   counters(): DebugCounters;
+  /** Los placeIds de los interiores que se dibujaron en el último cuadro. */
+  interiorsDrawn(): string[];
   /** Se cumple con el mapa y los materiales cargados y el primer cuadro dibujado; se rechaza si la carga falla. */
   ready: Promise<void>;
   /** Se cumple cuando las fotos de fachada ya están en la escena (o fallaron): se cargan sin frenar el arranque. */

@@ -109,7 +109,7 @@ describe('edificio bajo', () => {
     const e = extrudeBuilding({ ...square10, height: 3.0, floors: 1 });
     expect(maxOf(e.walls.ground, 'position', 1)).toBeCloseTo(3.0);
     expect(posOf(e.walls.upper).count).toBe(0);
-    const gs = buildChunks(baseMap({ buildings: [{ ...square10, height: 3.0, floors: 1 }] }), fake());
+    const gs = buildChunks(baseMap({ buildings: [{ ...square10, height: 3.0, floors: 1 }] }), fake()).groups;
     expect(namesIn(gs, 0, 0)).not.toContain('wallUpper');
   });
 });
@@ -120,7 +120,7 @@ describe('relleno de un hueco', () => {
     expect(posOf(e.parapet).count).toBe(0);
     expect(areaOf(e.roof)).toBeCloseTo(100);
     expect(posOf(e.walls.ground).count).toBeGreaterThan(0);
-    expect(namesIn(buildChunks(baseMap({ buildings: [{ ...square10, fill: true }] }), fake()), 0, -1)).not.toContain('parapet');
+    expect(namesIn(buildChunks(baseMap({ buildings: [{ ...square10, fill: true }] }), fake()).groups, 0, -1)).not.toContain('parapet');
   });
 });
 
@@ -129,7 +129,7 @@ describe('lotes en buildChunks', () => {
     const lots = Array.from({ length: 10 }, (_, i) => mk(`l${i}`, [[10 + i * 10, 20], [19 + i * 10, 20], [19 + i * 10, 8], [10 + i * 10, 8]], {
       kind: 'shop', tint: i % 2 ? '#d9d2c3' : '#7a9e6b', front: { edges: [0], corner: [], pb: 'vidriera', arriba: 'ventanas', puerta: 'inicio' },
     }));
-    const groups = buildChunks(baseMap({ buildings: lots }), fake());
+    const groups = buildChunks(baseMap({ buildings: lots }), fake()).groups;
     const names = namesIn(groups, 0, 0);
     expect(names.filter((n) => n === 'front')).toHaveLength(1);
     // el pretil de cada lote más sus medianeras y fondo (ground + upper): los muros laterales llegan a parapet
@@ -169,7 +169,9 @@ describe('ribbon / polygonGeometry', () => {
 const fake = (): WorldMaterials => {
   const m = () => new THREE.MeshBasicMaterial();
   return { wallGroundHouse: m(), wallGroundShop: m(), wallUpper: m(), brickGround: m(), brickUpper: m(), roof: m(),
-    parapet: m(), asphalt: m(), cobble: m(), sidewalk: m(), grass: m(), path: m(), platform: m(), rail: m(), front: m() };
+    parapet: m(), asphalt: m(), cobble: m(), sidewalk: m(), grass: m(), path: m(), platform: m(), rail: m(), front: m(),
+    in_liso: m(), in_porcelanato: m(), in_madera: m(), in_machimbre: m(), in_baldosa: m(), in_ceramico: m(), in_tela: m(),
+    in_metal: m(), in_ladrillo: m(), in_vidrio: m(), in_luz: m(), in_mueble: m() };
 };
 const road = (id: string, kind: Road['kind'], points: Vec2[], width = 8, sidewalk = 2): Road => ({ id, kind, width, sidewalk, points });
 const baseMap = (over: Partial<MapData>): MapData => ({
@@ -197,7 +199,7 @@ describe('buildChunks', () => {
     parks: [park],
   });
   const mats = fake();
-  const groups = buildChunks(mapFixture, mats);
+  const groups = buildChunks(mapFixture, mats).groups;
 
   test('cantidad de mallas = pares (chunk, material) no vacíos', () => {
     // Suelo: bounds expandidos 150 -> x∈[-150,550] (chunks -1..2), z∈[-150,350] (chunks -1..1) = 12 chunks con 'grass'.
@@ -222,13 +224,13 @@ describe('buildChunks', () => {
 
   test('un edificio que cruza el borde del área con el centroide afuera va al chunk de adentro (sin merges nuevos)', () => {
     // x de −8 a 2: centroide en x = −3 (chunk −1), pero el área empieza en x = 0 (chunk 0)
-    const gs = buildChunks(baseMap({ buildings: [mk('A', sq(10, 20)), mk('X', [[-8, 20], [2, 20], [2, 10], [-8, 10]])] }), fake());
+    const gs = buildChunks(baseMap({ buildings: [mk('A', sq(10, 20)), mk('X', [[-8, 20], [2, 20], [2, 10], [-8, 10]])] }), fake()).groups;
     expect(namesIn(gs, -1, 0)).toEqual(['grass']);
     expect(namesIn(gs, 0, 0)).toEqual(['grass', 'parapet', 'roof', 'wallGroundHouse', 'wallUpper']);
   });
 
   test('shop usa wallGroundShop si es revoque', () => {
-    const gs = buildChunks(baseMap({ buildings: [mk('S', sq(10, 20), { kind: 'shop' }), mk('Ap', sq(50, 20), { kind: 'apartments' })] }), fake());
+    const gs = buildChunks(baseMap({ buildings: [mk('S', sq(10, 20), { kind: 'shop' }), mk('Ap', sq(50, 20), { kind: 'apartments' })] }), fake()).groups;
     expect(namesIn(gs, 0, 0)).toContain('wallGroundShop');
     expect(namesIn(gs, 0, 0)).not.toContain('wallGroundHouse');
   });
@@ -246,7 +248,7 @@ describe('buildChunks', () => {
       return out;
     };
     test('la arista 0 va al merge de wallGroundShop con su tinte; las otras quedan en wallGroundHouse', () => {
-      const gs = buildChunks(baseMap({ buildings: [shop] }), fake());
+      const gs = buildChunks(baseMap({ buildings: [shop] }), fake()).groups;
       const shopQuads = quadsOf(mesh(gs, 'wallGroundShop'));
       const houseQuads = quadsOf(mesh(gs, 'wallGroundHouse'));
       expect(shopQuads).toHaveLength(2); // un cuadrilátero = 2 triángulos
@@ -262,7 +264,7 @@ describe('buildChunks', () => {
       expect(namesIn(gs, 0, 0)).toEqual(['grass', 'parapet', 'roof', 'wallGroundHouse', 'wallGroundShop', 'wallUpper']);
     });
     test('sin tint usa el del edificio; brick en un local de revoque va a brickGround', () => {
-      const gs = buildChunks(baseMap({ buildings: [mk('K', sq(10, 20), { kind: 'shop', facades: [{ edge: 2, ground: 'brick' }] })] }), fake());
+      const gs = buildChunks(baseMap({ buildings: [mk('K', sq(10, 20), { kind: 'shop', facades: [{ edge: 2, ground: 'brick' }] })] }), fake()).groups;
       const brick = quadsOf(mesh(gs, 'brickGround'));
       expect(brick).toHaveLength(2);
       for (const q of brick) {
@@ -273,7 +275,7 @@ describe('buildChunks', () => {
     });
     test('la arista se cuenta sobre el footprint guardado aunque esté en sentido horario', () => {
       const cw = [...sq(10, 20)].reverse(); // arista 0: (10,10) → (20,10)
-      const gs = buildChunks(baseMap({ buildings: [mk('W', cw, { facades: [{ edge: 0, ground: 'shop' }] })] }), fake());
+      const gs = buildChunks(baseMap({ buildings: [mk('W', cw, { facades: [{ edge: 0, ground: 'shop' }] })] }), fake()).groups;
       const q = quadsOf(mesh(gs, 'wallGroundShop'));
       expect(q).toHaveLength(2);
       for (const f of q) expect(f.mid.z).toBeCloseTo(10);
@@ -290,7 +292,7 @@ describe('buildChunks', () => {
   });
 
   test('footway: dentro de un parque no se dibuja; afuera -> sidewalk; pedestrian -> sidewalk', () => {
-    const only = (rs: Road[]) => buildChunks(baseMap({ roads: rs, parks: [park] }), fake()).flatMap((gr) => gr.children as THREE.Mesh[]).filter((m) => m.name !== 'grass');
+    const only = (rs: Road[]) => buildChunks(baseMap({ roads: rs, parks: [park] }), fake()).groups.flatMap((gr) => gr.children as THREE.Mesh[]).filter((m) => m.name !== 'grass');
     expect(only([road('a', 'footway', [[110, 160], [130, 180]], 2, 0)])).toHaveLength(0);
     expect(only([road('b', 'footway', [[10, 60], [30, 60]], 2, 0)]).map((m) => m.name)).toEqual(['sidewalk']);
     expect(only([road('c', 'pedestrian', [[10, 60], [30, 60]], 6, 0)]).map((m) => m.name)).toEqual(['sidewalk']);
@@ -299,7 +301,7 @@ describe('buildChunks', () => {
   });
 
   test('calle con sett: malla cobble a la altura del asfalto y ninguna asphalt; footway con sett sigue en sidewalk', () => {
-    const mk = (rs: Road[]) => buildChunks(baseMap({ roads: rs }), fake()).flatMap((gr) => gr.children as THREE.Mesh[]).filter((m) => m.name !== 'grass');
+    const mk = (rs: Road[]) => buildChunks(baseMap({ roads: rs }), fake()).groups.flatMap((gr) => gr.children as THREE.Mesh[]).filter((m) => m.name !== 'grass');
     const r = { ...road('a', 'residential', [[10, 60], [30, 60]], 8, 2), surface: 'sett' as const };
     const meshes = mk([r]);
     expect(meshes.map((m) => m.name).sort()).toEqual(['cobble', 'sidewalk']);
@@ -309,7 +311,7 @@ describe('buildChunks', () => {
   });
 
   test('capas del suelo: vereda 0,02 < asfalto 0,04 < sendas 0,06', () => {
-    const ys = (rs: Road[]) => Object.fromEntries(buildChunks(baseMap({ roads: rs }), fake()).flatMap((gr) => gr.children as THREE.Mesh[])
+    const ys = (rs: Road[]) => Object.fromEntries(buildChunks(baseMap({ roads: rs }), fake()).groups.flatMap((gr) => gr.children as THREE.Mesh[])
       .filter((m) => m.name !== 'grass').map((m) => [m.name, maxOf(m.geometry, 'position', 1)]));
     expect(ys([road('a', 'residential', [[10, 60], [30, 60]], 8, 2)])).toEqual({ asphalt: expect.closeTo(0.04), sidewalk: expect.closeTo(0.02) });
     expect(ys([road('b', 'pedestrian', [[10, 60], [30, 60]], 6, 0)]).sidewalk).toBeCloseTo(0.06);
@@ -323,7 +325,7 @@ describe('buildChunks', () => {
       road('farfoot', 'footway', [[900, 10], [1000, 10]], 2, 0),
       road('diag', 'service', [[-600, -600], [200, 100]], 4, 0),
     ] });
-    const gs = buildChunks(m, fake());
+    const gs = buildChunks(m, fake()).groups;
     const [lo, hi] = [-150, 550], [zlo, zhi] = [-150, 350]; // bounds ± 150
     for (const mesh of meshes(gs).filter((x) => x.name !== 'grass')) {
       const p = posOf(mesh.geometry);

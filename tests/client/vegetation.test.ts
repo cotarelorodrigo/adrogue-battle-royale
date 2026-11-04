@@ -239,7 +239,7 @@ describe('plazas', () => {
     expect(y).toBeCloseTo(0.06);
 
     // chunks.ts dibuja como vereda exactamente los footway que no son de la plaza
-    const sidewalkArea = buildChunks({ ...map, roads: roads.filter((r) => r.kind === 'footway') }, materials)
+    const sidewalkArea = buildChunks({ ...map, roads: roads.filter((r) => r.kind === 'footway') }, materials).groups
       .flatMap((g) => g.children as THREE.Mesh[]).filter((m) => m.name === 'sidewalk').reduce((s, m) => s + triArea(m.geometry), 0);
     const outside = roads.filter((r) => r.kind === 'footway' && !isParkFootway(r, map.parks));
     expect(sidewalkArea).toBeCloseTo(outside.reduce((s, r) => s + triArea(ribbon(r.points, r.width, 0.06)), 0), 3);

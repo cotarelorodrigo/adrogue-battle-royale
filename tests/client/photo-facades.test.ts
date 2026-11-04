@@ -54,7 +54,7 @@ describe('buildPhotoFacades', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const map = { places: [place([12, 0.1], [20, -10])], buildings: [building] } as unknown as MapData;
-    const group = await buildPhotoFacades(map, [{ placeId: 'p', commonsFile: 'x.jpg', corners: [[0, 0], [1, 0], [1, 1], [0, 1]], widthM: 10, heightM: 3 }], '/', 512, 1);
+    const { group } = await buildPhotoFacades(map, [{ placeId: 'p', commonsFile: 'x.jpg', corners: [[0, 0], [1, 0], [1, 1], [0, 1]], widthM: 10, heightM: 3 }], '/', 512, 1);
     expect(group.children).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(error).not.toHaveBeenCalled();

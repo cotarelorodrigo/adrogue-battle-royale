@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../../shared/geo.ts';
-import type { Building } from '../../shared/mapdata.ts';
+import type { Building, Opening } from '../../shared/mapdata.ts';
 import { cellRect, groundCells, upperCell } from './front-atlas.ts';
 import type { FrontCell } from './front-atlas.ts';
-import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry } from './wall-kit.ts';
-import type { Builder } from './wall-kit.ts';
+import { BAY_W, cutRect, edgeHoles, FLOOR_H, newBuilder, quad, tintColor, toGeometry } from './wall-kit.ts';
+import type { Builder, Rect } from './wall-kit.ts';
 
 /** Toldo sobre la puerta y la vidriera: cae de `topY` (en la pared) a `bottomY` a `depth` m; `inset` m de margen por lado. */
 export const AWNING = { topY: 2.3, bottomY: 2.0, depth: 1.0, inset: 0.2 } as const;
 
-/** Un pedazo de arista de `fp`, recorrido de `a` a `b` en el sentido de la corrida; `n` es la normal hacia afuera. */
-interface Piece { a: Vec2; b: Vec2; len: number; n: Vec2; s0: number; rev: boolean }
+/** Un pedazo de la arista `i` de `fp`, recorrido de `a` a `b` en el sentido de la corrida; `n` es la normal hacia afuera. */
+interface Piece { i: number; a: Vec2; b: Vec2; len: number; n: Vec2; s0: number; rev: boolean }
 interface Run { pieces: Piece[]; length: number }
 
 function makeRun(fp: Vec2[], edges: { i: number; rev: boolean }[]): Run {
@@ -21,7 +21,7 @@ function makeRun(fp: Vec2[], edges: { i: number; rev: boolean }[]): Run {
     const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
     if (len < 1e-6) continue;
     // la normal sale del sentido de fp (antihorario): el de la corrida puede ser el inverso
-    pieces.push({ a: rev ? q : p, b: rev ? p : q, len, n: [-(q[1] - p[1]) / len, (q[0] - p[0]) / len], s0: s, rev });
+    pieces.push({ i, a: rev ? q : p, b: rev ? p : q, len, n: [-(q[1] - p[1]) / len, (q[0] - p[0]) / len], s0: s, rev });
     s += len;
   }
   return { pieces, length: s };
@@ -64,9 +64,11 @@ function face(b: Builder, vs: [number, number, number][], uvs: [number, number][
 
 /**
  * Pared de un frente (y de su esquina) con los módulos del atlas: una cara por bahía y por pedazo de arista.
- * `fp`: la planta antihoraria que usa `extrudeBuilding`; `edgeOf`: índice guardado → índice en `fp`.
+ * `fp`: la planta antihoraria que usa `extrudeBuilding`; `edgeOf`: índice guardado → índice en `fp`. No dibuja nada
+ * adentro de `openings`: lo recortado va a `tapa()` (si viene), con las mismas uv.
  */
-export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => number): THREE.BufferGeometry {
+export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => number, openings: readonly Opening[] = [],
+  tapa?: () => Builder): THREE.BufferGeometry {
   const b = newBuilder(true);
   const f = bd.front;
   if (!f) return toGeometry(b);
@@ -103,6 +105,12 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
   for (let r = 1; r < floors && r * FLOOR_H < height - 1e-6; r++) rows.push({ y0: r * FLOOR_H, y1: Math.min((r + 1) * FLOOR_H, height), groundRow: false });
   const band = height - bandY > 1e-6 ? { y0: bandY, y1: height, groundRow: false } : null;
 
+  // los huecos de cada pedazo, en metros de su corrida
+  const holes = edgeHoles(bd.footprint, fp, edgeOf, openings);
+  const holesOf = (p: Piece): Rect[] => (holes.get(p.i) ?? []).map((h) => (p.rev
+    ? { ...h, s0: p.s0 + p.len - h.s1, s1: p.s0 + p.len - h.s0 }
+    : { ...h, s0: p.s0 + h.s0, s1: p.s0 + h.s1 }));
+
   const wall = (run: Run, isMain: boolean): void => {
     const doorBay = !isMain ? -1
       : f.puerta === 'inicio' ? 0
@@ -113,11 +121,16 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
       eachSpan(run, 0, run.length, (p, sa, sb, bay, bw) => {
         const cell: FrontCell = row.groundRow ? (bay === doorBay ? door : rest) : isBand ? bandCell : upper;
         const r = cellRect(cell);
-        const vTop = r.v0 + ((r.v1 - r.v0) * (row.y1 - row.y0)) / FLOOR_H; // alturas parciales (banda, edificio bajo): se recorta
-        const ua = uAt(r, p, sa, bay, bw), ub = uAt(r, p, sb, bay, bw);
-        const [pa, pb] = [at(p, sa), at(p, sb)];
-        face(b, [[pa[0], row.y0, pa[1]], [pb[0], row.y0, pb[1]], [pb[0], row.y1, pb[1]], [pa[0], row.y1, pa[1]]],
-          [[ua, r.v0], [ub, r.v0], [ub, vTop], [ua, vTop]], [p.n[0], 0, p.n[1]], row.groundRow ? groundColor : tint);
+        const v = (y: number): number => r.v0 + ((r.v1 - r.v0) * (y - row.y0)) / FLOOR_H; // alturas parciales (banda, edificio bajo): se recorta
+        const piece = (to: Builder, q: Rect): void => {
+          const ua = uAt(r, p, q.s0, bay, bw), ub = uAt(r, p, q.s1, bay, bw);
+          const [pa, pb] = [at(p, q.s0), at(p, q.s1)];
+          face(to, [[pa[0], q.y0, pa[1]], [pb[0], q.y0, pb[1]], [pb[0], q.y1, pb[1]], [pa[0], q.y1, pa[1]]],
+            [[ua, v(q.y0)], [ub, v(q.y0)], [ub, v(q.y1)], [ua, v(q.y1)]], [p.n[0], 0, p.n[1]], row.groundRow ? groundColor : tint);
+        };
+        const { solid, cut } = cutRect({ s0: sa, s1: sb, y0: row.y0, y1: row.y1 }, holesOf(p));
+        for (const q of solid) piece(b, q);
+        if (tapa) for (const q of cut) piece(tapa(), q);
       });
     }
   };

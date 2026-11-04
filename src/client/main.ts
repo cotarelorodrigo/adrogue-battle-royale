@@ -9,6 +9,7 @@ import { Group } from 'three';
 import { buildCollisionWorld } from '../shared/collision.ts';
 import { AMMO_BOX, AMMO_MAX, newGun, WEAPONS } from '../shared/combat.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
+import { buildInteriors } from '../shared/interiors/index.ts';
 import type { MapData } from '../shared/mapdata.ts';
 import { newMatch, stepMatch } from '../shared/match.ts';
 import type { MatchEvent, MatchInput, MatchState } from '../shared/match.ts';
@@ -36,6 +37,8 @@ import { createHud, FpsMeter } from './ui/hud.ts';
 import { createOverlay, showFatal } from './ui/overlay.ts';
 import type { Overlay } from './ui/overlay.ts';
 import { buildChunks } from './world/chunks.ts';
+import { exteriorParts } from './world/interiors/exterior.ts';
+import { createInteriorViews } from './world/interiors/view.ts';
 import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
 import { buildPhotoFacades } from './world/photo-facades.ts';
@@ -94,6 +97,7 @@ if (debug) {
     skipTo: (t) => need().skipTo(t),
     newMatch: (seed, n) => need().newMatch(seed, n),
     counters: () => need().counters(),
+    interiorsDrawn: () => need().interiorsDrawn(),
     ready,
     photosReady,
   });
@@ -211,12 +215,26 @@ async function run(boot: Boot): Promise<void> {
   ]);
   let materials: WorldMaterials = initialMaterials;
   if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
-  scene.addChunks(buildChunks(map, materials));
+  // Los interiores: huecos en las fachadas (con sus tapas), lo de afuera con el edificio y lo de adentro, de cerca.
+  const interiors = buildInteriors(map);
+  const chunks = buildChunks(map, materials, interiors);
+  scene.addChunks(chunks.groups);
+  const interiorViews = createInteriorViews(interiors, materials, quality, chunks.tapas);
+  scene.addStatic([interiorViews.group]);
+  const outSigns = interiors.flatMap((i) => {
+    const parts = exteriorParts(i);
+    parts.geometry.dispose(); // la geometría ya va en el chunk: acá solo hacen falta los carteles
+    return parts.signs;
+  });
   const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark);
-  // Las fotos (~1,7 MB y la rectificación) se suman cuando llegan: el juego no las espera.
-  buildPhotoFacades(map, photoFacadeData as PhotoFacade[], import.meta.env.BASE_URL, QUALITY[quality].textureSize, QUALITY[quality].anisotropy)
-    .then((group) => {
-      if (!boot.lost) scene.addStatic([group]);
+  // Las fotos (~1,7 MB y la rectificación) se suman cuando llegan: el juego no las espera. Se recortan en las aberturas
+  // de los interiores, y lo recortado tapa los huecos de lejos.
+  const photoOpenings = new Map(map.interiors.map((i) => [i.placeId, i.openings]));
+  buildPhotoFacades(map, photoFacadeData as PhotoFacade[], import.meta.env.BASE_URL, QUALITY[quality].textureSize, QUALITY[quality].anisotropy, photoOpenings)
+    .then(({ group, tapas }) => {
+      if (boot.lost) return;
+      scene.addStatic([group]);
+      for (const [placeId, meshes] of tapas) interiorViews.addTapas(placeId, meshes);
     })
     .catch((e: unknown) => console.warn('Sin fotos de fachada:', e))
     .finally(markPhotosReady);
@@ -226,7 +244,7 @@ async function run(boot: Boot): Promise<void> {
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
-    buildSigns(map.places, map.signs),
+    buildSigns(map.places, [...map.signs, ...outSigns]),
     ...trees,
     ...climbProps,
   ]);
@@ -336,6 +354,7 @@ async function run(boot: Boot): Promise<void> {
       return;
     }
     scene.setMaterials(next);
+    interiorViews.setQuality(q); // vuelve a armar con los materiales nuevos, si cambia el detalle
     disposeMaterials(materials);
     materials = next;
     quality = q;
@@ -412,6 +431,7 @@ async function run(boot: Boot): Promise<void> {
       }
       reloadSound(events, match); // si la recarga se cancela (o se deja la partida), lo que faltaba de su sonido no suena
     }
+    interiorViews.update(scene.camera);
     scene.render();
     if (f) {
       viewmodel.render(); // encima del mundo, en el mismo cuadro: renderer.info suma las dos pasadas
@@ -481,6 +501,7 @@ async function run(boot: Boot): Promise<void> {
     counters: () => (combat.visible
       ? { decals: effects.decals, tracers: effects.tracers, dummies: dummies.mesh.count }
       : { decals: 0, tracers: 0, dummies: 0 }),
+    interiorsDrawn: () => interiorViews.drawn(),
   };
   if (bench) overlay.bench();
   else overlay.ready(map.places);

@@ -1,10 +1,13 @@
 // Fachadas con foto: cada foto de Commons se rectifica (homografía inversa, muestreo bilineal) y se pega como un cuadro
-// propio sobre una arista del edificio del lugar, sin tocar el merge del chunk (un draw call por foto).
+// propio sobre una arista del edificio del lugar, sin tocar el merge del chunk (un draw call por foto). Si el lugar
+// tiene interior, la foto se recorta en sus aberturas y el pedazo recortado es la tapa (D5, D6).
 import * as THREE from 'three';
 import type { Vec2 } from '../../shared/geo.ts';
 import { applyHomography, computeHomography } from '../../shared/homography.ts';
 import type { Quad } from '../../shared/homography.ts';
-import type { Building, MapData, Place } from '../../shared/mapdata.ts';
+import type { Building, MapData, Opening, Place } from '../../shared/mapdata.ts';
+import { cutRect, newBuilder, quad, toGeometry } from './wall-kit.ts';
+import type { Builder, Rect } from './wall-kit.ts';
 
 export interface PhotoFacade {
   placeId: string;
@@ -31,6 +34,9 @@ export interface FacadeQuad {
   u: [number, number];
   /** Tope vertical de la foto rectificada que se muestra (desde abajo, 0–1). */
   vMax: number;
+  /** La arista (de la planta guardada) y el tramo de ella que cubre el cuadro, en metros desde su primera punta. */
+  edge: number;
+  s: [number, number];
 }
 
 /**
@@ -70,7 +76,26 @@ export function facadeQuad(building: Building, place: Place, f: Pick<PhotoFacade
     yaw: Math.atan2(normal[0], normal[1]),
     u: [k, 1 - k],
     vMax: height / f.heightM,
+    edge: index,
+    s: [s - width / 2, s + width / 2],
   };
+}
+
+/** El cuadro de `q` en su marco (x a lo largo de la arista, centrado; y desde el medio del alto; frente hacia +z), sin
+ *  los huecos de `holes` (en metros de la arista y de alto): lo que queda y lo recortado, con las uv de la foto. */
+function photoGeometry(q: FacadeQuad, holes: Rect[]): { photo: THREE.BufferGeometry; tapa: THREE.BufferGeometry | null } {
+  const mid = (q.s[0] + q.s[1]) / 2;
+  const piece = (b: Builder, r: Rect): void => {
+    const [x0, x1, y0, y1] = [r.s0 - mid, r.s1 - mid, r.y0 - q.height / 2, r.y1 - q.height / 2];
+    const u = (s: number): number => q.u[0] + ((s - q.s[0]) / q.width) * (q.u[1] - q.u[0]);
+    const v = (y: number): number => (y / q.height) * q.vMax;
+    quad(b, [[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0]], [[u(r.s0), v(r.y0)], [u(r.s1), v(r.y0)], [u(r.s1), v(r.y1)], [u(r.s0), v(r.y1)]], [0, 0, 1]);
+  };
+  const { solid, cut } = cutRect({ s0: q.s[0], s1: q.s[1], y0: 0, y1: q.height }, holes);
+  const [photo, tapa] = [newBuilder(false), newBuilder(false)];
+  for (const r of solid) piece(photo, r);
+  for (const r of cut) piece(tapa, r);
+  return { photo: toGeometry(photo), tapa: cut.length > 0 ? toGeometry(tapa) : null };
 }
 
 /**
@@ -125,13 +150,15 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 
 /**
  * Un cuadro por foto, con la foto rectificada a `size` px de ancho. Una foto que no carga deja la fachada lisa y avisa con
- * console.warn.
+ * console.warn. `openings` (por placeId): las aberturas de los interiores; las de la arista de una foto se le recortan,
+ * y lo recortado vuelve en `tapas` (por placeId), con el mismo material, en el grupo de las fotos.
  */
 export async function buildPhotoFacades(
-  map: MapData, facades: PhotoFacade[], baseUrl: string, size: number, anisotropy: number,
-): Promise<THREE.Group> {
+  map: MapData, facades: PhotoFacade[], baseUrl: string, size: number, anisotropy: number, openings: Map<string, Opening[]> = new Map(),
+): Promise<{ group: THREE.Group; tapas: Map<string, THREE.Mesh[]> }> {
   const group = new THREE.Group();
   group.name = 'photoFacades';
+  const tapas = new Map<string, THREE.Mesh[]>();
   await Promise.all(facades.map(async (f) => {
     try {
       const place = map.places.find((p) => p.id === f.placeId);
@@ -143,19 +170,23 @@ export async function buildPhotoFacades(
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = anisotropy;
-      const geometry = new THREE.PlaneGeometry(q.width, q.height);
-      const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, q.u[0] + uv.getX(i) * (q.u[1] - q.u[0]), uv.getY(i) * q.vMax);
+      const holes = (openings.get(f.placeId) ?? []).filter((o) => o.edge === q.edge).map((o): Rect => ({ s0: o.s0, s1: o.s1, y0: o.y0, y1: o.y1 }));
+      const { photo, tapa } = photoGeometry(q, holes);
       // Sin luces: la foto ya trae su iluminación.
       const material = new THREE.MeshBasicMaterial({ map: texture, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.name = `photoFacade-${f.placeId}`;
-      mesh.position.set(q.center[0], q.height / 2, q.center[1]);
-      mesh.rotation.y = q.yaw;
-      group.add(mesh);
+      const addMesh = (geometry: THREE.BufferGeometry, name: string): THREE.Mesh => {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = name;
+        mesh.position.set(q.center[0], q.height / 2, q.center[1]);
+        mesh.rotation.y = q.yaw;
+        group.add(mesh);
+        return mesh;
+      };
+      addMesh(photo, `photoFacade-${f.placeId}`);
+      if (tapa) tapas.set(f.placeId, [addMesh(tapa, `photoFacade-${f.placeId}:tapa`)]);
     } catch (e) {
       console.warn(`Sin foto de fachada para ${f.placeId}:`, e);
     }
   }));
-  return group;
+  return { group, tapas };
 }

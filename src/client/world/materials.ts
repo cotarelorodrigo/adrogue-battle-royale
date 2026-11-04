@@ -4,7 +4,8 @@ import type { Quality } from '../render/quality.ts';
 import { composeFacadeTile } from './facades.ts';
 import { composeFrontAtlas, frontMaterial, packAtlas } from './front-atlas.ts';
 import type { FacadeStyle } from './facades.ts';
-import type { WorldMaterials } from './types.ts';
+import { interiorTextures } from './interiors/textures.ts';
+import type { InteriorKey, WorldMaterials } from './types.ts';
 
 export type { WorldMaterials } from './types.ts';
 
@@ -142,7 +143,27 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
   frontMap.anisotropy = anisotropy;
   frontMap.needsUpdate = true;
 
+  // Interiores: sin sol, la luz va horneada en el color por vértice (interiors/bake.ts), en todas las calidades.
+  const inTex = interiorTextures(size, { revoque: img('revoque', 'diff'), metal: img('metal', 'diff'), ladrillo: img('ladrillo', 'diff') });
+  for (const t of Object.values(inTex)) t.anisotropy = anisotropy;
+  const baked = (map: THREE.Texture | null): THREE.Material => new THREE.MeshBasicMaterial({ map, vertexColors: true });
+  const interior: Record<InteriorKey, THREE.Material> = {
+    in_liso: baked(inTex.liso),
+    in_porcelanato: baked(inTex.porcelanato),
+    in_madera: baked(inTex.madera),
+    in_machimbre: baked(inTex.machimbre),
+    in_baldosa: baked(inTex.baldosa),
+    in_ceramico: baked(inTex.ceramico),
+    in_tela: baked(inTex.tela),
+    in_metal: baked(inTex.metal),
+    in_ladrillo: baked(inTex.ladrillo),
+    in_vidrio: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.25, depthWrite: false, side: THREE.DoubleSide }),
+    in_luz: baked(null), // lo que brilla: su color pleno, sin sombra horneada
+    in_mueble: baked(null),
+  };
+
   return {
+    ...interior,
     wallGroundHouse: facade('revoque', 'house'),
     wallGroundShop: facade('revoque', 'shop'),
     wallUpper: facade('revoque', 'upper'),

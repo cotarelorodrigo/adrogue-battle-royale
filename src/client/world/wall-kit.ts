@@ -1,5 +1,7 @@
 // Piezas comunes de las paredes (geometry.ts, fronts.ts, front-atlas.ts): hoja sin imports locales, para no hacer ciclos.
 import * as THREE from 'three';
+import type { Vec2 } from '../../shared/geo.ts';
+import type { Opening } from '../../shared/mapdata.ts';
 
 /** Alto de un piso (copia de mapgen/buildings.ts; el cliente no importa mapgen). */
 export const FLOOR_H = 3.2;
@@ -31,6 +33,65 @@ export function vert(b: Builder, p: [number, number, number], n: [number, number
 export function quad(b: Builder, vs: [number, number, number][], uvs: [number, number][], n: [number, number, number], c?: THREE.Color): void {
   const i = vs.map((p, k) => vert(b, p, n, uvs[k], c));
   b.idx.push(i[0], i[1], i[2], i[0], i[2], i[3]);
+}
+
+/** Un rectángulo sobre una cara: `s` a lo largo de ella (m) e `y` de alto. */
+export interface Rect { s0: number; s1: number; y0: number; y1: number }
+
+/** `r` partido por los huecos `holes`: lo que queda (`solid`) y lo que se saca (`cut`, cada hueco adentro de `r`), en
+ *  rectángulos. Se parte en columnas por las puntas de los huecos; dos columnas seguidas con los mismos tramos se
+ *  juntan. */
+export function cutRect(r: Rect, holes: readonly Rect[]): { solid: Rect[]; cut: Rect[] } {
+  const hs = holes
+    .map((h) => ({ s0: Math.max(r.s0, h.s0), s1: Math.min(r.s1, h.s1), y0: Math.max(r.y0, h.y0), y1: Math.min(r.y1, h.y1) }))
+    .filter((h) => h.s1 - h.s0 > 1e-9 && h.y1 - h.y0 > 1e-9);
+  if (hs.length === 0) return { solid: [r], cut: [] };
+  const marks = [...new Set([r.s0, r.s1, ...hs.flatMap((h) => [h.s0, h.s1])])].sort((a, b) => a - b);
+  const out = { solid: [] as Rect[], cut: [] as Rect[] };
+  const running = new Map<string, Rect & { kind: 'solid' | 'cut' }>();
+  const flush = (key: string, s: number): void => {
+    const x = running.get(key)!;
+    if (s - x.s0 > 1e-9) out[x.kind].push({ s0: x.s0, s1: s, y0: x.y0, y1: x.y1 });
+    running.delete(key);
+  };
+  for (let j = 0; j + 1 < marks.length; j++) {
+    const [sa, sb] = [marks[j], marks[j + 1]];
+    // los tramos de alto tapados en esta columna, unidos
+    const over = hs.filter((h) => h.s0 <= sa + 1e-9 && h.s1 >= sb - 1e-9).map((h) => [h.y0, h.y1] as const).sort((a, b) => a[0] - b[0]);
+    const spans: { y0: number; y1: number; kind: 'solid' | 'cut' }[] = [];
+    let y = r.y0;
+    for (const [lo, hi] of over) {
+      if (hi <= y) continue;
+      if (lo > y) spans.push({ y0: y, y1: lo, kind: 'solid' });
+      const top = spans.at(-1);
+      if (top?.kind === 'cut' && Math.abs(top.y1 - Math.max(lo, y)) < 1e-9) top.y1 = hi;
+      else spans.push({ y0: Math.max(lo, y), y1: hi, kind: 'cut' });
+      y = hi;
+    }
+    if (r.y1 > y) spans.push({ y0: y, y1: r.y1, kind: 'solid' });
+    const keys = new Set(spans.map((p) => `${p.kind}:${p.y0}:${p.y1}`));
+    for (const key of [...running.keys()]) if (!keys.has(key)) flush(key, sa);
+    for (const p of spans) {
+      const key = `${p.kind}:${p.y0}:${p.y1}`;
+      if (!running.has(key)) running.set(key, { s0: sa, s1: sa, ...p });
+    }
+  }
+  for (const key of [...running.keys()]) flush(key, r.s1);
+  return out;
+}
+
+/** Los huecos de `openings` por arista de `fp` (la planta antihoraria que dibuja; `edgeOf`: arista guardada → de fp),
+ *  con `s` en metros desde fp[i]. Si fp es la planta guardada dada vuelta, cada arista se recorre al revés. */
+export function edgeHoles(stored: Vec2[], fp: Vec2[], edgeOf: (e: number) => number, openings: readonly Opening[]): Map<number, Rect[]> {
+  const out = new Map<number, Rect[]>();
+  for (const o of openings) {
+    const i = edgeOf(o.edge);
+    const [a, c] = [fp[i], fp[(i + 1) % fp.length]];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    const [s0, s1] = fp === stored ? [o.s0, o.s1] : [len - o.s1, len - o.s0];
+    out.set(i, [...(out.get(i) ?? []), { s0, s1, y0: o.y0, y1: o.y1 }]);
+  }
+  return out;
 }
 
 const tintCache = new Map<string, THREE.Color>();

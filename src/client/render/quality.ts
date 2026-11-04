@@ -15,6 +15,9 @@ export interface QualityPreset {
   treeDensity: number;
   anisotropy: number;
   textureSize: 512 | 1024;
+  /** Interiores (D7): se dibujan los que están a menos de `radius` m de la cámara y en pantalla, hasta `max` (los más
+   *  cercanos), con los muebles de detalle hasta `detail` (y la luz horneada más fina con detalle 2). */
+  interiors: { radius: number; max: number; detail: 1 | 2 };
 }
 
 /** camera.far queda esto (m) más allá de drawDistance, donde la niebla ya tapa todo. */
@@ -22,11 +25,11 @@ export const FAR_PAST_FOG = 50;
 
 export const QUALITY: Record<Quality, QualityPreset> = {
   baja: { pixelRatioMax: 0.75, shadows: false, dumpsterShadows: false, dummyShadows: false, dropRadius: 80, drawDistance: 250, treeDensity: 0.5,
-    anisotropy: 1, textureSize: 512 },
+    anisotropy: 1, textureSize: 512, interiors: { radius: 60, max: 1, detail: 1 } },
   media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, dumpsterShadows: false, dummyShadows: false, dropRadius: 100,
-    drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024 },
+    drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024, interiors: { radius: 60, max: 2, detail: 2 } },
   alta: { pixelRatioMax: 2, shadows: { mapSize: 2048, range: 150 }, dumpsterShadows: true, dummyShadows: true, dropRadius: 120,
-    drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024 },
+    drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024, interiors: { radius: 60, max: 3, detail: 2 } },
 };
 
 /** Cómo se llama cada calidad en pantalla (menú de Esc y benchmark). */

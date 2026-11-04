@@ -2,16 +2,18 @@ import * as THREE from 'three';
 import { PARAPET_H, parapetEdges } from '../../shared/collision.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import { ensureCCW } from '../../shared/geo.ts';
-import type { Building, FacadeGround } from '../../shared/mapdata.ts';
+import type { Building, FacadeGround, Opening } from '../../shared/mapdata.ts';
 import { frontGeometry } from './fronts.ts';
-import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
+import type { WorldMaterials } from './types.ts';
+import { BAY_W, cutRect, edgeHoles, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
+import type { Builder, Rect } from './wall-kit.ts';
 
 export { FLOOR_H, BAY_W };
 const MITER_LIMIT = 2;
 const PLANAR_UV = 4;
 
 /** Triangula un polígono simple (x,z) y emite triángulos con normal +y. Los vértices ya están en b (en orden). */
-function triangulateUp(poly: Vec2[], base: number, idx: number[]): void {
+export function triangulateUp(poly: Vec2[], base: number, idx: number[]): void {
   // Pasamos (x, −z): así un polígono antihorario desde arriba también lo es en el plano 2D.
   const contour = poly.map(([x, z]) => new THREE.Vector2(x, -z));
   for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(contour, [])) {
@@ -22,8 +24,10 @@ function triangulateUp(poly: Vec2[], base: number, idx: number[]): void {
   }
 }
 
-/** `colorOf(i)`: color de la arista i de `fp`, o null para saltearla (va en otra banda). */
-function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i: number) => THREE.Color | null): THREE.BufferGeometry {
+/** `colorOf(i)`: color de la arista i de `fp`, o null para saltearla (va en otra banda). Los huecos de cada arista
+ *  (`holes`) no se dibujan: lo recortado va a `tapa()`, con las mismas uv. */
+function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i: number) => THREE.Color | null,
+  holes: Map<number, Rect[]>, tapa: () => Builder): THREE.BufferGeometry {
   const b = newBuilder(true);
   for (let i = 0; i < fp.length; i++) {
     const color = colorOf(i);
@@ -33,9 +37,15 @@ function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i
     const len = Math.hypot(dx, dz);
     if (len < 1e-6) continue;
     const n: [number, number, number] = [-dz / len, 0, dx / len];
-    const u0 = cum[i] / BAY_W, u1 = (cum[i] + len) / BAY_W;
-    quad(b, [[a[0], y0, a[1]], [c[0], y0, c[1]], [c[0], y1, c[1]], [a[0], y1, a[1]]],
-      [[u0, y0 / FLOOR_H], [u1, y0 / FLOOR_H], [u1, y1 / FLOOR_H], [u0, y1 / FLOOR_H]], n, color);
+    const piece = (to: Builder, r: Rect): void => {
+      const [p, q] = [[a[0] + (dx * r.s0) / len, a[1] + (dz * r.s0) / len], [a[0] + (dx * r.s1) / len, a[1] + (dz * r.s1) / len]];
+      const u0 = (cum[i] + r.s0) / BAY_W, u1 = (cum[i] + r.s1) / BAY_W;
+      quad(to, [[p[0], r.y0, p[1]], [q[0], r.y0, q[1]], [q[0], r.y1, q[1]], [p[0], r.y1, p[1]]],
+        [[u0, r.y0 / FLOOR_H], [u1, r.y0 / FLOOR_H], [u1, r.y1 / FLOOR_H], [u0, r.y1 / FLOOR_H]], n, color);
+    };
+    const { solid, cut } = cutRect({ s0: 0, s1: len, y0, y1 }, holes.get(i) ?? []);
+    for (const r of solid) piece(b, r);
+    for (const r of cut) piece(tapa(), r);
   }
   return toGeometry(b);
 }
@@ -64,15 +74,30 @@ function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color):
   return toGeometry(b);
 }
 
+/** El material de la planta baja de cada tipo de fachada de lugar (`bd.facades`). */
+export const GROUND_MAT: Record<FacadeGround, keyof WorldMaterials> = { shop: 'wallGroundShop', house: 'wallGroundHouse', brick: 'brickGround' };
+
+/** Los materiales de las bandas de pared de un edificio. Un lote dibuja su frente con el atlas (`front`) y sus
+ *  medianeras y fondos con revoque liso teñido, sin ventanas (`parapet`). */
+export function wallMaterials(bd: Building): { ground: keyof WorldMaterials; upper: keyof WorldMaterials } {
+  if (bd.front) return { ground: 'parapet', upper: 'parapet' };
+  const brick = bd.wall === 'brick';
+  return { ground: brick ? 'brickGround' : bd.kind === 'house' ? 'wallGroundHouse' : 'wallGroundShop', upper: brick ? 'brickUpper' : 'wallUpper' };
+}
+
 /**
  * `walls.ground` es la planta baja de las aristas comunes; las de `bd.facades` van aparte en `walls.overrides`, una
  * geometría por tipo de planta baja (el que dibuja las suma al merge de ese material, sin draw calls nuevos).
  * Un lote (`bd.front`) saca de ground/upper las aristas de su frente y su esquina: las dibuja `walls.front`.
+ * Las paredes no dibujan nada adentro de `openings` (las aberturas de su interior, en cualquier arista): lo recortado
+ * vuelve en `tapas`, una geometría por material de pared (wallMaterials, GROUND_MAT o `front`), para taparlas de lejos
+ * (D6).
  */
-export function extrudeBuilding(bd: Building): {
+export function extrudeBuilding(bd: Building, openings: readonly Opening[] = []): {
   walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry; front: THREE.BufferGeometry; overrides: { ground: FacadeGround; geometry: THREE.BufferGeometry }[] };
   roof: THREE.BufferGeometry;
   parapet: THREE.BufferGeometry;
+  tapas: Partial<Record<keyof WorldMaterials, THREE.BufferGeometry>>;
 } {
   const fp = ensureCCW(bd.footprint);
   const color = tintColor(bd.tint);
@@ -100,20 +125,32 @@ export function extrudeBuilding(bd: Building): {
 
   const groundH = Math.min(FLOOR_H, bd.height);
   const grounds = [...new Set([...own.values()].map((o) => o.ground))].sort();
+  const holes = edgeHoles(bd.footprint, fp, edgeOf, openings);
+  const mats = wallMaterials(bd);
+  const tapaBuilders = new Map<keyof WorldMaterials, Builder>();
+  const tapa = (mat: keyof WorldMaterials) => (): Builder => {
+    let t = tapaBuilders.get(mat);
+    if (!t) tapaBuilders.set(mat, (t = newBuilder(true)));
+    return t;
+  };
+  const walls = {
+    ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color), holes, tapa(mats.ground)),
+    // edificio más bajo que un piso: sin banda superior (geometría vacía)
+    upper: bd.height > FLOOR_H
+      ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : color), holes, tapa(mats.upper))
+      : toGeometry(newBuilder(true)),
+    front: bd.front ? frontGeometry(bd, fp, edgeOf, openings, tapa('front')) : toGeometry(newBuilder(true)),
+    overrides: grounds.map((ground) => ({
+      ground,
+      geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }, holes, tapa(GROUND_MAT[ground])),
+    })),
+  };
   return {
-    walls: {
-      ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color)),
-      // edificio más bajo que un piso: sin banda superior (geometría vacía)
-      upper: bd.height > FLOOR_H ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : color)) : toGeometry(newBuilder(true)),
-      front: bd.front ? frontGeometry(bd, fp, edgeOf) : toGeometry(newBuilder(true)),
-      overrides: grounds.map((ground) => ({
-        ground,
-        geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }),
-      })),
-    },
+    walls,
     roof: toGeometry(rb),
     // un relleno de hueco (mapgen/pockets.ts) es un parche de techo entre vecinos: sin pretil propio
     parapet: bd.fill ? toGeometry(newBuilder(true)) : parapetRing(fp, cum, bd.height, color),
+    tapas: Object.fromEntries([...tapaBuilders].map(([mat, t]) => [mat, toGeometry(t)])),
   };
 }
 

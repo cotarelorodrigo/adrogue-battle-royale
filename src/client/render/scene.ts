@@ -36,6 +36,8 @@ const CULL_PAD = CHUNK * 0.71;
 
 export interface GameScene {
   readonly renderer: THREE.WebGLRenderer;
+  /** La cámara del mundo (la mueve update): la miran las vistas de los interiores. */
+  readonly camera: THREE.PerspectiveCamera;
   addChunks(groups: THREE.Group[]): void;
   /** Objetos de todo el mapa (estación, plazas, árboles, carteles, props): sin culling por chunk, solo el de three. */
   addStatic(objects: THREE.Object3D[]): void;
@@ -153,6 +155,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
 
   return {
     renderer,
+    camera,
     addChunks(groups) {
       for (const group of groups) {
         const [i, j] = group.userData.chunk as [number, number];

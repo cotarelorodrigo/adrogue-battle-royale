@@ -386,10 +386,13 @@ export class Kit {
         if (polygon.length < 3 || polygonArea(polygon) < 1e-6) return;
         // se tapan la cara de afuera, las puntas contra la pared vecina y lo que quedó sobre una arista vecina
         const along = (q: Vec2): number => dot(sub(q, a), e);
-        const onClip = (q: Vec2): boolean => clips.some((h) => Math.abs(dot(sub(q, h.p), h.n)) < 1e-6);
+        // las dos puntas sobre la misma recta de recorte (en una esquina de 90° puede haber un recorte por redondeo en
+        // cada punta: una cara que va de una recta a la otra, como la de adentro, no queda sobre ninguna)
+        const onClip = (p: Vec2, q: Vec2): boolean =>
+          clips.some((h) => Math.abs(dot(sub(p, h.p), h.n)) < 1e-6 && Math.abs(dot(sub(q, h.p), h.n)) < 1e-6);
         const hide = polygon.map((_, i) => i).filter((i) => {
           const [p, q] = [polygon[i], polygon[(i + 1) % polygon.length]];
-          if (i === 0 || (onClip(p) && onClip(q))) return true;
+          if (i === 0 || onClip(p, q)) return true;
           return [0, len].some((x) => (x === 0 ? s0 <= EPS : s1 >= len - EPS) && Math.abs(along(p) - x) < 1e-6 && Math.abs(along(q) - x) < 1e-6);
         });
         // un pedazo de esquina más fino que la pared (una abertura pegada a una esquina aguda) es relleno, como la cometa

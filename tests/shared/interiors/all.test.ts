@@ -41,6 +41,27 @@ describe.each(interiors.map((i) => [i.placeId, i] as const))('%s', (id, i) => {
 
   test('validateInterior da []', () => expect(validateInterior(i)).toEqual([]));
 
+  // `hide` es lo que no se dibuja: una pared de afuera esconde la cara de afuera (la 0), las puntas y lo que queda sobre
+  // una arista vecina, nunca la cara de adentro (la paralela a la 0, del lado de la planta). En una esquina de 90° el
+  // producto que decide el recorte puede dar un positivo de redondeo: las dos puntas de la cara de adentro quedan cada
+  // una sobre una recta de recorte distinta, y eso no es "sobre una arista vecina".
+  test('ninguna pared de afuera esconde su cara de adentro', () => {
+    const hidden: string[] = [];
+    for (const x of i.blocks.filter((y) => !y.out && (y.role === 'pared' || y.role === 'dintel') && y.hide?.includes(0))) {
+      const [a, c] = [x.polygon[0], x.polygon[1]];
+      const l = Math.hypot(c[0] - a[0], c[1] - a[1]);
+      const across = (r: Vec2): number => ((r[0] - a[0]) * (c[1] - a[1]) - (r[1] - a[1]) * (c[0] - a[0])) / l;
+      for (const k of x.hide!) {
+        const [p, q] = [x.polygon[k], x.polygon[(k + 1) % x.polygon.length]];
+        const parallel = Math.abs(across(q) - across(p)) < 1e-6;
+        if (k !== 0 && parallel && Math.abs(across(p)) > 0.05 && Math.hypot(q[0] - p[0], q[1] - p[1]) > 0.05) {
+          hidden.push(`${x.role} ${JSON.stringify(x.polygon.map((r) => r.map(fmt)))}, cara ${k}`);
+        }
+      }
+    }
+    expect(hidden).toEqual([]);
+  });
+
   // Hasta que el lugar tenga su plan, una puerta de un nivel ≥ publicFloors da al bloque cerrado (D13) y no se camina:
   // hoy es solo la del piso 1 del Guernica (su balcón y la planta alta llegan en la tarea 9, que sube publicFloors a 2).
   test('cada puerta de un piso público: enterDoor termina adentro y apoyado, a la altura de su nivel', () => {
