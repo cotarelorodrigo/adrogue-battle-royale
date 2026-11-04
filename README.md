@@ -69,6 +69,65 @@ lugar, agregale `facade` a su entrada en `data/places.json`; los dos campos son 
 Plazas y monumentos no llevan `facade` (no tienen edificio). Un valor que no está en la lista corta el `build:map` con
 el lugar y el campo que falló.
 
+## Corregir un frente de Esteban Adrogué
+
+Las seis veredas de Esteban Adrogué entre Mitre y Espora están relevadas local por local en `data/frentes.json`.
+Cada lote es un edificio propio con sus colores, su planta baja y su cartel. Para corregir uno (un color, un nombre, un
+local que cerró):
+
+1. Editá `data/frentes.json`.
+2. Corré `npm run build:map`.
+3. Mirá el resultado con `npm run dev` y commiteá el JSON junto con `public/map/adrogue.map.json`.
+
+El archivo tiene `estilos` (lotes de base reutilizables) y `calles`. Cada calle tiene `calle`, `calzada`
+(`"empedrado"` o `"asfalto"`) y `frentes`. Cada frente es una vereda de una cuadra:
+
+| Campo del frente | Qué es |
+|---|---|
+| `id` | nombre único, por ejemplo `ea-mitre-pellerano-s`; los edificios se llaman `<id>-1`, `<id>-2`… |
+| `desde`, `hasta` | las calles transversales con el nombre de OSM (`"Benigno Macías"`, no `"Macías"`); los lotes van en ese orden |
+| `vereda` | `norte`, `sur`, `este` u `oeste` |
+| `fecha` | `AAAA-MM` de las imágenes que se miraron |
+| `osmAusentes` | locales que OSM ubica sobre esta vereda y que ya no están (ver los avisos más abajo) |
+| `lotes` | la lista de lotes, de `desde` a `hasta` |
+
+| Campo del lote | Valores | Qué es |
+|---|---|---|
+| `ancho` | metros | el ancho sobre la vereda; se escalan todos juntos para que sumen el largo de la cuadra |
+| `pisos` | 0 a 20 | la altura (3,2 m por piso + 0,6 m); `0` es un terreno sin edificio (pasaje, plazoleta) |
+| `fondo`, `retiro` | metros (15 y 0) | cuánto entra el edificio en la manzana y cuánto se separa de la vereda |
+| `color`, `colorPB` | `#rrggbb` | la fachada y la planta baja (sin `colorPB`, la planta baja usa `color`) |
+| `material` | `revoque`, `ladrillo` | la textura de los pisos de arriba |
+| `pb` | `vidriera`, `persiana`, `porton`, `puerta`, `banco`, `acceso`, `pared` | la planta baja |
+| `arriba` | `ventanas`, `balcones`, `vidriado`, `ciego` | los pisos de arriba |
+| `puerta` | `inicio`, `medio`, `fin` | dónde va la puerta del local |
+| `toldo` | `{ "color": "#rrggbb", "rayas": true }` | un toldo sobre la planta baja |
+| `cartel` | ver abajo | el cartel del local |
+| `lugar` | id de `data/places.json` | el local es ese lugar del juego (necesita cartel) |
+| `osm` | texto | el nombre con el que OSM tiene este local, si difiere del cartel |
+| `nota` | texto | lo que no entra en los otros campos; no se dibuja |
+| `usa` | nombre de un estilo | toma los campos del estilo; lo que ponga el lote manda |
+
+El `cartel` lleva `texto` (hasta 40 letras), `fondo` y `letra` (colores) y, si hacen falta, `marco` (color), `fuente`
+(`sans`, `serif`, `condensada`, `redondeada`), `cursiva` (`true`), `posicion` (`frente` sobre la puerta, `alto` arriba
+de todo, `bandera` perpendicular a la pared) y `ancho` (metros). Las marcas van con su nombre, una letra parecida y sus
+colores; los logos, no.
+
+Un error de formato (un campo que no existe, un color mal escrito, un `lugar` repetido) corta el `build:map` con el
+frente y el lote que fallaron. Además hay tres avisos, que también cortan el armado:
+
+- **Anchos:** si los anchos suman más de un 10 % de más o de menos que el largo de la cuadra, falta o sobra un lote.
+- **`lugar`:** un lugar de `data/places.json` que cae sobre la vereda tiene que tener un lote que lo nombre (por
+  `lugar` o por el texto del cartel), y uno solo.
+- **`osmAusentes`:** cada local de OSM sobre la vereda tiene que coincidir con el cartel o el `osm` de un lote. Si ya
+  no existe, se anota su nombre en `osmAusentes`; un nombre ahí que OSM no tiene sobre esa vereda también avisa.
+
+Las líneas que dicen "a N m del punto del lugar" o "<-> OSM" solo informan qué tan lejos quedó cada lote de su punto
+en el mapa.
+
+Street View se usa solo para mirar. Ninguna captura de Google entra al repo ni al juego: los colores y los textos se
+copian a mano en el JSON.
+
 ## Medir el rendimiento en otra notebook
 
 Con `?bench=1` el juego no espera al jugador: la cámara recorre sola, siempre igual, la estación, Esteban Adrogué,

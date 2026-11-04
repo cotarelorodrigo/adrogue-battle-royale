@@ -152,7 +152,7 @@ Este documento cubre todo el juego para que la etapa 1 se construya sabiendo lo 
 - Todo tiene que correr en el navegador, sin instalar nada.
 - Solo se usan datos e imágenes con licencias que permitan reutilizarlos, y se cita a los autores.
 - Nada de Google Maps ni Street View como fuente de imágenes.
-- Las marcas se muestran con su nombre en el cartel, sin logos.
+- Las marcas se muestran con su nombre escrito con una letra parecida y con sus colores en el cartel y en la fachada; logos, no (ni copiados ni redibujados), porque el repo es público.
 - **Todo gratis (decisión del usuario).** No se compran modelos, texturas, sonidos ni servicios pagos.
   - Los personajes, las armas, las animaciones y los sonidos salen de fuentes libres, como Kenney, Quaternius, Poly Haven, ambientCG y Freesound (solo con licencias CC0 o CC BY).
   - Se acepta que los personajes y las armas se vean menos realistas que la ciudad. Claude lo avisó y el usuario eligió igual todo gratis.
