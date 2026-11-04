@@ -76,15 +76,16 @@ Cada lote es un edificio propio con sus colores, su planta baja y su cartel. Par
 local que cerró):
 
 1. Editá `data/frentes.json`.
-2. Corré `npm run build:map`.
-3. Mirá el resultado con `npm run dev` y commiteá el JSON junto con `public/map/adrogue.map.json`.
+2. Corré `npm run build:map` hasta que termine sin errores ni avisos (ver más abajo).
+3. Mirá el resultado con `npm run dev` y commiteá el JSON junto con `public/map/adrogue.map.json`. Commiteá solo después
+   de una corrida limpia: con un aviso, `build:map` igual escribe un mapa nuevo antes de cortar.
 
 El archivo tiene `estilos` (lotes de base reutilizables) y `calles`. Cada calle tiene `calle`, `calzada`
 (`"empedrado"` o `"asfalto"`) y `frentes`. Cada frente es una vereda de una cuadra:
 
 | Campo del frente | Qué es |
 |---|---|
-| `id` | nombre único, por ejemplo `ea-mitre-pellerano-s`; los edificios se llaman `<id>-1`, `<id>-2`… |
+| `id` | nombre único con minúsculas sin acento, números y guiones, por ejemplo `ea-mitre-pellerano-s` (no puede ser una `b` y un número, como los edificios de Microsoft); los edificios se llaman `<id>-1`, `<id>-2`… |
 | `desde`, `hasta` | las calles transversales con el nombre de OSM (`"Benigno Macías"`, no `"Macías"`); los lotes van en ese orden |
 | `vereda` | `norte`, `sur`, `este` u `oeste` |
 | `fecha` | `AAAA-MM` de las imágenes que se miraron |
@@ -96,31 +97,49 @@ El archivo tiene `estilos` (lotes de base reutilizables) y `calles`. Cada calle 
 | `ancho` | metros | el ancho sobre la vereda; se escalan todos juntos para que sumen el largo de la cuadra |
 | `pisos` | 0 a 20 | la altura (3,2 m por piso + 0,6 m); `0` es un terreno sin edificio (pasaje, plazoleta) |
 | `fondo`, `retiro` | metros (15 y 0) | cuánto entra el edificio en la manzana y cuánto se separa de la vereda |
-| `color`, `colorPB` | `#rrggbb` | la fachada y la planta baja (sin `colorPB`, la planta baja usa `color`) |
-| `material` | `revoque`, `ladrillo` | la textura de los pisos de arriba |
+| `color`, `colorPB` | `#rrggbb` | la fachada y la planta baja (sin `colorPB`, la planta baja usa `color`); `color` es obligatorio si `pisos` es mayor que 0 |
+| `material` | `revoque`, `ladrillo` | `ladrillo` hace de ladrillo visto los pisos de arriba (salvo `vidriado`) y, en la planta baja, las paredes de `puerta`, `porton` y `pared`. El ladrillo no se tiñe: ahí `color` y `colorPB` no cambian nada. `color` sigue tiñendo las medianeras y el pretil, y `colorPB` (o `color`) una planta baja de `vidriera`, `persiana`, `banco` o `acceso` |
 | `pb` | `vidriera`, `persiana`, `porton`, `puerta`, `banco`, `acceso`, `pared` | la planta baja |
 | `arriba` | `ventanas`, `balcones`, `vidriado`, `ciego` | los pisos de arriba |
-| `puerta` | `inicio`, `medio`, `fin` | dónde va la puerta del local |
+| `puerta` | `inicio`, `medio`, `fin` | dónde va la puerta del local: `inicio` es la punta de `desde` y `fin` la de `hasta` |
 | `toldo` | `{ "color": "#rrggbb", "rayas": true }` | un toldo sobre la planta baja |
 | `cartel` | ver abajo | el cartel del local |
 | `lugar` | id de `data/places.json` | el local es ese lugar del juego (necesita cartel) |
-| `osm` | texto | el nombre con el que OSM tiene este local, si difiere del cartel |
+| `osm` | texto | el nombre con el que OSM tiene este local, si difiere del cartel; tiene que ser exacto, con mayúsculas y acentos |
 | `nota` | texto | lo que no entra en los otros campos; no se dibuja |
 | `usa` | nombre de un estilo | toma los campos del estilo; lo que ponga el lote manda |
 
+Un estilo lleva cualquier campo del lote salvo `ancho`, `usa` y `lugar`. Cada estilo se valida solo, aunque ningún lote
+lo use, y el error dice qué estilo falló.
+
 El `cartel` lleva `texto` (hasta 40 letras), `fondo` y `letra` (colores) y, si hacen falta, `marco` (color), `fuente`
-(`sans`, `serif`, `condensada`, `redondeada`), `cursiva` (`true`), `posicion` (`frente` sobre la puerta, `alto` arriba
-de todo, `bandera` perpendicular a la pared) y `ancho` (metros). Las marcas van con su nombre, una letra parecida y sus
-colores; los logos, no.
+(`sans`, `serif`, `condensada`, `redondeada`), `cursiva` (`true`), `posicion` y `ancho` (de 0,5 a 20 metros). Las
+marcas van con su nombre, una letra parecida y sus colores; los logos, no. La `posicion` puede ser:
 
-Un error de formato (un campo que no existe, un color mal escrito, un `lugar` repetido) corta el `build:map` con el
-frente y el lote que fallaron. Además hay tres avisos, que también cortan el armado:
+- `frente` (la de siempre): a lo ancho del local, en la franja de arriba de la puerta y las vidrieras (desde 2,35 m).
+- `alto`: arriba de todo, debajo del borde del techo.
+- `bandera`: perpendicular a la pared, en la punta de `desde`.
 
-- **Anchos:** si los anchos suman más de un 10 % de más o de menos que el largo de la cuadra, falta o sobra un lote.
+Un cartel de `frente` o `alto` es recto: si la fachada se quiebra, va en el tramo recto más largo. Sin `ancho` ocupa
+ese tramo menos 20 cm por punta. Si la escalera (o el contenedor) para subir al techo del lote no entra en otra pared
+que dé a una calle, mapgen la pone en una punta de la fachada, lejos de la puerta y de la bandera, y el cartel y el toldo
+dejan libre ese tramo.
+
+Un error de formato (un campo que no existe, un color mal escrito, un `lugar` repetido) corta el `build:map` sin
+escribir el mapa, con el frente y el lote que fallaron. Lo mismo pasa con los anchos: si suman más de un 10 % de más o
+de menos que el largo de la cuadra, falta o sobra un lote.
+
+Además hay avisos. El mapa se escribe igual, pero el armado termina con error, así que no se commitea hasta que no
+quede ninguno:
+
 - **`lugar`:** un lugar de `data/places.json` que cae sobre la vereda tiene que tener un lote que lo nombre (por
   `lugar` o por el texto del cartel), y uno solo.
 - **`osmAusentes`:** cada local de OSM sobre la vereda tiene que coincidir con el cartel o el `osm` de un lote. Si ya
   no existe, se anota su nombre en `osmAusentes`; un nombre ahí que OSM no tiene sobre esa vereda también avisa.
+- **Lotes que se pisan:** dos lotes de frentes distintos ocupan el mismo lugar (un frente copiado, o las esquinas de
+  dos frentes que se cruzan).
+- **`cartel.ancho`:** el cartel no entra en la fachada; se dibuja más chico.
+- **`calzada`:** OSM no tiene ninguna calle con ese nombre.
 
 Las líneas que dicen "a N m del punto del lugar" o "<-> OSM" solo informan qué tan lejos quedó cada lote de su punto
 en el mapa.
