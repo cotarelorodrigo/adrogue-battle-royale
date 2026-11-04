@@ -49,6 +49,11 @@ maniquíes y sin botín. Para volver a jugar, **Jugar una partida** en el menú 
 | Esc | menú: seguir, calidad (Baja / Media / Alta, queda guardada), lugares y créditos; en el modo paseo, también **Jugar una partida** |
 | F3 | fps y draw calls |
 
+Si una tecla no responde (por ejemplo, D sola no te mueve pero Shift+D sí), lo más probable es una extensión del
+navegador con atajos de teclado, como Vimium o Surfingkeys, que se queda con la tecla antes que el juego. Para
+confirmarlo, probá en una ventana de incógnito, donde las extensiones vienen apagadas. Para arreglarlo, excluí
+`http://localhost:5173/*` (o la dirección donde juegues) en las opciones de la extensión.
+
 ### Para probar
 
 Dos parámetros de la dirección cambian la partida:
