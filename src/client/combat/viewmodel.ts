@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WEAPONS } from '../../shared/combat.ts';
 import type { WeaponId } from '../../shared/combat.ts';
+import { MATCH } from '../../shared/match.ts';
 import { PLAYER } from '../../shared/player.ts';
 import { weaponModel } from './models.ts';
 import type { WeaponModel } from './models.ts';
@@ -49,8 +50,8 @@ const RECOIL_MAX = { back: 0.12, rise: 0.4 };
 /** Fogonazo: cuánto dura (ms) y su radio por arma (m). */
 const FLASH_MS = 50;
 const FLASH_SIZE: Record<WeaponId, number> = { pistola: 0.07, escopeta: 0.13, rifle: 0.08, francotirador: 0.14 };
-/** Al sacarla: lo que tarda en subir (ms). */
-const RAISE_MS = 250;
+/** Al sacarla: lo que tarda en subir (ms), lo mismo que tarda en poder disparar (MATCH.raise). */
+const RAISE_MS = MATCH.raise * 1000;
 /** Recarga: cuánto viaja el cargador y en qué parte de la recarga (0…1) sale y vuelve. */
 const MAG_TRAVEL = 0.22;
 const MAG_OUT: [number, number] = [0.12, 0.35];
@@ -143,6 +144,7 @@ export function createViewmodel(renderer: ViewRenderer): ViewmodelView {
   pose.add(flash);
 
   let active: WeaponId | null = null;
+  let activeSlot = -1;
   let last = NaN;
   let aimK = 0;
   let raise = 0; // 1 recién sacada, 0 arriba
@@ -164,9 +166,10 @@ export function createViewmodel(renderer: ViewRenderer): ViewmodelView {
         active = null; // la próxima que aparezca, sube
         return;
       }
-      if (gun.id !== active) {
+      if (gun.id !== active || state.inv.active !== activeSlot) { // otra arma, u otra ranura con la misma arma
         if (active) guns[active].group.visible = false;
         active = gun.id;
+        activeSlot = state.inv.active;
         guns[active].group.visible = true;
         raise = 1;
       }

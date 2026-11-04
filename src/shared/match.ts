@@ -42,6 +42,8 @@ export const MATCH = {
   movingSpeed: 0.5,
   /** se aparece adentro del primer círculo de la zona, a por lo menos esto (m) de su borde */
   spawnMargin: 10,
+  /** lo que tarda (s) el arma que se saca al cambiar de ranura en poder disparar (y en subir, en el arma en mano) */
+  raise: 0.25,
 } as const;
 
 export interface Fighter { id: string; name: string; player: PlayerState; vitals: Vitals; alive: boolean; diedAt?: number }
@@ -338,11 +340,14 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   // 1. movimiento: contra el mundo (stepPlayer) y después contra los maniquíes
   const player = keepOutOfBodies(move(s.me.player, input, world, dt, inv.healingUntil !== null), s.me.player, dummies, world);
 
-  // 2. cambio de ranura: cancela la recarga del arma que se guarda y la curación
+  // 2. cambio de ranura: cancela la recarga del arma que se guarda y la curación; la que se saca tarda MATCH.raise en
+  // poder disparar (si no, con dos armas lentas se dispararía al doble de la cadencia)
   if ((input.slot === 0 || input.slot === 1) && input.slot !== inv.active) {
     const old = inv.slots[inv.active];
     if (old && old.reloadUntil !== null) inv.slots[inv.active] = { ...old, reloadUntil: null };
     inv.active = input.slot;
+    const drawn = inv.slots[inv.active];
+    if (drawn) inv.slots[inv.active] = { ...drawn, nextShotAt: Math.max(drawn.nextShotAt, t0 + MATCH.raise) };
     inv.healingUntil = null;
   }
 
@@ -355,6 +360,12 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
 
   let gun = inv.slots[inv.active];
   const aiming = input.aim === true && gun !== null;
+  /** Empieza a recargar `g` en t0 (con R o con el gatillo vacío), si se puede, y lo avisa. */
+  const reload = (g: Gun): Gun => {
+    const r = startReload(g, t0, inv.ammo[WEAPONS[g.id].ammo]);
+    if (r !== g) events.push({ type: 'reload', weapon: g.id });
+    return r;
+  };
 
   // 4. recarga
   if (gun) {
@@ -364,17 +375,17 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
       inv.ammo[ammo] -= r.used;
       gun = r.gun;
     }
-    if (input.reload) {
-      const r = startReload(gun, t0, inv.ammo[ammo]);
-      if (r !== gun) events.push({ type: 'reload', weapon: gun.id });
-      gun = r;
-    }
+    if (input.reload) gun = reload(gun);
   }
 
-  // 5. disparo: las semiautomáticas por flanco, la automática mientras está apretado
+  // 5. disparo: las semiautomáticas por flanco, la automática mientras está apretado. Vacía, el flanco hace clic y, si
+  // hay reserva, recarga como R (con el gatillo apretado desde antes, como la automática que se vació, no).
   if (gun && gun.reloadUntil === null && (WEAPONS[gun.id].auto ? input.fire === true : firePressed)) {
     if (gun.inMag <= 0) {
-      if (firePressed) events.push({ type: 'empty' });
+      if (firePressed) {
+        events.push({ type: 'empty' });
+        gun = reload(gun);
+      }
     } else if (gun.nextShotAt < t1) {
       const r = shoot(gun, player, look, aiming, dummies, world, createRng(shotSeed(s.seed, shotSeq++)), t0);
       gun = r.gun;

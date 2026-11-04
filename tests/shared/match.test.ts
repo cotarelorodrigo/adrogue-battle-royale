@@ -391,10 +391,34 @@ describe('disparar', () => {
     expect(s.inv.slots[0]!.inMag).toBe(10);
   });
 
-  test('vacía hace clic (empty) y no dispara; sin arma no pasa nada', () => {
+  test('vacía y sin reserva hace clic (empty) y no dispara ni recarga; sin arma no pasa nada', () => {
     const s = mod(withGun(setup(), 0, 'pistola'), (c) => { c.inv.slots[0]!.inMag = 0; });
-    expect(step(s, { fire: true }).events).toEqual([{ type: 'empty' }]);
+    const a = step(s, { fire: true });
+    expect(a.events).toEqual([{ type: 'empty' }]);
+    expect(a.inv.slots[0]!.reloadUntil).toBeNull();
     expect(step(setup(), { fire: true }).events).toEqual([]);
+  });
+
+  test('vacía y con reserva, apretar el gatillo hace clic y recarga, como R', () => {
+    const s0 = mod(withGun(setup(), 0, 'pistola', 20), (c) => { c.inv.slots[0]!.inMag = 0; });
+    let s = step(s0, { fire: true });
+    expect(s.events).toEqual([{ type: 'empty' }, { type: 'reload', weapon: 'pistola' }]);
+    expect(s.inv.slots[0]).toEqual(step(s0, { reload: true }).inv.slots[0]); // lo mismo que con R
+    expect(s.inv.slots[0]!.reloadUntil).toBeCloseTo(WEAPONS.pistola.reload, 9);
+    s = run(s, { fire: true }, WEAPONS.pistola.reload + 0.05); // mantenerlo no repite el clic ni dispara al terminar
+    expect(s.inv.slots[0]).toMatchObject({ inMag: 12, reloadUntil: null });
+    expect(s.inv.ammo.liviana).toBe(8);
+  });
+
+  test('la automática que se vacía con el gatillo apretado no recarga sola: recién al volver a apretarlo', () => {
+    const evs: MatchEvent[] = [];
+    let s = mod(withGun(setup(), 0, 'rifle', 30), (c) => { c.inv.slots[0]!.inMag = 2; });
+    s = run(s, { fire: true, yaw: Math.PI }, 1, evs);
+    expect(of(evs, 'shot')).toHaveLength(2);
+    expect(evs.filter((e) => e.type === 'empty' || e.type === 'reload')).toEqual([]);
+    expect(s.inv.slots[0]).toMatchObject({ inMag: 0, reloadUntil: null });
+    s = tap(step(s), { fire: true });
+    expect(s.inv.slots[0]!.reloadUntil).not.toBeNull();
   });
 
   test('pegado a una pared, la bala pega en la pared: impacto y sin daño al maniquí de atrás', () => {
@@ -512,6 +536,46 @@ describe('recargar', () => {
     s = step(s, { slot: 0 });
     expect(s.inv.slots[0]).toMatchObject({ inMag: 5, reloadUntil: null });
     expect(s.inv.ammo.liviana).toBe(50);
+  });
+});
+
+describe('cambiar de arma', () => {
+  /** Toca el gatillo un paso sí y otro no hasta que sale un tiro: el instante del tiro (a su hora, dentro del paso). */
+  function nextShot(s: MatchState, look: Partial<MatchInput>): { s: MatchState; at: number } {
+    for (let i = 0; i < 600; i++) {
+      const slot = s.inv.active;
+      s = step(s, { ...look, fire: i % 2 === 0 });
+      if (of(s.events, 'shot').length > 0) return { s, at: s.inv.slots[slot]!.nextShotAt - 1 / WEAPONS[s.inv.slots[slot]!.id].rate };
+    }
+    throw new Error('no salió ningún tiro');
+  }
+
+  test('el arma que se saca tarda 0,25 s en poder disparar: con dos francotiradores no se dispara al doble', () => {
+    expect(MATCH.raise).toBe(0.25);
+    const look = { yaw: Math.PI };
+    let s = withGun(withGun(setup(), 0, 'francotirador'), 1, 'francotirador');
+    s = step(s, { ...look, fire: true });
+    expect(of(s.events, 'shot')).toHaveLength(1);
+    const switchAt = s.t;
+    s = step(s, { ...look, slot: 1 });
+    expect(s.inv.slots[1]!.nextShotAt).toBeCloseTo(switchAt + MATCH.raise, 9);
+    const second = nextShot(s, look);
+    expect(second.at).toBeGreaterThanOrEqual(switchAt + MATCH.raise - 1e-9);
+    expect(second.at).toBeLessThan(switchAt + MATCH.raise + 3 * H);
+    // de vuelta a la primera: la demora no le acorta la cadencia (0,7/s desde el primer tiro)
+    s = step(second.s, { ...look, slot: 0 });
+    const third = nextShot(s, look);
+    expect(third.at).toBeGreaterThanOrEqual(1 / WEAPONS.francotirador.rate - 1e-9);
+  });
+
+  test('la demora no se suma a la cadencia que ya le quedaba, y seguir con la misma arma no la pone', () => {
+    let s = withGun(withGun(setup(), 0, 'pistola'), 1, 'francotirador');
+    s = mod(s, (c) => { c.inv.slots[1]!.nextShotAt = 5; });
+    s = step(s, { slot: 1 });
+    expect(s.inv.slots[1]!.nextShotAt).toBe(5); // max(5, t + raise)
+    s = step(s, { slot: 1 }); // la que ya está en la mano
+    expect(s.inv.slots[1]!.nextShotAt).toBe(5);
+    expect(s.inv.slots[0]!.nextShotAt).toBe(0); // la que se guardó, igual
   });
 });
 

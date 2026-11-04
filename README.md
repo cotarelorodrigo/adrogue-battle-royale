@@ -41,9 +41,9 @@ maniquíes y sin botín. Para volver a jugar, **Jugar una partida** en el menú 
 | W contra una escalera de mano | subir (Espacio o S para soltarse) |
 | Clic izquierdo | disparar (el rifle sigue disparando mientras lo mantenés; las otras, un tiro por clic) |
 | Clic derecho | apuntar: acerca la vista y achica la dispersión; con el francotirador, mira telescópica |
-| R | recargar |
+| R | recargar (con el cargador vacío, también recarga apretar el gatillo) |
 | E | juntar lo que tenés adelante, a menos de 2,5 m (aparece "E: juntar…") |
-| 1, 2 o la rueda | cambiar de arma (la rueda: hacia arriba la 1, hacia abajo la 2) |
+| 1, 2 o la rueda | cambiar de arma (la rueda: hacia arriba la 1, hacia abajo la 2); la que sacás tarda 0,25 s en poder disparar |
 | H | usar un botiquín: tarda 3 s y cura 50 (disparar o cambiar de arma lo corta) |
 | M | lugares: pasar al modo paseo en uno de los 38 lugares, o en uno al azar |
 | Esc | menú: seguir, calidad (Baja / Media / Alta, queda guardada), lugares y créditos; en el modo paseo, también **Jugar una partida** |

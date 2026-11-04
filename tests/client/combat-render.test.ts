@@ -364,6 +364,22 @@ describe('arma en mano', () => {
     expect(calls).toHaveLength(2);
   });
 
+  test('al cambiar de ranura el arma sube en MATCH.raise, también entre dos iguales', () => {
+    const { renderer } = fakeRenderer();
+    const view = createViewmodel(renderer);
+    const pistols = (active: 0 | 1): MatchState => matchState({ inv: { ...matchState().inv, slots: [newGun('pistola'), newGun('pistola')], active } });
+    for (let now = 0; now <= 1000; now += 16) view.update(frame(pistols(0), now));
+    const y = (): number => view.scene.getObjectByName('pose')!.position.y;
+    const up = y();
+    let now = 1016;
+    view.update(frame(pistols(1), now));
+    expect(y()).toBeLessThan(up - 0.1); // recién sacada, abajo
+    for (; now < 1016 + MATCH.raise * 1000 - 48; now += 16) view.update(frame(pistols(1), now));
+    expect(y()).toBeLessThan(up - 0.005); // todavía subiendo
+    for (; now <= 1016 + MATCH.raise * 1000 + 16; now += 16) view.update(frame(pistols(1), now));
+    expect(y()).toBeCloseTo(up, 6);
+  });
+
   test('el disparo la hace retroceder y la recarga saca el cargador', () => {
     const { renderer } = fakeRenderer();
     const view = createViewmodel(renderer);
