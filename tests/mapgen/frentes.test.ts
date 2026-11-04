@@ -1,6 +1,6 @@
 import polygonClipping from 'polygon-clipping';
 import { describe, expect, test } from 'vitest';
-import { applyFrentes, onFace } from '../../src/mapgen/frentes.ts';
+import { applyFrentes, lotSigns, onFace } from '../../src/mapgen/frentes.ts';
 import { resolveFrontage } from '../../src/mapgen/frontage.ts';
 import { ROAD_SPECS } from '../../src/mapgen/osm.ts';
 import type { OsmPoi } from '../../src/mapgen/osm.ts';
@@ -146,5 +146,31 @@ describe('applyFrentes', () => {
     expect([...r.fronts.keys()]).toEqual(['t-1', 't-2', 't-3', 't-4']);
     expect(r.fronts.get('t-1')!.front.length).toBeGreaterThanOrEqual(2);
     expect(r.report.some((l) => l.includes('p1') && l.includes('t-1'))).toBe(true);
+  });
+
+  test('lotes de frentes distintos que se pisan: aviso con los dos lotes y el área', () => {
+    const copia = frente({ id: 't2', lotes: frente().lotes.map(({ lugar: _, ...l }) => l) });
+    const r = applyFrentes({ frentes: [frente(), copia], calzadas: {} }, roads, [ms], places, pois);
+    const pisados = r.warnings.filter((w) => w.includes(' se pisa con '));
+    expect(pisados).toHaveLength(4);
+    expect(pisados[0]).toMatch(/^frente t2, lote 1 se pisa con frente t, lote 1 \(\d+,\d m²\)$/);
+    expect(run().warnings.some((w) => w.includes(' se pisa con '))).toBe(false);
+  });
+
+  test('climb: la fachada de cada lote con edificio y las puntas para su ayuda', () => {
+    const r = run();
+    expect([...r.climb.keys()]).toEqual(['t-1', 't-2', 't-3', 't-4']);
+    expect(r.climb.get('t-1')!.line).toBe(r.fronts.get('t-1')!.front);
+    expect(r.climb.get('t-1')!.puntas).toEqual(['fin', 'inicio']); // puerta en el medio de 7 bahías
+  });
+
+  test('lotSigns: con una ayuda en la punta, el cartel deja libre ese tramo', () => {
+    const r = run();
+    const antes = r.signs[0];
+    const { signs, byLot } = lotSigns(r, new Map([['t-3', { fin: 1.1 }]]));
+    expect(signs[0].text).toBe('BONAFIDE');
+    expect(signs[0].width).toBeCloseTo(antes.width - (1.1 - 0.2), 6);
+    expect(byLot.get('t-1')).toEqual(r.fixed.get('p1')!.sign);
+    expect(byLot.get('t-2')).toEqual(r.fixed.get('p2')!.sign);
   });
 });

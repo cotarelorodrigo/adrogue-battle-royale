@@ -124,13 +124,16 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
   wall(mainRun, true);
   for (const run of cornerRuns) wall(run, false);
 
-  if (f.toldo && mainRun.length > 2 * AWNING.inset) {
+  // el toldo deja libre el tramo de la ayuda de ascenso que haya en una punta (si no, `inset`)
+  const awningLo = f.ayuda?.inicio ?? AWNING.inset;
+  const awningHi = mainRun.length - (f.ayuda?.fin ?? AWNING.inset);
+  if (f.toldo && awningHi > awningLo) {
     const r = cellRect(f.toldo.rayas ? 'toldo-rayas' : 'toldo');
     const color = tintColor(f.toldo.color);
-    const { topY, bottomY, depth, inset } = AWNING;
+    const { topY, bottomY, depth } = AWNING;
     const h = topY - bottomY;
     const norm = Math.hypot(h, depth);
-    eachSpan(mainRun, inset, mainRun.length - inset, (p, sa, sb, bay, bw) => {
+    eachSpan(mainRun, awningLo, awningHi, (p, sa, sb, bay, bw) => {
       const ua = uAt(r, p, sa, bay, bw), ub = uAt(r, p, sb, bay, bw);
       const [pa, pb] = [at(p, sa), at(p, sb)];
       const vs: [number, number, number][] = [

@@ -4,6 +4,7 @@ import type { Vec2 } from '../shared/geo.ts';
 import { SIGN_H } from '../shared/mapdata.ts';
 import type { Building, Road, Sign } from '../shared/mapdata.ts';
 import { heightFor, MIN_AREA } from './buildings.ts';
+import type { Punta } from './climb.ts';
 import { cumulative, pointAt, slice, vehicular } from './frontage.ts';
 import type { Frontage } from './frontage.ts';
 import type { FrenteInput, LoteInput } from './frentes-input.ts';
@@ -17,6 +18,14 @@ const MIN_LOT_AREA = 4;
 const STEP = 0.05;
 const ON_EDGE = 2e-3;
 const TOUCH = 0.01;
+/** Un cartel de frente o alto es una caja recta: va en un tramo de la fachada que se aparta de una recta a lo sumo esto
+ *  (para un lado o para el otro). Con la caja a LOT_SIGN.offset (8 cm) de la pared, queda entre 3 y 13 cm: ni se
+ *  entierra ni se despega a la vista. */
+const RECTO = 0.05;
+/** El cartel más angosto que se dibuja (más chico, el cliente no lo puede armar). */
+const MIN_SIGN_W = 0.5;
+/** Ancho de un módulo de fachada (copia de BAY_W de client/world/wall-kit.ts: mapgen no importa el cliente). */
+const BAY_W = 3.0;
 
 export interface LotShape {
   id: string; // `${frente.id}-${k}`, con k desde 1
@@ -156,6 +165,20 @@ export function layoutLots(f: FrenteInput, fr: Frontage, roads: Road[]): LotShap
   return out;
 }
 
+/** Lo que comparten dos plantas: el área (m²) y el ancho medio (m, 2 · área / perímetro: una astilla da casi 0). Sin
+ *  calcular la intersección si sus cajas no se tocan. */
+export function lotOverlap(a: Vec2[], b: Vec2[]): { area: number; width: number } {
+  if (!overlaps(bbox(a), bbox(b))) return { area: 0, width: 0 };
+  let area = 0;
+  let perimeter = 0;
+  for (const p of polygonClipping.intersection(poly(a), poly(b))) {
+    const r = outer(p);
+    area += polygonArea(r);
+    perimeter += r.reduce((t, q, i) => t + Math.hypot(r[(i + 1) % r.length][0] - q[0], r[(i + 1) % r.length][1] - q[1]), 0);
+  }
+  return { area, width: perimeter > 0 ? (2 * area) / perimeter : 0 };
+}
+
 /** Vértices a una grilla de 1 mm: polygon-clipping no logra cerrar la unión cuando lotes vecinos comparten aristas
  *  casi coincidentes (diferencias de 1e-12 m). */
 const snapMm = (r: Vec2[]): Vec2[] => r.map(([x, z]): Vec2 => [Math.round(x * 1000) / 1000, Math.round(z * 1000) / 1000]);
@@ -197,7 +220,34 @@ export function lotBuilding(l: LotShape): Building | null {
   };
 }
 
-export function lotSign(l: LotShape, height: number): Sign | null {
+/** "frente f, lote k" a partir del id del lote (`${f.id}-${k}`). */
+const lotWhere = (l: LotShape): string => `frente ${l.id.replace(/-(\d+)$/, ', lote $1')}`;
+
+/**
+ * Tramos rectos de `pts`, de pts[i] a pts[j]: la recta paralela a la cuerda que mejor los sigue (corrida `shift` hacia
+ * la izquierda de la cuerda) queda a ≤ RECTO de todos sus vértices. Son todos los pares (una fachada tiene pocos vértices).
+ */
+function straightRuns(pts: Vec2[]): { i: number; j: number; shift: number }[] {
+  const out: { i: number; j: number; shift: number }[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      const [a, b] = [pts[i], pts[j]];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const side = pts.slice(i, j + 1).map((p) => ((p[1] - a[1]) * (b[0] - a[0]) - (p[0] - a[0]) * (b[1] - a[1])) / len);
+      const [lo, hi] = [Math.min(...side), Math.max(...side)];
+      if ((hi - lo) / 2 <= RECTO) out.push({ i, j, shift: (hi + lo) / 2 });
+    }
+  }
+  return out;
+}
+
+/**
+ * El cartel del lote, o null si no tiene. Uno de frente o alto va en el tramo recto de la fachada donde entra más largo,
+ * con `margen / 2` libre en cada punta y en cada quiebre. `ayuda` (de climb.ts): los metros que ocupa una ayuda de
+ * ascenso desde cada punta, que el cartel deja libres. Un `cartel.ancho` que no entra se achica y, si se pasa `warnings`,
+ * avisa (lo que achica una ayuda no avisa: no es un error del archivo).
+ */
+export function lotSign(l: LotShape, height: number, ayuda?: Partial<Record<Punta, number>>, warnings?: string[]): Sign | null {
   const c = l.lote.cartel;
   if (!c) return null;
   const cum = cumulative(l.front);
@@ -210,10 +260,6 @@ export function lotSign(l: LotShape, height: number): Sign | null {
     return [(b[0] - a[0]) / d, (b[1] - a[1]) / d];
   };
   const look = { fondo: c.fondo, letra: c.letra, marco: c.marco ?? c.fondo, fuente: c.fuente, ...(c.cursiva ? { cursiva: true as const } : {}) };
-  const mid = pointAt(l.front, cum, len / 2);
-  const t = dir(len / 2);
-  const n: Vec2 = [t[1] * l.inward, -t[0] * l.inward]; // exterior: al revés de la manzana
-  const dflt = Math.max(Math.min(len - LOT_SIGN.margen, len - 0.2), 1);
   if (c.posicion === 'bandera') {
     const width = c.ancho ?? LOT_SIGN.banderaAncho;
     const p = pointAt(l.front, cum, 0.5);
@@ -224,10 +270,51 @@ export function lotSign(l: LotShape, height: number): Sign | null {
       bottomY: LOT_SIGN.banderaY, look, blade: true,
     };
   }
+  const m = LOT_SIGN.margen / 2;
+  const last = l.front.length - 1;
+  const fit = (lo: number, hi: number) => {
+    let best: { i: number; j: number; shift: number; s0: number; s1: number } | null = null;
+    for (const { i, j, shift } of straightRuns(l.front)) {
+      const s0 = Math.max(cum[i] + (i > 0 ? m : 0), lo);
+      const s1 = Math.min(cum[j] - (j < last ? m : 0), hi);
+      if (!best || s1 - s0 > best.s1 - best.s0 + 1e-9) best = { i, j, shift, s0, s1 };
+    }
+    return best!;
+  };
+  const free = fit(ayuda?.inicio ?? m, len - (ayuda?.fin ?? m));
+  const room = Math.max(free.s1 - free.s0, 0);
+  if (c.ancho !== undefined && warnings) {
+    const plain = fit(m, len - m);
+    const max = Math.max(plain.s1 - plain.s0, MIN_SIGN_W);
+    if (c.ancho > max + 1e-6) warnings.push(`${lotWhere(l)}: cartel.ancho es ${fmt(c.ancho)} m y en la fachada entran ${fmt(max)} m; se achica`);
+  }
+  const width = Math.max(Math.min(c.ancho ?? Infinity, room), MIN_SIGN_W);
+  // el centro, sobre la recta que sigue al tramo (así la caja recta queda contra la pared de punta a punta)
+  const [a, b] = [l.front[free.i], l.front[free.j]];
+  const chord = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const t: Vec2 = [(b[0] - a[0]) / chord, (b[1] - a[1]) / chord];
+  const along = room > 0 ? (free.s0 + free.s1) / 2 - cum[free.i] : (cum[free.j] - cum[free.i]) / 2;
+  const at = (along / (cum[free.j] - cum[free.i] || 1)) * chord;
+  const n: Vec2 = [t[1] * l.inward, -t[0] * l.inward]; // exterior: al revés de la manzana
+  const o: Vec2 = [-t[1] * free.shift + n[0] * LOT_SIGN.offset, t[0] * free.shift + n[1] * LOT_SIGN.offset];
   return {
-    text: c.texto, anchor: [mid[0] + n[0] * LOT_SIGN.offset, mid[1] + n[1] * LOT_SIGN.offset], normal: n, width: c.ancho ?? dflt,
+    text: c.texto, anchor: [a[0] + t[0] * at + o[0], a[1] + t[1] * at + o[1]], normal: n, width,
     bottomY: c.posicion === 'alto' ? Math.max(LOT_SIGN.frenteY, height - SIGN_H - 0.1) : LOT_SIGN.frenteY, look,
   };
+}
+
+/**
+ * Puntas de la fachada donde puede ir una ayuda de ascenso (climb.ts), en orden de preferencia: fuera de la bahía de la
+ * puerta (las bahías miden BAY_W, como las dibuja el cliente) y no en la de `desde` si el cartel es de bandera. Si no
+ * queda ninguna, `fin`: la bandera choca con la escalera; la puerta, no.
+ */
+export function aidEnds(l: LotShape): Punta[] {
+  const n = Math.max(1, Math.round(cumulative(l.front).at(-1)! / BAY_W));
+  const door = l.lote.puerta === 'inicio' ? 0 : l.lote.puerta === 'fin' ? n - 1 : Math.floor((n - 1) / 2);
+  const ends: Punta[] = [];
+  if (n === 1 || door !== n - 1) ends.push('fin');
+  if ((n === 1 || door !== 0) && l.lote.cartel?.posicion !== 'bandera') ends.push('inicio');
+  return ends.length > 0 ? ends : ['fin'];
 }
 
 /** Posición (m) del punto más cercano de `line` a `p`, medida desde el comienzo de `line`. */

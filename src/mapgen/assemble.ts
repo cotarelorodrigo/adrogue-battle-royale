@@ -3,7 +3,7 @@ import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
 import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
-import { applyFrentes } from './frentes.ts';
+import { applyFrentes, lotSigns } from './frentes.ts';
 import type { FrentesInput } from './frentes-input.ts';
 import { frontEdgesOf, frontIsContra } from './lots.ts';
 import { buildBuildings } from './buildings.ts';
@@ -43,7 +43,13 @@ export function assembleMap(
   warnings.push(...fr.warnings);
   const matched = matchPlaces(raw.places, fr.buildings, parks, roads, fr.fixed);
   warnings.push(...matched.warnings);
-  const { props: aids, stats } = placeClimbAidsWithStats(matched.buildings, roads);
+  const { props: aids, stats, slots } = placeClimbAidsWithStats(matched.buildings, roads, fr.climb);
+  // una ayuda en la fachada de un lote va en una punta: su cartel deja libre ese tramo (y el toldo, en el cliente)
+  const signs = lotSigns(fr, slots);
+  for (const p of matched.places) {
+    const lot = fr.fixed.get(p.id);
+    if (lot && p.sign) p.sign = signs.byLot.get(lot.buildingId)!;
+  }
   if (stats.noAid > 0) warnings.push(`${stats.noAid} cluster(s) de techos sin ayuda de ascenso aunque tienen aristas adentro del área`);
   const bounds = areaRect();
   const trees = placeTrees(roads, matched.buildings, parks, bounds);
@@ -63,7 +69,12 @@ export function assembleMap(
       if (edges.length === 0) warnings.push(`${b.id}: el frente no coincide con ninguna arista`);
       const corner = [...new Set(lot.cornerRings.flatMap((c) => { const r = ring(c); return frontEdgesOf(footprint, [...r, r[0]]); }))]
         .filter((e) => !edges.includes(e));
-      buildings.push({ ...b, footprint, height: rn(b.height), front: { ...b.front, edges, corner, ...(contra ? { contra: true as const } : {}) } });
+      const slot = slots.get(b.id);
+      const ayuda = slot && Object.fromEntries(Object.entries(slot).map(([k, v]) => [k, rn(v)]));
+      buildings.push({
+        ...b, footprint, height: rn(b.height),
+        front: { ...b.front, edges, corner, ...(contra ? { contra: true as const } : {}), ...(ayuda ? { ayuda } : {}) },
+      });
       continue;
     }
     buildings.push({ ...b, footprint, height: rn(b.height) });
@@ -84,7 +95,7 @@ export function assembleMap(
     platforms: platforms.map(ring),
     parks: parks.map((k) => ({ ...k, polygon: ring(k.polygon) })),
     places: [],
-    signs: fr.signs.map(roundSign),
+    signs: signs.signs.map(roundSign),
     props: props.map((p): Prop => {
       switch (p.kind) {
         case 'ladder': return { ...p, base: v2(p.base), normal: v2(p.normal, 3), topY: rn(p.topY) };

@@ -7,15 +7,17 @@ import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
 import { parkFractionOf } from '../../src/mapgen/buildings.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
+import { lotOverlap } from '../../src/mapgen/lots.ts';
 import { analyzeGround, solidOutlines } from '../../src/mapgen/pockets.ts';
 import { FACADE_BY_TYPE } from '../../src/mapgen/place-facades.ts';
 import { outwardNormal } from '../../src/mapgen/places.ts';
 import { polygonDist } from '../../src/mapgen/spatial.ts';
 import { climbOut, regionAt } from './pocket-exit.ts';
 import { buildCollisionWorld } from '../../src/shared/collision.ts';
+import { AWNING } from '../../src/client/world/fronts.ts';
 import { distPointSegment, pointInPolygon, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
-import type { MapData, Prop, Tree } from '../../src/shared/mapdata.ts';
+import type { Building, MapData, Prop, Sign, Tree } from '../../src/shared/mapdata.ts';
 
 const photos = JSON.parse(readFileSync('data/photo-facades.json', 'utf8')) as { placeId: string; edgeIndex?: number }[];
 const MIN_OTHER_SETT = 43;
@@ -76,6 +78,63 @@ function mainClusters(m: MapData, g: ReturnType<typeof analyzeGround>) {
   return { clusterOf, fromMain };
 }
 
+/** Corrida principal de un lote, de `desde` a `hasta`, como la arma el cliente (aristas de `front.edges`, al revés con `contra`). */
+function mainRun(b: Building): { a: Vec2; c: Vec2; len: number; s0: number }[] {
+  const fp = b.footprint;
+  let s0 = 0;
+  return b.front!.edges.map((e) => {
+    const [a, c] = b.front!.contra ? [fp[(e + 1) % fp.length], fp[e]] : [fp[e], fp[(e + 1) % fp.length]];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    s0 += len;
+    return { a, c, len, s0: s0 - len };
+  });
+}
+/** Dónde cae `p` sobre la corrida: `s` sin acotar en las puntas (pasado el final sigue la última arista) y `d`, la
+ *  distancia a la pared. */
+function alongRun(run: ReturnType<typeof mainRun>, p: Vec2): { s: number; d: number } {
+  let best = { s: 0, d: Infinity };
+  run.forEach((g, k) => {
+    const [dx, dz] = [(g.c[0] - g.a[0]) / g.len, (g.c[1] - g.a[1]) / g.len];
+    let t = (p[0] - g.a[0]) * dx + (p[1] - g.a[1]) * dz;
+    if (k > 0) t = Math.max(t, 0);
+    if (k < run.length - 1) t = Math.min(t, g.len);
+    const tc = Math.min(Math.max(t, 0), g.len);
+    const d = Math.hypot(p[0] - (g.a[0] + dx * tc), p[1] - (g.a[1] + dz * tc));
+    if (d < best.d) best = { s: g.s0 + t, d };
+  });
+  return best;
+}
+/** Las escaleras y los contenedores, con su medio ancho a lo largo de la pared. */
+const climbAids = (m: MapData): { pos: Vec2; half: number; what: string }[] => m.props.flatMap((p) =>
+  p.kind === 'ladder' ? [{ pos: p.base, half: 0.4, what: `escalera de ${p.buildingId}` }]
+    : p.kind === 'dumpster' ? [{ pos: p.position, half: 0.9, what: `contenedor en ${p.position.join(', ')}` }] : []);
+/** Ayudas de ascenso que caen en el tramo de un cartel o de un toldo de un lote, con `tol` m de tolerancia. */
+function aidsOnLotFronts(m: MapData, tol: number): string[] {
+  const lots = m.buildings.filter((b) => b.front);
+  const ids = new Set(lots.map((b) => b.id));
+  const signs: Sign[] = [...m.signs, ...m.places.filter((p) => p.sign && p.buildingId && ids.has(p.buildingId)).map((p) => p.sign!)];
+  const bad: string[] = [];
+  for (const aid of climbAids(m)) {
+    for (const s of signs) {
+      const rel: Vec2 = [aid.pos[0] - s.anchor[0], aid.pos[1] - s.anchor[1]];
+      const dn = rel[0] * s.normal[0] + rel[1] * s.normal[1]; // en una bandera, la normal va a lo largo de la pared
+      const dt = -rel[0] * s.normal[1] + rel[1] * s.normal[0];
+      const hit = s.blade ? Math.abs(dn) < aid.half + 0.06 - tol && Math.abs(dt) < s.width / 2 + 1.5
+        : Math.abs(dt) < s.width / 2 + aid.half - tol && Math.abs(dn) < 1.5;
+      if (hit) bad.push(`${aid.what}: en el cartel ${s.text}`);
+    }
+    for (const b of lots) {
+      if (!b.front!.toldo) continue;
+      const run = mainRun(b);
+      const L = run.reduce((t, g) => t + g.len, 0);
+      const [lo, hi] = [b.front!.ayuda?.inicio ?? AWNING.inset, L - (b.front!.ayuda?.fin ?? AWNING.inset)];
+      const { s, d } = alongRun(run, aid.pos);
+      if (d < 1.5 && s + aid.half > lo + tol && s - aid.half < hi - tol) bad.push(`${aid.what}: en el toldo de ${b.id}`);
+    }
+  }
+  return bad;
+}
+
 const { map, warnings, stats } = assembleMap(loadRaw());
 const world = buildCollisionWorld(map);
 
@@ -110,6 +169,36 @@ describe('assembleMap sobre datos reales', () => {
     expect(isFatalWarning(`${SPAWN_RELAXED} x: punto de aparición con solo 1 m libre`)).toBe(false);
     expect(isFatalWarning('x: no se pudo ubicar el punto de aparición')).toBe(true);
     expect(isFatalWarning('x: sin punto libre cerca de 1, 2')).toBe(true);
+  });
+  test('ninguna escalera ni contenedor cae en el tramo de un cartel o de un toldo de un lote (5 cm de tolerancia)', () => {
+    expect(aidsOnLotFronts(map, 0.05)).toEqual([]);
+  });
+  test('los carteles de los lotes quedan a 8 ± 5 cm de su pared de punta a punta (más 1 cm de redondeo) y nunca adentro', () => {
+    const lots = map.buildings.filter((b) => b.front);
+    const ids = new Set(lots.map((b) => b.id));
+    const signs = [...map.signs, ...map.places.filter((p) => p.sign && p.buildingId && ids.has(p.buildingId)).map((p) => p.sign!)].filter((s) => !s.blade);
+    expect(signs.length).toBeGreaterThan(70);
+    for (const s of signs) {
+      const lot = lots.find((b) => mainRun(b).some((g) => distPointSegment(s.anchor, g.a, g.c) < 0.25));
+      expect(lot, s.text).toBeDefined();
+      const run = mainRun(lot!);
+      for (let k = 0; k <= 20; k++) {
+        const u = -s.width / 2 + (s.width * k) / 20;
+        const p: Vec2 = [s.anchor[0] - s.normal[1] * u, s.anchor[1] + s.normal[0] * u];
+        expect(Math.abs(Math.min(...run.map((g) => distPointSegment(p, g.a, g.c))) - 0.08), `${s.text} @ ${k}/20`).toBeLessThanOrEqual(0.06);
+        expect(pointInPolygon(p, lot!.footprint), `${s.text} @ ${k}/20`).toBe(false);
+      }
+    }
+  });
+  test('los lotes tienen aristas de frente y no se pisan con ningún edificio (≤ 0,1 m²: redondeo y empalmes en T)', () => {
+    const lots = map.buildings.filter((b) => b.front);
+    expect(lots.length).toBeGreaterThan(100);
+    for (const l of lots) {
+      expect(l.front!.edges.length, l.id).toBeGreaterThan(0);
+      // lotOverlap descarta por caja: intersecar contra los 1400 edificios hace crecer el árbol global de polygon-clipping
+      // y vuelve lentos los tests que siguen
+      for (const o of map.buildings) if (o !== l) expect(lotOverlap(l.footprint, o.footprint).area, `${l.id} x ${o.id}`).toBeLessThanOrEqual(0.1);
+    }
   });
   test('ninguna ayuda de ascenso queda a menos de 1 m del borde', () => map.props.forEach((pr) => {
     const q = pr.kind === 'ladder' ? pr.base : pr.kind === 'dumpster' ? pr.position : null;
@@ -205,6 +294,10 @@ describe('huecos de suelo (flood fill sobre el mapa final)', () => {
       return !l || !fromMain.has(clusterOf.get(l.buildingId)!);
     }).map((p) => `${p.points[0].map((v) => v.toFixed(1)).join(', ')} (${p.area.toFixed(2)} m²)`);
     expect(stuck).toEqual([]);
+  });
+  test('al techo de cada lote relevado se llega desde la calle', () => {
+    const lots = map.buildings.filter((b) => b.front);
+    expect(lots.filter((b) => !fromMain.has(clusterOf.get(b.id)!)).map((b) => b.id)).toEqual([]);
   });
   test('los spawns caen en la componente principal del suelo', () => {
     for (const s of [...map.places.map((p) => p.spawn), ...map.randomSpawns]) expect(g.regionOf(s[0], s[2]), s.join(',')).toBe(0);

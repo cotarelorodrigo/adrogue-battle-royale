@@ -49,7 +49,10 @@ export interface Front { edges: number[]; corner: number[]; pb: PlantaBaja; arri
   /** Presente cuando las aristas de `edges`, en el sentido de la planta guardada (footprint[e] → footprint[e+1]), van de
    *  `hasta` a `desde`. Todas las del lote comparten sentido; sin la marca van de `desde` a `hasta`. */
   contra?: true;
-  ladrillo?: true; colorPB?: string; toldo?: { color: string; rayas?: true } }
+  ladrillo?: true; colorPB?: string; toldo?: { color: string; rayas?: true };
+  /** Metros de la corrida principal que ocupa una ayuda de ascenso (escalera o contenedor, con su margen) desde la punta
+   *  de `desde` (`inicio`) o la de `hasta` (`fin`): el toldo y el cartel dejan ese tramo libre. */
+  ayuda?: { inicio?: number; fin?: number } }
 export interface SignLook { fondo: string; letra: string; marco: string; fuente: Fuente; cursiva?: true }
 export const SIGN_H = 0.9;
 export const SIGN_D = 0.12;

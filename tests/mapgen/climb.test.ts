@@ -129,3 +129,63 @@ test('cluster cuyas ayudas caerían todas fuera del área: noAidOutside, no noAi
   expect(stats.noAid).toBe(0);
   expect(props).toHaveLength(1);
 });
+
+describe('lotes relevados: la ayuda no tapa la fachada', () => {
+  // calle al norte (z = −20); el lote m (x 10..20) tiene vecinos de 4 pisos pegados a los costados y un edificio de 4 pisos
+  // a 0,5 m detrás: su única arista a la calle es la fachada (z = 0), de desde (x = 10) a hasta (x = 20)
+  const front = (b: Building): Building => ({ ...b, front: { edges: [], corner: [], pb: 'vidriera', arriba: 'ventanas', puerta: 'inicio' } });
+  const vecinos = [box('w', 0, 0, 10, 10, 4), box('e', 20, 0, 30, 10, 4), box('fondo', 0, 10.5, 30, 20, 4)];
+  const line: Vec2[] = [[10, 0], [20, 0]];
+  const ayudaDe = (props: Prop[], id: string) => props.find((p) => (p.kind === 'ladder' && p.buildingId === id)
+    || (p.kind === 'dumpster' && p.position[0] > 10 && p.position[0] < 20 && p.position[1] < 0));
+  test('con la fachada como única arista a la calle, la escalera va en la punta pedida (no en el medio) y deja el tramo anotado', () => {
+    const m = front(box('m', 10, 0, 20, 10, 2));
+    const fin = placeClimbAidsWithStats([m, ...vecinos], roads, new Map([['m', { line, puntas: ['fin' as const] }]]));
+    const a = ayudaDe(fin.props, 'm');
+    if (a?.kind !== 'ladder') throw new Error('esperaba ladder');
+    expect(a.base[0]).toBeCloseTo(20 - 0.1 - 0.4, 6);
+    expect(a.base[1]).toBeCloseTo(0, 6);
+    expect(a.normal).toEqual([expect.closeTo(0, 9), expect.closeTo(-1, 9)]);
+    expect(fin.slots.get('m')).toEqual({ fin: expect.closeTo(0.1 + 0.8 + 0.2, 6) });
+    const ini = placeClimbAidsWithStats([m, ...vecinos], roads, new Map([['m', { line, puntas: ['inicio' as const] }]]));
+    const b = ayudaDe(ini.props, 'm');
+    if (b?.kind !== 'ladder') throw new Error('esperaba ladder');
+    expect(b.base[0]).toBeCloseTo(10 + 0.1 + 0.4, 6);
+    expect(ini.slots.get('m')).toEqual({ inicio: expect.closeTo(1.1, 6) });
+  });
+  test('un lote de un piso: el contenedor va en la punta y reserva su largo', () => {
+    const m = front(box('m', 10, 0, 20, 10, 1));
+    const { props, slots } = placeClimbAidsWithStats([m, ...vecinos], roads, new Map([['m', { line, puntas: ['fin' as const] }]]));
+    const a = ayudaDe(props, 'm');
+    if (a?.kind !== 'dumpster') throw new Error('esperaba dumpster');
+    expect(a.position[0]).toBeCloseTo(20 - 0.1 - 0.9, 6);
+    expect(a.position[1]).toBeCloseTo(-0.75, 6);
+    expect(slots.get('m')).toEqual({ fin: expect.closeTo(0.1 + 1.8 + 0.2, 6) });
+  });
+  test('con una arista libre sobre la calle de la esquina, la ayuda va ahí y la fachada queda entera', () => {
+    const m = front(box('m', 10, 0, 20, 10, 2));
+    // transversal por x = 26: su línea de edificación (3 + 3 m) es la arista este de m
+    const esquina: Road = { id: 'r2', kind: 'residential', width: 6, sidewalk: 3, points: [[26, -100], [26, 100]] };
+    const { props, slots } = placeClimbAidsWithStats([m, vecinos[0], vecinos[2]], [...roads, esquina], new Map([['m', { line, puntas: ['fin' as const] }]]));
+    const a = props.find((p) => p.kind === 'ladder' && p.buildingId === 'm');
+    if (a?.kind !== 'ladder') throw new Error('esperaba ladder');
+    expect(a.base[0]).toBeCloseTo(20, 6);
+    expect(a.normal[0]).toBeCloseTo(1, 9);
+    expect(slots.has('m')).toBe(false);
+  });
+  test('un fondo o un costado que da a un patio, sin calle, no sirve: la ayuda va en la punta de la fachada', () => {
+    const m = front(box('m', 10, 0, 20, 10, 2));
+    // sin vecino al este ni edificio detrás: el costado y el fondo están libres, pero no dan a ninguna calle
+    const { props, slots } = placeClimbAidsWithStats([m, vecinos[0]], roads, new Map([['m', { line, puntas: ['fin' as const] }]]));
+    const a = props.find((p) => p.kind === 'ladder' && p.buildingId === 'm');
+    if (a?.kind !== 'ladder') throw new Error('esperaba ladder');
+    expect(a.base).toEqual([expect.closeTo(19.5, 6), expect.closeTo(0, 6)]);
+    expect(slots.get('m')).toEqual({ fin: expect.closeTo(1.1, 6) });
+  });
+  test('sin el lote en el mapa de lotes, sigue yendo al medio de la arista', () => {
+    const m = front(box('m', 10, 0, 20, 10, 2));
+    const a = ayudaDe(placeClimbAidsWithStats([m, ...vecinos], roads).props, 'm');
+    if (a?.kind !== 'ladder') throw new Error('esperaba ladder');
+    expect(a.base[0]).toBeCloseTo(15, 6);
+  });
+});

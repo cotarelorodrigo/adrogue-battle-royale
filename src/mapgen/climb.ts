@@ -1,4 +1,4 @@
-import { areaRect, polygonArea } from '../shared/geo.ts';
+import { areaRect, distPointSegment, pointInPolygon, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Prop, Road } from '../shared/mapdata.ts';
 import { heightFor } from './buildings.ts';
@@ -20,6 +20,23 @@ const LADDER_W = 0.8;
 const LADDER_D = 0.6;
 const AREA_MARGIN = 1;
 const NON_VEHICULAR = new Set(['footway', 'pedestrian', 'service']);
+/** En la fachada de un lote, la ayuda queda a SLOT_END de la punta, y el cartel y el toldo empiezan SLOT_GAP más allá. */
+const SLOT_END = 0.1;
+const SLOT_GAP = 0.2;
+/** Una arista de la planta es de la fachada si sus dos puntas quedan a esta distancia de la línea del frente (como
+ *  frontEdgesOf de lots.ts). */
+const ON_FRONT = 0.15;
+/** Hasta dónde se busca una calle alrededor de una arista de lote que no es la fachada (más que cualquier vereda). */
+const FACES_ROAD_PAD = 6;
+
+/** Punta de la corrida principal de un lote: `inicio` es la de `desde`, `fin` la de `hasta`. */
+export type Punta = 'inicio' | 'fin';
+/** Un lote relevado, para las ayudas: su fachada sobre la planta (de `desde` a `hasta`) y las puntas donde puede ir una
+ *  ayuda, en orden de preferencia. */
+export interface LotFront { line: Vec2[]; puntas: Punta[] }
+/** Por lote: cuántos metros de la corrida principal ocupa una ayuda desde cada punta, con su margen; el cartel y el toldo
+ *  dejan ese tramo libre. */
+export type AidSlots = Map<string, Partial<Record<Punta, number>>>;
 
 interface Index { buildings: Building[]; grid: { query(box: Box): number[] } }
 
@@ -65,6 +82,8 @@ interface Edge {
   n: Vec2;
   d: Vec2; // tangente unitaria a→b
   street: boolean;
+  /** Solo en la fachada de un lote: la ayuda va en esta punta y ocupa `largo` m de la corrida. */
+  slot?: { punta: Punta; largo: number };
   aid?: Aid; // ayuda que iría en esta arista (perezoso)
   inside?: boolean; // la ayuda queda a ≥ 1 m del borde del área (perezoso)
   free?: boolean; // caja del acceso fuera de calzada y de otros edificios (perezoso)
@@ -79,6 +98,64 @@ interface Ctx {
   vehicular: Road[];
   edges: Map<number, Edge[]>;
   rect: { minX: number; maxX: number; minZ: number; maxZ: number };
+  lots: Map<string, LotFront>;
+}
+
+/** ¿El rayo de RAY_LEN m desde `mid` hacia `n` sale sin tocar otro edificio? */
+function opensToStreet(ctx: Ctx, bi: number, mid: Vec2, n: Vec2): boolean {
+  const end: Vec2 = [mid[0] + n[0] * RAY_LEN, mid[1] + n[1] * RAY_LEN];
+  for (const j of ctx.ix.grid.query(bboxOf([mid, end]))) {
+    if (j !== bi && segToPolygonDist(mid, end, ctx.ix.buildings[j].footprint) === 0) return false;
+  }
+  return true;
+}
+
+/** ¿Un metro afuera de `mid` ya es vereda o calzada de una calle vehicular? Se llega desde la calle sin dudas. */
+function facesRoad(ctx: Ctx, mid: Vec2, n: Vec2): boolean {
+  const q: Vec2 = [mid[0] + n[0], mid[1] + n[1]];
+  for (const k of ctx.roadGrid.query(bboxOf([q], FACES_ROAD_PAD))) {
+    const r = ctx.vehicular[k];
+    const reach = r.width / 2 + r.sidewalk + 0.5;
+    for (let s = 0; s + 1 < r.points.length; s++) if (distPointSegment(q, r.points[s], r.points[s + 1]) <= reach) return true;
+  }
+  return false;
+}
+
+const nearLine = (p: Vec2, line: Vec2[]): boolean => line.some((q, i) => i > 0 && distPointSegment(p, line[i - 1], q) <= ON_FRONT);
+
+/**
+ * Aristas candidatas en la fachada de un lote: una por punta pedida, con la ayuda pegada a esa punta (en el primer tramo
+ * recto, desde la punta, donde entra entera) y no en el medio, donde taparía el cartel y la vidriera.
+ */
+function slotEdges(ctx: Ctx, bi: number, lot: LotFront): Edge[] {
+  const b = ctx.ix.buildings[bi];
+  const half = (b.height <= DUMPSTER_MAX_H ? DUMPSTER_LEN : LADDER_W) / 2;
+  const line = lot.line;
+  const lens = line.slice(1).map((q, i) => Math.hypot(q[0] - line[i][0], q[1] - line[i][1]));
+  const total = lens.reduce((t, l) => t + l, 0);
+  if (total < MIN_STREET_EDGE) return [];
+  const out: Edge[] = [];
+  for (const punta of lot.puntas) {
+    const order = lens.map((_, k) => k);
+    if (punta === 'fin') order.reverse();
+    let from = 0; // de la punta al comienzo del tramo k
+    for (const k of order) {
+      const len = lens[k];
+      if (len >= 2 * (SLOT_END + half)) {
+        const [p, q] = punta === 'inicio' ? [line[k], line[k + 1]] : [line[k + 1], line[k]];
+        const d: Vec2 = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
+        const s = SLOT_END + half;
+        const mid: Vec2 = [p[0] + d[0] * s, p[1] + d[1] * s];
+        let n: Vec2 = [-d[1], d[0]];
+        if (pointInPolygon([mid[0] + n[0] * 0.05, mid[1] + n[1] * 0.05], b.footprint)) n = [d[1], -d[0]];
+        const largo = from + s + half + SLOT_GAP;
+        if (largo <= total) out.push({ bi, i: -1, len, mid, n, d, street: opensToStreet(ctx, bi, mid, n), slot: { punta, largo } });
+        break;
+      }
+      from += len;
+    }
+  }
+  return out;
 }
 
 function edgesOf(ctx: Ctx, bi: number): Edge[] {
@@ -86,29 +163,23 @@ function edgesOf(ctx: Ctx, bi: number): Edge[] {
   if (cached) return cached;
   const b = ctx.ix.buildings[bi];
   const fp = b.footprint;
+  const lot = ctx.lots.get(b.id);
   const out: Edge[] = [];
   for (let i = 0; i < fp.length; i++) {
     const a = fp[i];
     const c = fp[(i + 1) % fp.length];
     const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
     if (len < 1e-6) continue;
+    if (lot && nearLine(a, lot.line) && nearLine(c, lot.line)) continue; // la fachada de un lote: va por slotEdges
     const mid: Vec2 = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
     const n = outwardNormal(a, c);
     const d: Vec2 = [(c[0] - a[0]) / len, (c[1] - a[1]) / len];
-    let street = len >= MIN_STREET_EDGE;
-    if (street) {
-      const end: Vec2 = [mid[0] + n[0] * RAY_LEN, mid[1] + n[1] * RAY_LEN];
-      const q = bboxOf([mid, end]);
-      for (const j of ctx.ix.grid.query(q)) {
-        if (j === bi) continue;
-        if (segToPolygonDist(mid, end, ctx.ix.buildings[j].footprint) === 0) {
-          street = false;
-          break;
-        }
-      }
-    }
+    // en un lote, otra arista que no sea la fachada sirve solo si da a una calle (la de la esquina): un fondo o una
+    // medianera que dan a un patio pueden no tener salida, y entonces al techo no se llegaría desde la vereda
+    const street = len >= MIN_STREET_EDGE && opensToStreet(ctx, bi, mid, n) && (!lot || facesRoad(ctx, mid, n));
     out.push({ bi, i, len, mid, n, d, street });
   }
+  if (lot) out.push(...slotEdges(ctx, bi, lot));
   ctx.edges.set(bi, out);
   return out;
 }
@@ -171,12 +242,13 @@ function inArea(ctx: Ctx, e: Edge): boolean {
 }
 
 function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edge; tier: number } | null {
-  // tier 0: caja libre; tier 1: cualquier arista a calle. Gana el mayor `pick`, luego arista más larga, luego orden.
-  for (const tier of [0, 1]) {
+  // tier 0: caja libre; tier 1: cualquier arista a calle. En cada tier, la punta de la fachada de un lote va después de
+  // las otras aristas. Gana el mayor `pick`, luego arista más larga, luego orden.
+  for (const [tier, slot] of [[0, false], [0, true], [1, false], [1, true]] as const) {
     let best: Edge | null = null;
     let bestScore = -Infinity;
     for (const e of cands) {
-      if (!e.street || !inArea(ctx, e)) continue;
+      if (!e.street || !inArea(ctx, e) || (e.slot !== undefined) !== slot) continue;
       if (tier === 0 && !isFree(ctx, e, aidOf(ctx, e))) continue;
       const score = pick(e);
       if (best === null || score > bestScore + 1e-9 || (Math.abs(score - bestScore) <= 1e-9 && e.len > best.len + 1e-9)) {
@@ -193,14 +265,20 @@ function bestOf(ctx: Ctx, cands: Edge[], pick: (e: Edge) => number): { edge: Edg
  *  `noAidOutside`: clusters cuyas aristas candidatas caen todas fuera del área (edificios del borde): no se puede. */
 export interface AidStats { clusters: number; dumpsters: number; ladders: number; tier0: number; tier1: number; fallback: number; noAid: number; noAidOutside: number }
 
-/** Como `placeClimbAids`, pero devuelve además cuántos clusters cayeron en cada nivel de preferencia. */
-export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): { props: Prop[]; stats: AidStats } {
+/**
+ * Como `placeClimbAids`, pero devuelve además cuántos clusters cayeron en cada nivel de preferencia.
+ * `lots`: los lotes relevados (por id de edificio). En uno, la ayuda va en otra arista que dé a una calle (la de la
+ * esquina) si la hay; si no, en una punta de la fachada y no en el medio, y `slots` dice cuánto ocupa (el cartel y el
+ * toldo dejan ese tramo libre).
+ */
+export function placeClimbAidsWithStats(buildings: Building[], roads: Road[], lots: Map<string, LotFront> = new Map()): { props: Prop[]; stats: AidStats; slots: AidSlots } {
   const ix = indexOf(buildings);
   const vehicular = roads.filter((r) => !NON_VEHICULAR.has(r.kind));
   const roadBoxes = vehicular.map((r) => bboxOf(r.points, r.width / 2));
-  const ctx: Ctx = { ix, roadBoxes, roadGrid: createGrid(roadBoxes), vehicular, edges: new Map(), rect: areaRect() };
+  const ctx: Ctx = { ix, roadBoxes, roadGrid: createGrid(roadBoxes), vehicular, edges: new Map(), rect: areaRect(), lots };
   const idx = new Map(buildings.map((b, i) => [b.id, i]));
   const props: Prop[] = [];
+  const slots: AidSlots = new Map();
   const stats: AidStats = { clusters: 0, dumpsters: 0, ladders: 0, tier0: 0, tier1: 0, fallback: 0, noAid: 0, noAidOutside: 0 };
 
   for (const cluster of clustersOf(ix)) {
@@ -214,13 +292,18 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
       placed.push(aid);
       props.push(aid.prop);
       stats[aid.prop.kind === 'dumpster' ? 'dumpsters' : 'ladders']++;
+      if (e.slot) {
+        const id = buildings[e.bi].id;
+        slots.set(id, { ...slots.get(id), [e.slot.punta]: e.slot.largo });
+      }
     };
 
-    // primer acceso: arista a calle del edificio más bajo
+    // primer acceso: arista a calle del edificio más bajo; si no tiene, la de otro miembro (desde cualquier techo del
+    // cluster se llega a los demás); si ninguno tiene, la arista más larga del más bajo
     let lowest = members[0];
     for (const i of members) if (buildings[i].height < buildings[lowest].height - 1e-9) lowest = i;
     const lowEdges = edgesOf(ctx, lowest);
-    const first = bestOf(ctx, lowEdges, () => 0);
+    const first = bestOf(ctx, lowEdges, () => 0) ?? (members.length > 1 ? bestOf(ctx, members.flatMap((i) => edgesOf(ctx, i)), () => 0) : null);
     if (first) {
       push(first.edge);
       stats[first.tier === 0 ? 'tier0' : 'tier1']++;
@@ -230,17 +313,10 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
       if (longest) {
         push(longest);
         stats.fallback++;
+      } else if (members.some((i) => edgesOf(ctx, i).some((e) => inArea(ctx, e)))) {
+        stats.noAid++;
       } else {
-        // ninguna arista del más bajo sirve (borde del área): otro miembro del cluster
-        const other = bestOf(ctx, members.flatMap((i) => edgesOf(ctx, i)), () => 0);
-        if (other) {
-          push(other.edge);
-          stats[other.tier === 0 ? 'tier0' : 'tier1']++;
-        } else if (members.some((i) => edgesOf(ctx, i).some((e) => inArea(ctx, e)))) {
-          stats.noAid++;
-        } else {
-          stats.noAidOutside++; // todas las aristas candidatas quedan fuera del área jugable
-        }
+        stats.noAidOutside++; // todas las aristas candidatas quedan fuera del área jugable
       }
     }
 
@@ -253,9 +329,9 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[]): {
       push(pick.edge);
     }
   }
-  return { props, stats };
+  return { props, stats, slots };
 }
 
-export function placeClimbAids(buildings: Building[], roads: Road[]): Prop[] {
-  return placeClimbAidsWithStats(buildings, roads).props;
+export function placeClimbAids(buildings: Building[], roads: Road[], lots?: Map<string, LotFront>): Prop[] {
+  return placeClimbAidsWithStats(buildings, roads, lots).props;
 }

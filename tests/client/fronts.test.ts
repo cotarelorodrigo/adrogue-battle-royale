@@ -167,6 +167,22 @@ describe('frontGeometry', () => {
     expect(Math.max(...xs)).toBeCloseTo(9 - AWNING.inset);
   });
 
+  test('toldo con una ayuda de ascenso en una punta: deja libre ese tramo (también con contra)', () => {
+    const xsOf = (f: Front) => quads(gfront(lot('a', 9, f))).filter((q) => Math.abs(q.n.y) > 1e-6).flatMap((q) => q.pos.map((v) => v.x));
+    const toldo = { color: '#aa2222' };
+    const fin = xsOf(front({ toldo, ayuda: { fin: 2.1 } }));
+    expect(Math.min(...fin)).toBeCloseTo(AWNING.inset);
+    expect(Math.max(...fin)).toBeCloseTo(9 - 2.1);
+    // contra: desde es x = 9, así que `inicio` es la punta de x = 9
+    const ini = xsOf(front({ toldo, ayuda: { inicio: 1.1 }, contra: true }));
+    expect(Math.min(...ini)).toBeCloseTo(AWNING.inset);
+    expect(Math.max(...ini)).toBeCloseTo(9 - 1.1);
+    const dos = xsOf(front({ toldo, ayuda: { inicio: 1.1, fin: 2.1 } }));
+    expect(Math.min(...dos)).toBeCloseTo(1.1);
+    expect(Math.max(...dos)).toBeCloseTo(9 - 2.1);
+    expect(xsOf(front({ toldo, ayuda: { inicio: 5, fin: 4.5 } }))).toEqual([]);
+  });
+
   test('esquina: la planta baja usa la celda rest y no lleva toldo', () => {
     // frente sobre z = 0 y esquina sobre x = 9 (arista 1), 6 m
     const bd = lot('e', 9, front({ corner: [1], toldo: { color: '#aa2222' } }), { footprint: [[0, 0], [9, 0], [9, -6], [0, -6]] });

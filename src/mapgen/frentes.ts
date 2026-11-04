@@ -4,10 +4,11 @@ import { distPointSegment, project } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Road, Sign } from '../shared/mapdata.ts';
 import { heightFor } from './buildings.ts';
+import type { AidSlots, LotFront } from './climb.ts';
 import { cumulative, pointAt, resolveFrontage, vehicular } from './frontage.ts';
 import type { Frontage } from './frontage.ts';
 import type { FrenteInput, FrentesInput } from './frentes-input.ts';
-import { carveLots, layoutLots, lotBuilding, lotSign } from './lots.ts';
+import { aidEnds, carveLots, layoutLots, lotBuilding, lotOverlap, lotSign } from './lots.ts';
 import type { LotShape } from './lots.ts';
 import type { OsmPoi } from './osm.ts';
 import { normalizeName } from './places.ts';
@@ -16,14 +17,40 @@ import type { PlaceInput } from './places-input.ts';
 const ADENTRO_MIN = -6;
 const ADENTRO_MAX = 25;
 const NAME_MIN = 3;
+/** Dos lotes de frentes distintos se pisan si comparten más de OVERLAP_AREA m² con un ancho medio de más de
+ *  OVERLAP_WIDTH m. Donde dos frentes seguidos se juntan en un empalme en T cada uno corta su lote a escuadra con su
+ *  propia línea, y queda una astilla de 1 o 2 cm de ancho: esa no cuenta. */
+const OVERLAP_AREA = 0.05;
+const OVERLAP_WIDTH = 0.05;
 
 export interface FrentesResult {
   buildings: Building[]; // Microsoft recortados + lotes
   fixed: Map<string, { buildingId: string; sign: Sign }>;
   signs: Sign[]; // carteles de los lotes que no son de un lugar
   fronts: Map<string, { front: Vec2[]; cornerRings: Vec2[][] }>; // por id de lote, para las aristas después del redondeo
+  /** Por id de lote con edificio: su fachada y las puntas donde puede ir una ayuda de ascenso (para climb.ts). */
+  climb: Map<string, LotFront>;
+  lots: LotShape[];
+  linked: Set<string>; // ids de los lotes ligados a un lugar (su cartel es el del lugar)
   warnings: string[];
   report: string[]; // informativo: distancia de cada lote enlazado a su punto de OSM o del lugar
+}
+
+/**
+ * Los carteles de los lotes: los de los lotes ligados a un lugar (por id de lote) y el resto. `slots` (de climb.ts): los
+ * metros que ocupa una ayuda de ascenso desde cada punta de la fachada, que el cartel deja libres. `warnings`: dónde
+ * avisar un `cartel.ancho` que no entra.
+ */
+export function lotSigns(fr: Pick<FrentesResult, 'lots' | 'linked'>, slots: AidSlots = new Map(), warnings?: string[]): { signs: Sign[]; byLot: Map<string, Sign> } {
+  const signs: Sign[] = [];
+  const byLot = new Map<string, Sign>();
+  for (const l of fr.lots) {
+    const sign = lotSign(l, heightFor(l.lote.pisos), slots.get(l.id), warnings);
+    if (!sign) continue;
+    if (fr.linked.has(l.id)) byLot.set(l.id, sign);
+    else signs.push(sign);
+  }
+  return { signs, byLot };
 }
 
 const fmt = (n: number): string => n.toFixed(1).replace('.', ',');
@@ -76,20 +103,29 @@ export function onFace(p: Vec2, fr: Frontage, roads: Road[], calle: string): boo
 }
 
 export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Building[], places: PlaceInput[], pois: OsmPoi[]): FrentesResult {
-  const res: FrentesResult = { buildings, fixed: new Map(), signs: [], fronts: new Map(), warnings: [], report: [] };
+  const res: FrentesResult = {
+    buildings, fixed: new Map(), signs: [], fronts: new Map(), climb: new Map(), lots: [], linked: new Set(), warnings: [], report: [],
+  };
   if (input.frentes.length === 0) return res;
 
   const faces: { f: FrenteInput; fr: Frontage; lots: LotShape[] }[] = input.frentes.map((f) => {
     const fr = resolveFrontage(roads, f);
     return { f, fr, lots: layoutLots(f, fr, roads) };
   });
-  const lotHeight = (l: LotShape): number => heightFor(l.lote.pisos);
+  // dentro de un frente los lotes no se pisan (layoutLots); entre frentes, si se copió un frente o si se cruzan las
+  // esquinas de dos frentes perpendiculares
+  faces.forEach((a, ia) => faces.slice(0, ia).forEach((b) => a.lots.forEach((la, i) => b.lots.forEach((lb, j) => {
+    if (!la.footprint || !lb.footprint) return;
+    const o = lotOverlap(la.footprint, lb.footprint);
+    if (o.area > OVERLAP_AREA && o.width > OVERLAP_WIDTH) {
+      res.warnings.push(`frente ${a.f.id}, lote ${i + 1} se pisa con frente ${b.f.id}, lote ${j + 1} (${fmt(o.area)} m²)`);
+    }
+  }))));
   const frontMid = (l: LotShape): Vec2 => pointAt(l.front, cumulative(l.front), cumulative(l.front).at(-1)! / 2);
-  const linked = new Set<string>(); // lotes ligados a un lugar
+  const placeLot = new Map<string, string>(); // id del lugar → id del lote (el cartel va al final, con lotSigns)
   const link = (placeId: string, l: LotShape, pos: Vec2): void => {
-    const sign = lotSign(l, lotHeight(l))!;
-    res.fixed.set(placeId, { buildingId: l.id, sign });
-    linked.add(l.id);
+    placeLot.set(placeId, l.id);
+    res.linked.add(l.id);
     const m = frontMid(l);
     res.report.push(`${placeId} -> ${l.id}: a ${fmt(Math.hypot(m[0] - pos[0], m[1] - pos[1]))} m del punto del lugar`);
   };
@@ -105,7 +141,7 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
 
   // enlace automático: lugares sin lote explícito que caen sobre un frente
   for (const p of places) {
-    if (p.type === 'plaza' || p.type === 'monument' || res.fixed.has(p.id)) continue;
+    if (p.type === 'plaza' || p.type === 'monument' || placeLot.has(p.id)) continue;
     const pos = positions.get(p.id)!;
     const face = faces.find((x) => onFace(pos, x.fr, roads, x.f.calle));
     if (!face) continue;
@@ -135,10 +171,14 @@ export function applyFrentes(input: FrentesInput, roads: Road[], buildings: Buil
   }
 
   const lots = faces.flatMap((x) => x.lots);
+  res.lots = lots;
   res.buildings = [...carveLots(buildings, lots.flatMap((l) => l.claim)), ...lots.flatMap((l) => lotBuilding(l) ?? [])];
   for (const l of lots) {
     res.fronts.set(l.id, { front: l.front, cornerRings: l.cornerRings });
-    if (l.lote.cartel && !linked.has(l.id)) res.signs.push(lotSign(l, lotHeight(l))!);
+    if (l.footprint) res.climb.set(l.id, { line: l.front, puntas: aidEnds(l) });
   }
+  const signs = lotSigns(res, new Map(), res.warnings);
+  res.signs = signs.signs;
+  for (const [placeId, lotId] of placeLot) res.fixed.set(placeId, { buildingId: lotId, sign: signs.byLot.get(lotId)! });
   return res;
 }
