@@ -26,6 +26,8 @@ export interface WeaponSpec {
   headMult: number;
   /** fov (grados) al apuntar. Escopeta: 55°, como la pistola y el rifle (el spec no le fija uno). */
   aimFov: number;
+  /** true = mira telescópica: con mira la dispersión es la de quieto (sin importar el movimiento) y sin mira la de moviéndose */
+  scope?: true;
 }
 
 /** Valores del spec §4. */
@@ -33,7 +35,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
   pistola: { damage: 22, pellets: 1, rate: 4, auto: false, mag: 12, reload: 1.2, spreadStill: 1, spreadMove: 2.5, range: 120, ammo: 'liviana', headMult: 1.5, aimFov: 55 },
   escopeta: { damage: 10, pellets: 8, rate: 1.1, auto: false, mag: 6, reload: 2.4, spreadStill: 5, spreadMove: 6, range: 35, falloffFrom: 10, ammo: 'cartuchos', headMult: 1.5, aimFov: 55 },
   rifle: { damage: 20, pellets: 1, rate: 9, auto: true, mag: 30, reload: 2.0, spreadStill: 0.8, spreadMove: 3, range: 250, ammo: 'liviana', headMult: 1.5, aimFov: 55 },
-  francotirador: { damage: 95, pellets: 1, rate: 0.7, auto: false, mag: 5, reload: 3.0, spreadStill: 0, spreadMove: 6, range: 400, ammo: 'pesada', headMult: 2, aimFov: 20 },
+  francotirador: { damage: 95, pellets: 1, rate: 0.7, auto: false, mag: 5, reload: 3.0, spreadStill: 0, spreadMove: 6, range: 400, ammo: 'pesada', headMult: 2, aimFov: 20, scope: true },
 };
 
 export const AMMO_BOX: Record<AmmoId, number> = { liviana: 30, cartuchos: 12, pesada: 8 };
@@ -87,6 +89,13 @@ export function finishReload(g: Gun, t: number, reserve: number): { gun: Gun; us
 }
 
 // ---------- dispersión ----------
+
+/** Dispersión (grados) según el estado del tirador. Con mira baja a la mitad; el francotirador (`scope`) es 0° con mira
+ *  y 6° sin mira, esté quieto o no. */
+export function spreadFor(w: WeaponSpec, s: { aiming: boolean; moving: boolean }): number {
+  if (w.scope) return s.aiming ? w.spreadStill : w.spreadMove;
+  return (s.moving ? w.spreadMove : w.spreadStill) * (s.aiming ? 0.5 : 1);
+}
 
 /** Direcciones unitarias de `pellets` rayos, uniformes en el disco angular de semiángulo `spreadDeg` alrededor de la
  *  mira. Convención de la cámara (player.ts / scene.ts, orden 'YXZ'): yaw 0 mira a −z, yaw positivo gira a la
@@ -168,6 +177,7 @@ export function hitscan(world: CollisionWorld, targets: readonly Hitbox[], origi
   // mundo
   let worldHit: { dist: number; point: Vec3; normal: Vec3 } | null = null;
   if (world.overlaps(origin[0], origin[2], 0, origin[1] - EPS, origin[1] + EPS)) {
+    // `+ 0` convierte −0 en 0 (toEqual distingue ambos)
     worldHit = { dist: 0, point: [origin[0], origin[1], origin[2]], normal: [-d[0] + 0, -d[1] + 0, -d[2] + 0] };
   } else {
     const r = world.raycast(origin, d, range);

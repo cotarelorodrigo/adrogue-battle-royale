@@ -7,6 +7,9 @@ describe('rng', () => {
     expect(seq(1)).not.toEqual(seq(2));
     for (const v of seq(1)) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThan(1); }
   });
+  it('valor conocido de mulberry32 con semilla 1', () => {
+    expect(createRng(1).next()).toBeCloseTo(0.6270739405881613, 12);
+  });
   it('pick respeta los pesos', () => {
     const r = createRng(7);
     let a = 0;

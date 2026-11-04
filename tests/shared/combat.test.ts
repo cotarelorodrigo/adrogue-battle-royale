@@ -1,4 +1,4 @@
-import { AMMO_BOX, AMMO_MAX, WEAPONS, applyDamage, applyZoneDamage, canFire, finishReload, fire, hitscan, newGun, shotDamage, spreadDirs, startReload } from '../../src/shared/combat.ts';
+import { AMMO_BOX, AMMO_MAX, WEAPONS, applyDamage, applyZoneDamage, canFire, finishReload, fire, hitscan, newGun, shotDamage, spreadDirs, spreadFor, startReload } from '../../src/shared/combat.ts';
 import type { Hitbox } from '../../src/shared/combat.ts';
 import { CollisionWorld } from '../../src/shared/collision.ts';
 import type { Prism } from '../../src/shared/collision.ts';
@@ -10,10 +10,10 @@ const box = (x0: number, z0: number, x1: number, z1: number, maxY = 6): Prism =>
 const mk = (prisms: Prism[] = []) => new CollisionWorld(prisms, [], bounds);
 const dummy: Hitbox = { id: 'm', pos: [0, 0, -10], crouching: false };
 const N: Vec3 = [0, 0, -1];
-const shootAt = (world: CollisionWorld, h: number, tg = dummy) => {
+/** Dispara desde (0, h, 0) hacia el punto (0, aimY, tg.z) del maniquí (por defecto horizontal). */
+const shootAt = (world: CollisionWorld, h: number, tg = dummy, aimY = h) => {
   const o: Vec3 = [0, h, 0];
-  const d: Vec3 = [tg.pos[0] - o[0], h * 0 + (h - h), tg.pos[2] - o[2]];
-  return hitscan(world, [tg], o, d, 100);
+  return hitscan(world, [tg], o, [tg.pos[0] - o[0], aimY - h, tg.pos[2] - o[2]], 100);
 };
 
 describe('daño y chaleco', () => {
@@ -96,6 +96,43 @@ describe('spreadDirs', () => {
   });
 });
 
+describe('spreadDirs distribución', () => {
+  it('uniforme en el disco: ~25 % dentro de la mitad del ángulo, laterales centrados', () => {
+    const yaw = 0.7, pitch = -0.3, max = 5, n = 4000;
+    const [c] = spreadDirs(createRng(1), yaw, pitch, 0, 1);
+    const right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)];
+    const up: Vec3 = [Math.sin(yaw) * Math.sin(pitch), Math.cos(pitch), Math.cos(yaw) * Math.sin(pitch)];
+    let inner = 0, sr = 0, su = 0;
+    for (const d of spreadDirs(createRng(5), yaw, pitch, max, n)) {
+      const ang = Math.acos(Math.min(1, d[0] * c[0] + d[1] * c[1] + d[2] * c[2])) * 180 / Math.PI;
+      if (ang <= max / 2) inner++;
+      sr += d[0] * right[0] + d[1] * right[1] + d[2] * right[2];
+      su += d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+    }
+    expect(Math.abs(inner / n - 0.25)).toBeLessThan(0.03);
+    expect(Math.abs(sr / n)).toBeLessThan(0.002);
+    expect(Math.abs(su / n)).toBeLessThan(0.002);
+  });
+});
+
+describe('spreadFor', () => {
+  const st = (aiming: boolean, moving: boolean) => ({ aiming, moving });
+  it('francotirador: 0° con mira (quieto o no), 6° sin mira', () => {
+    const w = WEAPONS.francotirador;
+    expect(spreadFor(w, st(true, false))).toBe(0);
+    expect(spreadFor(w, st(true, true))).toBe(0);
+    expect(spreadFor(w, st(false, false))).toBe(6);
+    expect(spreadFor(w, st(false, true))).toBe(6);
+  });
+  it('rifle: quieto/moviéndose, y la mira baja a la mitad', () => {
+    const w = WEAPONS.rifle;
+    expect(spreadFor(w, st(false, false))).toBeCloseTo(0.8, 9);
+    expect(spreadFor(w, st(false, true))).toBeCloseTo(3, 9);
+    expect(spreadFor(w, st(true, false))).toBeCloseTo(0.4, 9);
+    expect(spreadFor(w, st(true, true))).toBeCloseTo(1.5, 9);
+  });
+});
+
 describe('hitscan', () => {
   it('maniquí a 10 m: cabeza, cuerpo, piernas', () => {
     const w = mk();
@@ -121,6 +158,41 @@ describe('hitscan', () => {
     const r = hitscan(mk(), [], [0, 1.6, 0], [0, -1, -1], 50);
     expect(r).toMatchObject({ kind: 'world', normal: [0, 1, 0] });
     expect(r!.dist).toBeCloseTo(1.6 * Math.SQRT2, 6);
+  });
+  it('tiro lateral que pasa a 0,4 m del eje no pega', () => {
+    expect(hitscan(mk(), [dummy], [0.4, 1, 0], N, 100)).toBeNull();
+    expect(hitscan(mk(), [dummy], [0.3, 1, 0], N, 100)).toMatchObject({ kind: 'target' });
+  });
+  it('un maniquí a la espalda no cuenta', () => {
+    expect(hitscan(mk(), [dummy], [0, 1, 0], [0, 0, 1], 100)).toBeNull();
+  });
+  it('tiro desde arriba a la tapa pega en la cabeza', () => {
+    // desde (0, 6, -4), hacia el punto (0, 1.8, -10): entra por la tapa
+    const r = hitscan(mk(), [dummy], [0, 6, -4], [0, -4.2, -6], 100);
+    expect(r).toMatchObject({ kind: 'target', part: 'cabeza' });
+    expect(r!.point[1]).toBeCloseTo(1.8, 6);
+  });
+  it('tiro en pendiente al cuerpo', () => {
+    // de (0, 3, 0) hacia (0, 1.0, -10) cruza el cilindro cerca de y ≈ 1.1
+    const r = shootAt(mk(), 3, dummy, 1.0);
+    expect(r).toMatchObject({ kind: 'target', part: 'cuerpo' });
+    expect(r!.point[1]).toBeGreaterThan(0.8);
+    expect(r!.point[1]).toBeLessThan(1.45);
+  });
+  it('de dos maniquíes gana el más cercano aunque venga segundo', () => {
+    const far: Hitbox = { id: 'lejos', pos: [0, 0, -20], crouching: false };
+    const near: Hitbox = { id: 'cerca', pos: [0, 0, -10], crouching: false };
+    expect(hitscan(mk(), [far, near], [0, 1, 0], N, 100)).toMatchObject({ id: 'cerca' });
+  });
+  it('maniquí delante de la pared da target; pared delante del maniquí da world', () => {
+    expect(hitscan(mk([box(-5, -16, 5, -15)]), [dummy], [0, 1, 0], N, 100)).toMatchObject({ kind: 'target', id: 'm' });
+    expect(hitscan(mk([box(-5, -6, 5, -5)]), [dummy], [0, 1, 0], N, 100)).toMatchObject({ kind: 'world' });
+  });
+  it('un tiro en pendiente que toca el piso antes del maniquí da world', () => {
+    // de (0, 1.6, 0) hacia (0, 0, -20): toca el piso a 20 m, antes del maniquí que está a 30 m
+    const r = hitscan(mk(), [{ ...dummy, pos: [0, 0, -30] }], [0, 1.6, 0], [0, -1.6, -20], 100);
+    expect(r).toMatchObject({ kind: 'world', normal: [0, 1, 0] });
+    expect(r!.point[2]).toBeCloseTo(-20, 6);
   });
   it('el alcance corta el rayo', () => {
     expect(hitscan(mk(), [dummy], [0, 1, 0], N, 5)).toBeNull();
