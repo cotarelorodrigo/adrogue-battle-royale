@@ -15,12 +15,19 @@ export type Role = 'pared' | 'tabique' | 'losa' | 'escalon' | 'baranda' | 'dinte
  *  edificio (tarea 5), no solo de cerca. En una pared o un tabique la primera arista es una de sus caras (en las
  *  exteriores, la de afuera): el espesor se mide desde ahí. */
 export interface Block { polygon: Vec2[]; y0: number; y1: number; collide: Collide; role: Role; top?: Look; bottom?: Look; side?: Look; hide?: number[]; out?: true }
-/** Base; cada tarea de interior suma los suyos. */
-export type ItemModel = 'silla' | 'banqueta' | 'lampara' | 'mesa' | 'sillon' | 'hoja-vidrio';
+/** Base; cada tarea de interior suma los suyos. Bancos (tarea 6): el cajero automático, el escritorio con sus dos sillas,
+ *  el turnero colgado, el puesto de caja (su tramo de mostrador, con el cajero sentado detrás) y una fila de 4 sillas de
+ *  espera unidas. */
+export type ItemModel = 'silla' | 'banqueta' | 'lampara' | 'mesa' | 'sillon' | 'hoja-vidrio'
+  | 'cajero' | 'escritorio' | 'turnero' | 'puesto-caja' | 'sillas-espera';
 /** yaw: rotación three.js sobre +Y, como Prop.rotation. detail 2: no se dibuja en baja. */
 export interface Item { model: ItemModel; at: Vec3; yaw: number; color?: string; detail?: 2 }
-/** Cartel: `normal` apunta hacia quien lo lee. Uno `out` se vuelve un Sign del mapa (alto SIGN_H). */
-export interface Label { text: string; at: Vec3; normal: Vec2; width: number; height: number; look: SignLook; glow?: true; out?: true }
+/** Lo que un cartel puede llevar dibujado en vez de su texto (el cliente lo dibuja en canvas): la puerta redonda del
+ *  tesoro de un banco (tarea 6). */
+export type LabelDrawing = 'tesoro';
+/** Cartel: `normal` apunta hacia quien lo lee. Uno `out` se vuelve un Sign del mapa (alto SIGN_H). Con `drawing`, en vez
+ *  del texto va ese dibujo (el texto queda para nombrarlo). */
+export interface Label { text: string; at: Vec3; normal: Vec2; width: number; height: number; look: SignLook; glow?: true; out?: true; drawing?: LabelDrawing }
 export interface Lamp { at: Vec3; radius: number; power: number }
 export interface FloorArea { level: number; y: number; polygon: Vec2[]; holes: Vec2[][]; area: number }
 /** foot: 0,6 m antes del primer escalón; top: 0,6 m pasado el último; yaw: subiendo (convención de player.ts). */

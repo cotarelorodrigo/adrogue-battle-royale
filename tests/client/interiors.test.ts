@@ -173,6 +173,17 @@ describe('buildInterior3D', () => {
     expect(counts('baja')).toEqual([10, 30]);
   });
 
+  test('un cartel con dibujo (la puerta del tesoro, tarea 6) va en canvas: la puerta redonda con arcos, sin texto', () => {
+    const calls: string[] = [];
+    stubCanvas(undefined, (method) => calls.push(method));
+    const { interior: i } = testInterior({ extra: (k) => k.label('Tesoro', [5, 14.78], 1.2, [0, -1], 1.8, 1.8, LABEL_LOOK, { drawing: 'tesoro' }) });
+    expect(i.labels[0].drawing).toBe('tesoro');
+    const meshes = meshesOf(buildInterior3D(i, m, 'media').group);
+    expect(meshes.filter((x) => x.name.startsWith('labels:'))).toHaveLength(1);
+    expect(calls).toContain('arc');
+    expect(calls).not.toContain('fillText');
+  });
+
   test('los carteles de adentro van en una malla por página; los bloques y carteles `out`, no (son del chunk)', () => {
     const look = { fondo: '#123456', letra: '#ffffff', marco: '#123456', fuente: 'sans' as const };
     const { interior: i } = testInterior({ extra: (k) => {
@@ -350,6 +361,21 @@ describe('lightAt', () => {
     expect(corner).toBeLessThan(edge - 0.02);
     expect(edge).toBeLessThan(middle - 0.1);
     expect(middle).toBeCloseTo(closed.ambient, 6);
+  });
+
+  // Tarea 6: una pared de vidrio entre el vestíbulo y el salón, o la mampara de las cajas, no da al cielo. La luz de la
+  // vidriera ya la atraviesa (el vidrio no tapa); contarla como fuente la sumaría dos veces.
+  test('un vidrio de adentro (una pared de vidrio, una mampara) no es fuente de cielo: solo los de las paredes de afuera', () => {
+    const glass = { mat: 'vidrio', color: '#b8d0d6' } as const;
+    const { interior: plain } = testInterior();
+    const { interior: split } = testInterior({ extra: (k) => {
+      k.wall([0.2, 8], [9.8, 8], { t: 0.04, collide: 'glass', look: glass });
+      k.block([[2, 11.99], [8, 11.99], [8, 12.01], [2, 12.01]], 1.1, 2.4, 'glass', 'vidrio', { side: glass });
+    } });
+    expect(split.blocks.filter((x) => x.role === 'vidrio').length).toBe(plain.blocks.filter((x) => x.role === 'vidrio').length + 2);
+    for (const p of [[5, 0.02, 8.5], [5, 0.02, 7.5], [5, 0.02, 12.5], [3, 0.02, 11.6]] as Vec3[]) {
+      expect(lightAt({ ...split, ambient: 0.05 }, p, [0, 1, 0]), p.join(', ')).toBeCloseTo(lightAt({ ...plain, ambient: 0.05 }, p, [0, 1, 0]), 6);
+    }
   });
 });
 

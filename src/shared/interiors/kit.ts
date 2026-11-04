@@ -8,7 +8,7 @@ import { ensureCCW, insetRing, pointInPolygon, polygonArea, signedAreaFromAbove,
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { Building, InteriorInput, Opening, SignLook } from '../mapdata.ts';
 import { LEVEL_H, LINTEL_MIN, doorsOf } from './openings.ts';
-import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, Lamp, Look, Role, StairRun, Viewpoint } from './types.ts';
+import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, LabelDrawing, Lamp, Look, Role, StairRun, Viewpoint } from './types.ts';
 
 /** Espesores (m): pared de afuera, tabique, losa entre pisos y techo. */
 export const WALL_OUT = 0.2, WALL_IN = 0.1, SLAB_T = 0.2, ROOF_T = 0.8;
@@ -22,10 +22,15 @@ export const SOLID_MIN_H = 0.7;
 export const GROUND_Y = 0.02;
 
 /** Las cajas sólidas de los muebles de §2.3: `w` sobre el +x del modelo, `d` sobre su +z y `h` de alto desde su `at`.
- *  Lo que no está acá (sillas, banquetas, lámparas, la hoja de vidrio) se atraviesa. */
+ *  Lo que no está acá (sillas, banquetas, lámparas, la hoja de vidrio, el turnero colgado, las sillas de espera) se
+ *  atraviesa. Bancos (tarea 6): el cajero automático de pie, el escritorio (sin sus sillas) y el tramo de mostrador de
+ *  un puesto de caja, de 1,1 m de alto (la mampara de vidrio, de 1,1 a 2,4 m, la pone el plan como bloque `glass`). */
 export const MODEL_BOX: Partial<Record<ItemModel, { w: number; d: number; h: number }>> = {
   mesa: { w: 1.2, d: 0.8, h: 0.75 },
   sillon: { w: 0.85, d: 0.85, h: 0.8 },
+  cajero: { w: 0.7, d: 0.6, h: 1.6 },
+  escritorio: { w: 1.4, d: 0.7, h: 0.75 },
+  'puesto-caja': { w: 1.9, d: 0.6, h: 1.1 },
 };
 
 /** `holes`: huecos (marco local) en la losa de un nivel; los del nivel `publicFloors` atraviesan el bloque cerrado o el
@@ -79,6 +84,10 @@ export class Kit {
   readonly box: { u0: number; u1: number; v0: number; v1: number };
   /** Las aberturas de InteriorInput, con sus puntas (`a` en s0, `c` en s1) en el marco local. */
   readonly openings: (Opening & { a: Vec2; c: Vec2 })[];
+  /** La planta corrida WALL_OUT hacia adentro (marco local): las caras de adentro de las paredes de afuera. */
+  get inside(): Vec2[] {
+    return this.inner.map((p): Vec2 => [p[0], p[1]]);
+  }
   private readonly b: Building;
   private readonly input: InteriorInput;
   /** La planta antihoraria (mundo) y, por cada arista suya, sus aberturas. */
@@ -221,11 +230,14 @@ export class Kit {
     this.blocks.push({ polygon: this.toWorldRing(poly), y0, y1, collide, role, ...looksOf(looks), ...(out ? { out: true as const } : {}) });
   }
 
-  /** Un mueble en `p` sobre el piso `y`, mirando hacia `yaw` (local), y su caja sólida de MODEL_BOX si la tiene. */
+  /** Un mueble en `p` sobre el piso `y`, mirando hacia `yaw` (local): su frente (el +z del modelo) va hacia ahí. Y su
+   *  caja sólida de MODEL_BOX si la tiene. */
   furniture(model: ItemModel, p: Vec2, y: number, yaw: number, color?: string, detail?: 2): void {
     this.open();
     const [x, z] = this.at(p);
-    const rot = this.yawOf(yaw);
+    // rotación three.js sobre +Y: el +z del modelo va a (sin rot, cos rot)
+    const [fx, fz] = this.vec([Math.sin(yaw), Math.cos(yaw)]);
+    const rot = Math.atan2(fx, fz);
     this.items.push({ model, at: [x, y, z], yaw: rot, ...(color !== undefined ? { color } : {}), ...(detail ? { detail } : {}) });
     const box = MODEL_BOX[model];
     if (!box) return;
@@ -236,11 +248,13 @@ export class Kit {
     this.blocks.push({ polygon: ensureCCW(poly), y0: y, y1: y + box.h, collide: 'solid', role: 'mueble' });
   }
 
-  /** Cartel con el medio en `p` a la altura `y`; `normal` (local) apunta hacia quien lo lee. */
-  label(text: string, p: Vec2, y: number, normal: Vec2, width: number, height: number, look: SignLook, o: { glow?: true; out?: true } = {}): void {
+  /** Cartel con el medio en `p` a la altura `y`; `normal` (local) apunta hacia quien lo lee. Con `drawing`, en vez del
+   *  texto lleva ese dibujo. */
+  label(text: string, p: Vec2, y: number, normal: Vec2, width: number, height: number, look: SignLook, o: { glow?: true; out?: true; drawing?: LabelDrawing } = {}): void {
     this.open();
     const [x, z] = this.at(p);
-    this.labels.push({ text, at: [x, y, z], normal: unit(this.vec(normal)), width, height, look, ...(o.glow ? { glow: true as const } : {}), ...(o.out ? { out: true as const } : {}) });
+    this.labels.push({ text, at: [x, y, z], normal: unit(this.vec(normal)), width, height, look, ...(o.glow ? { glow: true as const } : {}),
+      ...(o.out ? { out: true as const } : {}), ...(o.drawing ? { drawing: o.drawing } : {}) });
   }
 
   lamp(p: Vec2, y: number, radius: number, power: number): void {
@@ -325,7 +339,8 @@ export class Kit {
   }
 
   /** El cielorraso más bajo por encima de y: la losa siguiente, el bloque cerrado o el techo. */
-  private ceilingOver(y: number): number {
+  ceilingOver(y: number): number {
+    this.need();
     const tops = [...Array(this.shellOpts!.publicFloors).keys()].slice(1).map((k) => k * LEVEL_H - SLAB_T);
     return Math.min(...[...tops, this.topBottom(), this.b.height].filter((c) => c > y + EPS));
   }

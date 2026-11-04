@@ -1,11 +1,13 @@
 // La luz horneada de un interior (§2.4): adentro no pega el sol, cada punto lleva su luz en el color por vértice (o en
 // el color de su instancia). Es la luz pareja del lugar (`ambient`), más la de sus lámparas, más la que entra por los
 // vidrios y las puertas, menos la oclusión de los rincones (donde una cara se junta con otra). Las lámparas y las
-// aberturas no iluminan detrás de una pared, un tabique o una losa (H5); el vidrio deja pasar.
+// aberturas no iluminan detrás de una pared, un tabique o una losa (H5); el vidrio deja pasar. Solo dan al cielo los
+// vidrios de las paredes de afuera: uno de adentro (la pared de vidrio de un vestíbulo, una mampara) no es una fuente.
 import { pointInPolygon } from '../../../shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
+import { WALL_OUT } from '../../../shared/interiors/kit.ts';
 import { LEVEL_H, LINTEL_MIN } from '../../../shared/interiors/openings.ts';
-import type { Interior } from '../../../shared/interiors/types.ts';
+import type { Block, Interior } from '../../../shared/interiors/types.ts';
 
 /**
  * La luz de las aberturas va por área (H2b): cada una es una fuente de cielo partida en celdas de a lo sumo CELL m, y
@@ -99,13 +101,28 @@ function gridOf(prisms: Prism[]): Grid {
   return { x0, z0, nx, nz, cells };
 }
 
+/** ¿El vidrio está en una pared de afuera? Su medio en planta queda a menos de WALL_OUT de una arista de la planta (el de
+ *  una abertura, a la mitad). Uno de adentro no da al cielo: la luz de la vidriera ya lo atraviesa, y contarlo como
+ *  fuente la sumaría dos veces (tarea 6). */
+function outerGlass(i: Interior, b: Block): boolean {
+  const n = b.polygon.length;
+  const c: Vec2 = [b.polygon.reduce((s, p) => s + p[0], 0) / n, b.polygon.reduce((s, p) => s + p[1], 0) / n];
+  return i.footprint.some((a, k) => {
+    const q = i.footprint[(k + 1) % i.footprint.length];
+    const [dx, dz] = [q[0] - a[0], q[1] - a[1]];
+    const l2 = dx * dx + dz * dz;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dz) / l2));
+    return Math.hypot(c[0] - a[0] - dx * t, c[1] - a[1] - dz * t) < WALL_OUT;
+  });
+}
+
 const cache = new WeakMap<Interior, Prepared>();
 function prepare(i: Interior): Prepared {
   let p = cache.get(i);
   if (p) return p;
   p = {
     sources: [
-      ...i.blocks.filter((b) => b.role === 'vidrio').map((b) => glassSource(b.polygon, b.y0, b.y1)),
+      ...i.blocks.filter((b) => b.role === 'vidrio' && outerGlass(i, b)).map((b) => glassSource(b.polygon, b.y0, b.y1)),
       // el hueco de la puerta, como una lámina sobre la cara de afuera
       ...i.doors.map((d) => source(d.at, [-d.normal[1], d.normal[0]], d.width, d.level * LEVEL_H, d.level * LEVEL_H + LINTEL_MIN, DOOR_T)),
     ],

@@ -15,6 +15,7 @@ import type { InteriorKey, WorldMaterials } from '../types.ts';
 import { cutRect, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
 import type { Builder, Rect } from '../wall-kit.ts';
 import { lightAt } from './bake.ts';
+import { LABEL_DRAWINGS } from './drawings.ts';
 import { glassTone } from './glass.ts';
 import { ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
 import { TILE_M } from './textures.ts';
@@ -267,8 +268,9 @@ function merged(i: Interior, parts: THREE.BufferGeometry[]): THREE.BufferGeometr
 }
 
 /** Los textos de los carteles (signTexture dibuja con la proporción ancho × SIGN_H: el ancho que se pide da la del
- *  cartel). */
-const labelCanvases = (labels: Label[]): HTMLCanvasElement[] => labels.map((l) => signTexture(l.text, l.look, (l.width * SIGN_H) / l.height));
+ *  cartel), o su dibujo si lo tienen (drawings.ts). */
+const labelCanvases = (labels: Label[]): HTMLCanvasElement[] => labels.map((l) =>
+  (l.drawing ? LABEL_DRAWINGS[l.drawing](l.look, l.width, l.height) : signTexture(l.text, l.look, (l.width * SIGN_H) / l.height)));
 
 /** Las páginas de atlas de los carteles: con `onePage`, los textos se achican a la mitad hasta entrar en una. */
 function packLabels(canvases: HTMLCanvasElement[], onePage: boolean): { canvases: HTMLCanvasElement[]; packed: ReturnType<typeof packSigns> } {

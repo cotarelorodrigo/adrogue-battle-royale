@@ -346,6 +346,24 @@ describe('muebles', () => {
     for (const [m, box] of Object.entries(MODEL_BOX)) expect(box!.h, m).toBeGreaterThanOrEqual(SOLID_MIN_H);
   });
 
+  // Tarea 6: el frente de un modelo es su +z (models.ts). Con la cuenta de la cámara (que mira a su −z) el mueble
+  // quedaba de espaldas a su yaw: un cajero automático contra la pared miraba a la pared.
+  test('un mueble mira hacia su yaw (local): el +z del modelo, su frente, apunta hacia ahí; también con el marco espejado', () => {
+    const { b, input } = testInterior();
+    const yaws = [0, Math.PI / 2, Math.PI, -Math.PI / 3];
+    for (const frame of [input.frame, { origin: [0, 15] as Vec2, u: [1, 0] as Vec2, v: [0, -1] as Vec2 }]) {
+      const k = new Kit(b, { ...input, frame });
+      k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+      for (const yaw of yaws) k.furniture('silla', [5, 7], 0, yaw);
+      k.done(0.8).items.forEach((it, n) => {
+        const a = yaws[n];
+        const want: Vec2 = [Math.sin(a) * frame.u[0] + Math.cos(a) * frame.v[0], Math.sin(a) * frame.u[1] + Math.cos(a) * frame.v[1]];
+        // rotación three.js sobre +Y: el +z del modelo va a (sin yaw, cos yaw)
+        expect([Math.sin(it.yaw), Math.cos(it.yaw)], `yaw local ${a.toFixed(2)}`).toBeCloseTo2D(want, 9);
+      });
+    }
+  });
+
   test('una mesa frena a un jugador que camina contra ella; una silla se cruza', () => {
     const table = testInterior({ extra: (k) => k.furniture('mesa', [5, 8], 0, 0) });
     expect(table.interior.items).toEqual([{ model: 'mesa', at: [5, 0, 8], yaw: expect.any(Number) }]);
@@ -485,7 +503,8 @@ describe('marco local', () => {
     const i = k.done(0.8);
     expect(fwd(i.views[0].yaw)).toBeCloseTo2D(frame.v, 9);
     expect(fwd(i.views[1].yaw)).toBeCloseTo2D(frame.u, 9);
-    expect(fwd(i.items[0].yaw)).toBeCloseTo2D(frame.u, 9);
+    // un mueble mira con su frente, el +z del modelo (rotación three.js: va a (sin yaw, cos yaw)), no como la cámara
+    expect([Math.sin(i.items[0].yaw), Math.cos(i.items[0].yaw)]).toBeCloseTo2D(frame.u, 9);
     expect(i.labels[0].normal).toBeCloseTo2D([-frame.v[0], -frame.v[1]], 9);
     expect(i.labels[0].at[1]).toBe(2);
     const at = toWorld(frame, [4, 3]);
