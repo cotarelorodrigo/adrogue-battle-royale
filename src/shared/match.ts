@@ -38,7 +38,7 @@ export const MATCH = {
   pickDy: 1,
   /** los objetos flotan a esta altura sobre su `pos`: ahí se los mira para juntarlos */
   dropLift: 0.3,
-  /** más rápido que esto (m/s, en el plano) cuenta como moviéndose para la dispersión */
+  /** más rápido que esto (m/s, en 3D: saltar o trepar también cuenta) es moverse para la dispersión */
   movingSpeed: 0.5,
 } as const;
 
@@ -62,7 +62,8 @@ export interface MatchState {
   t: number; seed: number; me: Fighter; inv: Inventory; dummies: Fighter[]; drops: MatchDrop[]; zone: ZonePlan; aiming: boolean;
   /** los del último paso: stepMatch los vacía al empezar */
   events: MatchEvent[];
-  /** alive: cuántos quedaban vivos (en la victoria, 1: el jugador) */
+  /** alive: cuántos quedaban vivos (en la victoria, 1: el jugador). Se gana cuando mueren todos los maniquíes; sin
+   *  maniquíes desde el principio (práctica libre) solo termina con la muerte del jugador. */
   over: null | { won: boolean; alive: number; at: number };
   /** eliminaciones del jugador (las muertes por la zona no cuentan) */
   kills: number;
@@ -75,6 +76,9 @@ export interface MatchState {
   shotSeq: number;
 }
 
+/** Entrada de un paso. `fire` y `aim` son estados: true mientras el botón está apretado. `use`, `heal`, `reload` y `slot`
+ *  son pulsos: el cliente guarda cada toque hasta que lo consume un paso y en los siguientes van en false / null (la
+ *  acción que arrancó sigue sola). `use` igual se toma por flanco: si llega apretado varios pasos, junta una sola vez. */
 export interface MatchInput extends PlayerInput { fire: boolean; aim: boolean; reload: boolean; use: boolean; heal: boolean; slot: 0 | 1 | null }
 
 /** Un número de 32 bits sacado del rng, para sembrar otro sorteo. */
@@ -185,6 +189,64 @@ function move(p: PlayerState, input: PlayerInput, world: CollisionWorld, h: numb
 
 const finite = (x: number): number => (Number.isFinite(x) ? x : 0);
 
+/** Juntar `d` (que está en `drops`): el inventario, el chaleco y el piso que quedan. No modifica lo que recibe. */
+function takeDrop(d: MatchDrop, inv: Inventory, vitals: Vitals, drops: readonly MatchDrop[], nextDropId: number):
+  { inv: Inventory; vitals: Vitals; drops: MatchDrop[]; nextDropId: number } {
+  const out: Inventory = { ...inv, slots: [inv.slots[0], inv.slots[1]], ammo: { ...inv.ammo } };
+  const floor = drops.filter((x) => x !== d);
+  const it = d.item;
+  switch (it.kind) {
+    case 'arma': {
+      const gun: Gun = d.inMag === undefined ? newGun(it.weapon) : { ...newGun(it.weapon), inMag: d.inMag };
+      const a = out.active, b = a === 0 ? 1 : 0;
+      const inHand = out.slots[a];
+      if (inHand === null) out.slots[a] = gun;
+      else if (out.slots[b] === null) out.slots[b] = gun;
+      else { // las dos llenas: la de la mano queda en el piso, donde estaba el objeto
+        floor.push({ id: nextDropId++, pos: [d.pos[0], d.pos[1], d.pos[2]], item: { kind: 'arma', weapon: inHand.id }, inMag: inHand.inMag });
+        out.slots[a] = gun;
+      }
+      break;
+    }
+    case 'municion': out.ammo[it.ammo] = Math.min(AMMO_MAX[it.ammo], out.ammo[it.ammo] + AMMO_BOX[it.ammo]); break;
+    case 'chaleco': vitals = { ...vitals, armor: Math.min(MATCH.armorMax, vitals.armor + MATCH.armorPickup) }; break;
+    case 'botiquin': out.medkits++; break;
+  }
+  return { inv: out, vitals, drops: floor, nextDropId };
+}
+
+/** Un disparo de `gun` (que ya puede disparar en este paso) desde el ojo de `p`, con el azar `rng`: el arma después del
+ *  tiro, los maniquíes como quedan y los eventos (`shot`, y un `hit` o un `impact` por perdigón que pega). No modifica lo
+ *  que recibe. */
+function shoot(gun: Gun, p: PlayerState, look: MatchState['look'], aiming: boolean, dummies: readonly Fighter[], world: CollisionWorld,
+  rng: Rng, t0: number): { gun: Gun; dummies: Fighter[]; events: MatchEvent[] } {
+  const w = WEAPONS[gun.id];
+  const eye: Vec3 = [p.pos[0], p.pos[1] + eyeHeight(p), p.pos[2]];
+  const moving = Math.hypot(p.vel[0], p.vel[1], p.vel[2]) > MATCH.movingSpeed;
+  const dirs = spreadDirs(rng, look.yaw, look.pitch, spreadFor(w, { aiming, moving }), w.pellets);
+  const targets = bodies(dummies);
+  const out = dummies.slice();
+  const shot = { type: 'shot' as const, weapon: gun.id, from: eye, to: [] as Vec3[] };
+  const events: MatchEvent[] = [shot];
+  for (const dir of dirs) {
+    const hit = hitscan(world, targets, eye, dir, w.range);
+    if (!hit) {
+      shot.to.push([eye[0] + dir[0] * w.range, eye[1] + dir[1] * w.range, eye[2] + dir[2] * w.range]);
+      continue;
+    }
+    shot.to.push(hit.point);
+    if (hit.kind === 'world') {
+      events.push({ type: 'impact', point: hit.point, normal: hit.normal });
+      continue;
+    }
+    const dmg = shotDamage(w, hit.part, hit.dist);
+    const i = out.findIndex((f) => f.id === hit.id);
+    out[i] = { ...out[i], vitals: applyDamage(out[i].vitals, dmg) };
+    events.push({ type: 'hit', id: hit.id, part: hit.part, dmg, point: hit.point });
+  }
+  return { gun: fire(gun, Math.max(t0, gun.nextShotAt)), dummies: out, events }; // a su hora, aunque caiga a mitad del paso
+}
+
 /**
  * Un paso de la partida, en este orden: movimiento, cambio de ranura, juntar, recarga, disparo, curación, zona, y
  * muertes y fin. Con `over` puesto solo avanza `t` (y los eventos quedan vacíos).
@@ -196,8 +258,9 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
 
   const events: MatchEvent[] = [];
   const look = { yaw: finite(input.yaw), pitch: finite(input.pitch) };
-  const inv: Inventory = { ...s.inv, slots: [s.inv.slots[0], s.inv.slots[1]], ammo: { ...s.inv.ammo } };
-  const dummies = s.dummies.slice(); // los que cambian se reemplazan por copias
+  // copias de trabajo: se modifican estas, nunca las de `s`
+  let inv: Inventory = { ...s.inv, slots: [s.inv.slots[0], s.inv.slots[1]], ammo: { ...s.inv.ammo } };
+  let dummies = s.dummies.slice(); // los que cambian se reemplazan por copias
   let vitals = s.me.vitals;
   let drops = s.drops;
   let nextDropId = s.nextDropId;
@@ -220,26 +283,8 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   // 3. juntar
   const d = usePressed ? dropInReach(drops, player, vitals, inv, look) : null;
   if (d) {
-    drops = drops.filter((x) => x !== d);
-    const it = d.item;
-    switch (it.kind) {
-      case 'arma': {
-        const gun: Gun = d.inMag === undefined ? newGun(it.weapon) : { ...newGun(it.weapon), inMag: d.inMag };
-        const a = inv.active, b = a === 0 ? 1 : 0;
-        const inHand = inv.slots[a];
-        if (inHand === null) inv.slots[a] = gun;
-        else if (inv.slots[b] === null) inv.slots[b] = gun;
-        else { // las dos llenas: la de la mano queda en el piso, donde estaba el objeto
-          drops = [...drops, { id: nextDropId++, pos: [d.pos[0], d.pos[1], d.pos[2]], item: { kind: 'arma', weapon: inHand.id }, inMag: inHand.inMag }];
-          inv.slots[a] = gun;
-        }
-        break;
-      }
-      case 'municion': inv.ammo[it.ammo] = Math.min(AMMO_MAX[it.ammo], inv.ammo[it.ammo] + AMMO_BOX[it.ammo]); break;
-      case 'chaleco': vitals = { ...vitals, armor: Math.min(MATCH.armorMax, vitals.armor + MATCH.armorPickup) }; break;
-      case 'botiquin': inv.medkits++; break;
-    }
-    events.push({ type: 'pickup', item: it });
+    ({ inv, vitals, drops, nextDropId } = takeDrop(d, inv, vitals, drops, nextDropId));
+    events.push({ type: 'pickup', item: d.item });
   }
 
   let gun = inv.slots[inv.active];
@@ -265,30 +310,10 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
     if (gun.inMag <= 0) {
       if (firePressed) events.push({ type: 'empty' });
     } else if (gun.nextShotAt < t1) {
-      const w = WEAPONS[gun.id];
-      const eye: Vec3 = [player.pos[0], player.pos[1] + eyeHeight(player), player.pos[2]];
-      const moving = Math.hypot(player.vel[0], player.vel[2]) > MATCH.movingSpeed;
-      const dirs = spreadDirs(createRng(shotSeed(s.seed, shotSeq++)), look.yaw, look.pitch, spreadFor(w, { aiming, moving }), w.pellets);
-      const targets = bodies(dummies);
-      const shot = { type: 'shot' as const, weapon: gun.id, from: eye, to: [] as Vec3[] };
-      events.push(shot);
-      for (const dir of dirs) {
-        const hit = hitscan(world, targets, eye, dir, w.range);
-        if (!hit) {
-          shot.to.push([eye[0] + dir[0] * w.range, eye[1] + dir[1] * w.range, eye[2] + dir[2] * w.range]);
-          continue;
-        }
-        shot.to.push(hit.point);
-        if (hit.kind === 'world') {
-          events.push({ type: 'impact', point: hit.point, normal: hit.normal });
-          continue;
-        }
-        const dmg = shotDamage(w, hit.part, hit.dist);
-        const i = dummies.findIndex((f) => f.id === hit.id);
-        dummies[i] = { ...dummies[i], vitals: applyDamage(dummies[i].vitals, dmg) };
-        events.push({ type: 'hit', id: hit.id, part: hit.part, dmg, point: hit.point });
-      }
-      gun = fire(gun, Math.max(t0, gun.nextShotAt)); // a su hora, aunque caiga a mitad del paso
+      const r = shoot(gun, player, look, aiming, dummies, world, createRng(shotSeed(s.seed, shotSeq++)), t0);
+      gun = r.gun;
+      dummies = r.dummies;
+      events.push(...r.events);
       inv.healingUntil = null; // disparar cancela la curación
     }
   }
@@ -332,7 +357,9 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   const meAlive = vitals.hp > 0;
   const me: Fighter = meAlive ? { ...s.me, player, vitals } : { ...s.me, player, vitals, alive: false, diedAt: t1 };
   const left = dummies.filter((f) => f.alive).length;
-  const over = !meAlive ? { won: false, alive: left, at: t1 } : left === 0 ? { won: true, alive: 1, at: t1 } : null;
+  // Sin maniquíes desde el principio es práctica libre: no se gana, termina solo si muere el jugador.
+  const won = left === 0 && dummies.length > 0;
+  const over = !meAlive ? { won: false, alive: left, at: t1 } : won ? { won: true, alive: 1, at: t1 } : null;
   if (over) events.push({ type: 'over', won: over.won });
 
   return {

@@ -133,6 +133,33 @@ describe('stepMatch: pureza', () => {
     expect(a.t).toBeCloseTo(H, 12);
   });
 
+  test('tampoco lo modifica al juntar con las ranuras llenas, terminar una recarga y una curación, y en la zona', () => {
+    // en una esquina (afuera de la zona), con el rifle recargando y una curación, las dos por terminar en este paso
+    const before = mod(withGun(withGun(setup(), 1, 'pistola'), 0, 'rifle', 50), (c) => {
+      c.me.player = initialState([-95, 0, -95]);
+      c.me.vitals.hp = 40;
+      c.inv.medkits = 1;
+      c.inv.healingUntil = 0;
+      c.inv.slots[0]!.inMag = 5;
+      c.inv.slots[0]!.reloadUntil = 0;
+      c.drops = [drop(1, [-95, 0, -96.5], { kind: 'arma', weapon: 'escopeta' })];
+      c.nextDropId = 2;
+    });
+    const snapBefore = structuredClone(before);
+    const a = step(before, DOWN);
+    expect(a.inv.slots[0]).toMatchObject({ inMag: 30, reloadUntil: null });
+    expect(a.inv.ammo.liviana).toBe(25);
+    expect(a.inv).toMatchObject({ medkits: 0, healingUntil: null });
+    expect(a.events).toEqual([{ type: 'zone-hurt', dmg: H }]);
+    expect(a.me.vitals.hp).toBeCloseTo(90 - H, 9);
+    const snapA = structuredClone(a);
+    const b = step(a, { ...DOWN, use: true }); // las dos ranuras llenas: el rifle queda en el piso
+    expect(b.inv.slots.map((g) => g?.id)).toEqual(['escopeta', 'pistola']);
+    expect(b.drops).toMatchObject([{ id: 2, item: { kind: 'arma', weapon: 'rifle' }, inMag: 30 }]);
+    expect(before).toEqual(snapBefore);
+    expect(a).toEqual(snapA);
+  });
+
   test('los eventos son solo los del último paso', () => {
     const a = step(withGun(setup(), 0, 'pistola'), { fire: true });
     expect(of(a.events, 'shot')).toHaveLength(1);
@@ -247,6 +274,40 @@ describe('disparar', () => {
       expect(shot.to).toHaveLength(1);
       expect(s.inv.slots[0]!.inMag).toBe(29);
     }
+  });
+
+  test('escopeta a quemarropa: un hit por perdigón, y lo que pierde (vida + chaleco) es la suma', () => {
+    const s = step(withGun(setup([[0, 0, -2]], [25]), 0, 'escopeta'), { fire: true, pitch: pitchTo(1.1, 2) });
+    const hits = of(s.events, 'hit');
+    expect(hits).toHaveLength(WEAPONS.escopeta.pellets);
+    const total = hits.reduce((sum, e) => sum + e.dmg, 0);
+    expect(total).toBeCloseTo(WEAPONS.escopeta.pellets * WEAPONS.escopeta.damage, 9); // a 2 m no baja
+    const v = s.dummies[0].vitals;
+    expect(100 - v.hp + (25 - v.armor)).toBeCloseTo(total, 9);
+    expect(v.armor).toBe(0);
+  });
+
+  test('para la dispersión, saltar también es moverse (velocidad en 3D)', () => {
+    const look = { yaw: Math.PI, pitch: 0 };
+    const g: Vec3 = [-Math.sin(look.yaw) * Math.cos(look.pitch), Math.sin(look.pitch), -Math.cos(look.yaw) * Math.cos(look.pitch)];
+    /** Desvío (grados) de cada bala respecto de la mira, con el rifle sin apuntar durante 0,6 s. */
+    const deviations = (inp: Partial<MatchInput>): number[] => {
+      const evs: MatchEvent[] = [];
+      run(withGun(setup(), 0, 'rifle'), { ...look, fire: true, ...inp }, 0.6, evs);
+      return of(evs, 'shot').flatMap((sh) => sh.to.map((p) => {
+        const v = [p[0] - sh.from[0], p[1] - sh.from[1], p[2] - sh.from[2]];
+        const dot = v[0] * g[0] + v[1] * g[1] + v[2] * g[2];
+        const cross = Math.hypot(v[1] * g[2] - v[2] * g[1], v[2] * g[0] - v[0] * g[2], v[0] * g[1] - v[1] * g[0]);
+        return (Math.atan2(cross, dot) * 180) / Math.PI;
+      }));
+    };
+    const still = deviations({});
+    const jumping = deviations({ jump: true }); // salto en el lugar: velocidad solo vertical
+    expect(still).toHaveLength(6);
+    expect(jumping).toHaveLength(6);
+    expect(Math.max(...still)).toBeLessThanOrEqual(WEAPONS.rifle.spreadStill + 1e-6);
+    expect(Math.max(...jumping)).toBeGreaterThan(WEAPONS.rifle.spreadStill);
+    expect(Math.max(...jumping)).toBeLessThanOrEqual(WEAPONS.rifle.spreadMove + 1e-6);
   });
 
   test('la automática dispara mientras está apretada, a su cadencia (9/s: 27 balas en 2,95 s)', () => {
@@ -424,6 +485,16 @@ describe('zona', () => {
     expect(s.me.alive).toBe(false);
     expect(s.over).toMatchObject({ won: false, alive: 2 });
     expect(s.me.diedAt).toBe(s.over!.at);
+  });
+
+  test('sin maniquíes es práctica libre: no se gana, termina solo si muere el jugador', () => {
+    let s = step(newMatch(map, open, { seed: 2, dummies: 0 }), {}, open);
+    expect(s.dummies).toEqual([]);
+    expect(s.over).toBeNull();
+    s = mod(s, (c) => { c.me.player = initialState([-95, 0, -95]); }); // afuera de la zona
+    while (!s.over && s.t < 750) s = step(s, {}, open, 0.25);
+    expect(s.me.alive).toBe(false);
+    expect(s.over).toMatchObject({ won: false, alive: 0 });
   });
 
   test('la zona daña solo la vida y avisa con zone-hurt', () => {
