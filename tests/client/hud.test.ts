@@ -20,7 +20,7 @@ const map: MapData = {
   version: 1, origin: { lat: 0, lon: 0 }, bounds, buildings: [], outskirts: [], roads: [], railways: [], platforms: [],
   parks: [], places: [], signs: [], props: [], trees: [],
   randomSpawns: Array.from({ length: 24 }, (_, i) => [-115 + 10 * i, 0, 50] as Vec3),
-  lootSpots: [],
+  lootSpots: [], interiors: [],
 };
 const world = new CollisionWorld([], [], bounds);
 

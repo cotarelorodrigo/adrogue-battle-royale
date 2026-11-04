@@ -1,6 +1,7 @@
 import { hash01 } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import type { CollisionWorld } from '../shared/collision.ts';
+import type { Door } from '../shared/interiors/openings.ts';
 import type { Sign } from '../shared/mapdata.ts';
 
 const R = 0.35;
@@ -8,11 +9,13 @@ const STEP = 0.5;
 const BORDER = 1;
 const r2 = (n: number): number => Math.round(n * 100) / 100;
 
-/** Punto libre en el piso: nada lo pisa entre 0,05 y 1,8 m, nada lo apoya por encima del suelo y está dentro de los bounds − 1 m. */
-export function isFreeSpot(world: CollisionWorld, x: number, z: number): boolean {
+/** Punto libre en un piso a la altura `y` (0 = el suelo): está dentro de los bounds − 1 m, nada lo pisa entre y + 0,05 e
+ *  y + 1,8 m y lo que lo apoya está justo a `y`. Lo que pase por encima de la cabeza (la losa de un interior) no cuenta
+ *  (§2.5). */
+export function isFreeSpot(world: CollisionWorld, x: number, z: number, y = 0): boolean {
   const b = world.bounds;
   if (x < b.minX + BORDER || x > b.maxX - BORDER || z < b.minZ + BORDER || z > b.maxZ - BORDER) return false;
-  return !world.overlaps(x, z, R, 0.05, 1.8) && world.supportHeight(x, z, R, Infinity) === 0;
+  return !world.overlaps(x, z, R, y + 0.05, y + 1.8) && Math.abs(world.supportHeight(x, z, R, y + 0.05) - y) < 1e-6;
 }
 
 /**
@@ -46,8 +49,11 @@ export function findFreeSpot(
   return null;
 }
 
-/** `count` puntos libres repartidos por hash; si no alcanzan con 25 m de separación, relaja a 15 y luego a 8. */
-export function randomSpawns(world: CollisionWorld, count = 64, spacings: number[] = [25, 15, 8], tries = 4000): Vec3[] {
+/** `count` puntos libres repartidos por hash; si no alcanzan con 25 m de separación, relaja a 15 y luego a 8. `keep`:
+ *  filtro extra (assemble deja afuera las plantas y los patios de los interiores). */
+export function randomSpawns(
+  world: CollisionWorld, count = 64, spacings: number[] = [25, 15, 8], tries = 4000, keep: (x: number, z: number) => boolean = () => true,
+): Vec3[] {
   const b = world.bounds;
   const out: Vec3[] = [];
   let i = 0;
@@ -55,13 +61,31 @@ export function randomSpawns(world: CollisionWorld, count = 64, spacings: number
     for (let k = 0; k < tries && out.length < count; k++, i++) {
       const x = r2(b.minX + BORDER + hash01(`rs-x-${i}`) * (b.maxX - b.minX - 2 * BORDER));
       const z = r2(b.minZ + BORDER + hash01(`rs-z-${i}`) * (b.maxZ - b.minZ - 2 * BORDER));
-      if (!isFreeSpot(world, x, z)) continue;
+      if (!isFreeSpot(world, x, z) || !keep(x, z)) continue;
       if (out.some((s) => Math.hypot(s[0] - x, s[2] - z) < spacing)) continue;
       out.push([x, 0, z]);
     }
     if (out.length >= count) break;
   }
   return out;
+}
+
+/** walksIn mira el camino cada WALK_STEP m y se para WALK_STOP m antes de la puerta (ahí empieza la pared). */
+const WALK_STEP = 0.25;
+const WALK_STOP = 0.4;
+
+/** ¿Se llega caminando derecho desde `from` hasta la puerta? El segmento hasta WALK_STOP m antes de `door.at`, cada
+ *  WALK_STEP m, queda libre para el disco del jugador entre 0,5 y 1,8 m (un cordón o un banco bajo no lo cortan). */
+export function walksIn(world: CollisionWorld, from: Vec3, door: Door): boolean {
+  const [dx, dz] = [door.at[0] - from[0], door.at[1] - from[2]];
+  const d = Math.hypot(dx, dz);
+  const len = Math.max(0, d - WALK_STOP);
+  const [ux, uz] = d > 0 ? [dx / d, dz / d] : [0, 0];
+  for (let i = 0; i <= Math.ceil(len / WALK_STEP); i++) {
+    const t = Math.min(i * WALK_STEP, len);
+    if (world.overlaps(from[0] + ux * t, from[2] + uz * t, R, from[1] + 0.5, from[1] + 1.8)) return false;
+  }
+  return true;
 }
 
 /** Prefijo de los avisos de relajación del punto de aparición: son esperados y no rompen el build. */

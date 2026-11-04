@@ -223,11 +223,12 @@ function moveVertical(m: Work, world: CollisionWorld, h: number, bodyH: number):
 
 /** Trepar: jump + forward frente a un borde cuya tapa, a MANTLE_PUSH adelante, está entre stepUp y mantleReach por
  *  encima de donde se paró (en el suelo, los pies; en el aire, el apoyo que tiene debajo: saltar no suma alcance) y
- *  por encima de los pies, con lugar para el cuerpo parado arriba y en el camino. */
+ *  por encima de los pies, con lugar para el cuerpo parado arriba y en el camino. La tapa se busca solo hasta donde
+ *  llega el alcance (D2): adentro, el cielorraso no tapa al mostrador de abajo. */
 function tryMantle(m: Work, c: Command, world: CollisionWorld): boolean {
   const px = m.x + c.fx * MANTLE_PUSH, pz = m.z + c.fz * MANTLE_PUSH;
-  const top = world.supportHeight(px, pz, 0, Infinity);
   const base = m.onGround ? m.y : world.supportHeight(m.x, m.z, R, m.y);
+  const top = world.supportHeight(px, pz, 0, base + PLAYER.mantleReach + REACH_EPS);
   const rise = top - base;
   if (!(top > m.y) || rise <= PLAYER.stepUp || rise > PLAYER.mantleReach + REACH_EPS) return false;
   if (!inBounds(world, px, pz) || blocked(world, px, pz, top, PLAYER.height)) return false;

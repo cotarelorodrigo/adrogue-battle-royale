@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import * as THREE from 'three';
 import { ATLAS_COLS, FRONT_CELLS, GUTTER, cellRect, composeFrontAtlas, frontMaterial, groundCells, packAtlas, upperCell } from '../../src/client/world/front-atlas.ts';
+import { BAY_W, FLOOR_H } from '../../src/client/world/wall-kit.ts';
+import { BAY_W as OPENINGS_BAY_W, LOT_OPENINGS } from '../../src/shared/interiors/openings.ts';
+import type { LotCell } from '../../src/shared/interiors/openings.ts';
 import type { PlantaBaja } from '../../src/shared/mapdata.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
@@ -95,6 +98,37 @@ test('composeFrontAtlas devuelve dos canvas cuadrados del lado pedido', () => {
   const img = { revoque: {}, ladrillo: {}, metal: {}, madera: {} } as never;
   const { color, mask } = composeFrontAtlas(img, 1024);
   expect([color.width, color.height, mask.width, mask.height]).toEqual([1024, 1024, 1024, 1024]);
+});
+
+describe('aberturas de los lotes', () => {
+  const img = { revoque: {}, ladrillo: {}, metal: {}, madera: {} } as never;
+  const size = 1024;
+  /** Rectángulos [x, y, w, h] (px de la celda, antes de escalar a lo alto) donde se pinta vidrio: los fillRect que siguen a
+   *  un degradado (`glass`). Cada celda arranca con dos translate (el color y la máscara). */
+  function glassRects(cell: LotCell): number[][] {
+    vi.restoreAllMocks();
+    const calls: { m: string; a: unknown[] }[] = [];
+    stubCanvas(undefined, (m, a) => calls.push({ m, a }));
+    composeFrontAtlas(img, size);
+    const starts = calls.flatMap((c, k) => (c.m === 'translate' ? [k] : []));
+    const i = FRONT_CELLS.indexOf(cell);
+    const seg = calls.slice(starts[2 * i + 1], starts[2 * i + 2] ?? calls.length);
+    return seg.flatMap((c, k) => (c.m === 'createLinearGradient' ? [seg.slice(k).find((d) => d.m === 'fillRect')!.a as number[]] : []));
+  }
+
+  test('las medidas de LOT_OPENINGS son las del atlas: bahías de BAY_W', () => expect(OPENINGS_BAY_W).toBe(BAY_W));
+
+  test.each(Object.keys(LOT_OPENINGS) as LotCell[])('%s: el vidrio y la hoja de la puerta van exactamente en sus rectángulos', (cell) => {
+    const u = (Math.round(size / ATLAS_COLS) - 2 * GUTTER) / BAY_W;
+    const want = LOT_OPENINGS[cell].map((o) => [o.x0 * u, (FLOOR_H - o.y1) * u, (o.x1 - o.x0) * u, (o.y1 - o.y0) * u]);
+    const got = glassRects(cell);
+    const byX = (a: number[], b: number[]): number => a[0] - b[0];
+    expect(got.length).toBe(want.length);
+    [...got].sort(byX).forEach((r, k) => {
+      const w = [...want].sort(byX)[k];
+      for (let j = 0; j < 4; j++) expect(Math.abs(r[j] - w[j]), `${cell} rect ${k}[${j}]: ${r} vs ${w}`).toBeLessThanOrEqual(0.5);
+    });
+  });
 });
 
 describe('frontMaterial', () => {

@@ -283,7 +283,7 @@ async function run(boot: Boot): Promise<void> {
   function teleport(placeId: string): void {
     const place = map.places.find((p) => p.id === placeId);
     if (!place) throw new Error(`No existe el lugar "${placeId}"`);
-    spawnAt(place.spawn, place.sign ? place.sign.anchor : place.position);
+    spawnAt(place.spawn, place.door ?? place.sign?.anchor ?? place.position); // mirando la puerta, si tiene interior
   }
   /** Un spawn al azar de map.randomSpawns, mirando hacia el centro del mapa. */
   function spawnRandom(): void {

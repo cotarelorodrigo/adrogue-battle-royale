@@ -20,6 +20,7 @@ const map: MapData = {
   parks: [], places: [], signs: [], props: [], trees: [],
   randomSpawns: [[0, 0, 0], [-30, 0, 0], [0, 0, -30], [0, 0, 30], INSIDE, [-30, 0, -30], [-30, 0, 30], [-60, 0, 0]],
   lootSpots: Array.from({ length: 10 }, (_, i) => ({ pos: [-50 + 10 * i, 0, 60] as Vec3, tier: 'lugar' as const })),
+  interiors: [],
 };
 const world = new CollisionWorld([{ polygon: building.footprint, minY: 0, maxY: building.height }], [], bounds);
 const open = new CollisionWorld([], [], bounds); // sin el edificio: la zona puede caer en cualquier lado

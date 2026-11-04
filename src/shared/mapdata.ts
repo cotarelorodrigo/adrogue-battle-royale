@@ -25,7 +25,9 @@ export interface Sign { text: string; anchor: Vec2; normal: Vec2; width: number;
   /** Cartel de bandera: perpendicular a la fachada y de dos caras. */
   blade?: true }
 export interface Place { id: string; name: string; type: PlaceType; position: Vec2; enterable: boolean;
-  buildingId?: string; parkId?: string; sign?: Sign; spawn: Vec3 }
+  buildingId?: string; parkId?: string; sign?: Sign; spawn: Vec3;
+  /** Centro de la puerta principal (D10), al ras de la cara exterior: solo en los lugares con interior. */
+  door?: Vec2 }
 export type Prop =
   | { kind: 'ladder'; base: Vec2; normal: Vec2; topY: number; buildingId: string }
   | { kind: 'dumpster'; position: Vec2; rotation: number }
@@ -41,7 +43,9 @@ export interface MapData { version: 1; origin: { lat: number; lon: number }; bou
   buildings: Building[]; outskirts: OutskirtBuilding[]; roads: Road[]; railways: Vec2[][];
   platforms: Vec2[][]; parks: Park[]; places: Place[];
   /** Carteles de lotes que no son de un lugar. */
-  signs: Sign[]; props: Prop[]; trees: Tree[]; randomSpawns: Vec3[]; lootSpots: LootSpot[] }
+  signs: Sign[]; props: Prop[]; trees: Tree[]; randomSpawns: Vec3[]; lootSpots: LootSpot[];
+  /** Los datos de entrada de cada interior (uno por lugar entrable con lote o planta relevada). */
+  interiors: InteriorInput[] }
 
 export type PlantaBaja = 'vidriera' | 'persiana' | 'porton' | 'puerta' | 'banco' | 'acceso' | 'pared';
 export type Arriba = 'ventanas' | 'balcones' | 'vidriado' | 'ciego';
@@ -61,5 +65,11 @@ export interface SignLook { fondo: string; letra: string; marco: string; fuente:
 /** Marco local de una planta relevada (data/plantas.json): el punto local (u, v) va al mundo como origin + u·U + v·V.
  *  `u` y `v` son unitarios y perpendiculares; `u` corre a lo largo del frente y `v` entra al edificio. */
 export interface Frame { origin: Vec2; u: Vec2; v: Vec2 }
+/** Hueco en una pared de afuera: va sobre la arista `edge` de la planta guardada (ya redondeada), de `s0` a `s1` m desde
+ *  footprint[edge] y de `y0` a `y1` de alto. Una puerta arranca en el piso de su nivel (y0 = nivel · 3,2). */
+export interface Opening { kind: 'puerta' | 'vidrio'; edge: number; s0: number; s1: number; y0: number; y1: number }
+/** Lo que el mapa guarda de un interior: el resto se genera en src/shared/interiors a partir de esto y del edificio.
+ *  `patios`: antihorarios, fuera de la planta (D12). */
+export interface InteriorInput { placeId: string; buildingId: string; frame: Frame; openings: Opening[]; patios: Vec2[][] }
 export const SIGN_H = 0.9;
 export const SIGN_D = 0.12;

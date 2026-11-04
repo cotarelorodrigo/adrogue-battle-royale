@@ -9,6 +9,7 @@ import { cumulative, pointAt, slice, vehicular } from './frontage.ts';
 import type { Frontage } from './frontage.ts';
 import type { FrenteInput, LoteInput } from './frentes-input.ts';
 import { bufferLine, offsetLine } from './osm.ts';
+import type { PlantaShape } from './plantas.ts';
 
 export const MAX_DESVIO = 0.10;
 export const LOT_SIGN = { frenteY: 2.35, banderaY: 2.6, banderaAncho: 1.2, margen: 0.4, offset: 0.08 } as const;
@@ -313,16 +314,40 @@ export function lotSign(l: LotShape, height: number, ayuda?: Partial<Record<Punt
   };
 }
 
+/** Una puerta de una planta relevada está en su fachada si su centro queda a esto (m) de la corrida. */
+const DOOR_ON_FRONT = 0.05;
+
+/** Lo que ocupa sobre la fachada (m desde la punta de `desde`) cada puerta de una planta que da a la fachada. */
+function plantaDoorSpans(s: PlantaShape): [number, number][] {
+  const pl = s.planta.planta;
+  const { origin, u, v } = s.frame;
+  const cum = cumulative(s.front);
+  return s.planta.puertas.flatMap((p): [number, number][] => {
+    const [a, c] = [pl[p.arista], pl[(p.arista + 1) % pl.length]];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    const [lu, lv] = [a[0] + ((c[0] - a[0]) * p.centro) / len, a[1] + ((c[1] - a[1]) * p.centro) / len];
+    const w: Vec2 = [origin[0] + lu * u[0] + lv * v[0], origin[1] + lu * u[1] + lv * v[1]];
+    if (s.front.slice(1).every((q, i) => distPointSegment(w, s.front[i], q) > DOOR_ON_FRONT)) return [];
+    const at = alongLine(w, s.front, cum);
+    return [[at - p.ancho / 2, at + p.ancho / 2]];
+  });
+}
+
 /**
  * Puntas de la fachada donde puede ir una ayuda de ascenso (climb.ts), en orden de preferencia: fuera de la bahía de la
- * puerta (las bahías miden BAY_W, como las dibuja el cliente) y no en la de `desde` si el cartel es de bandera. Si no
- * queda ninguna, `fin`: la bandera choca con la escalera; la puerta, no.
+ * puerta (las bahías miden BAY_W, como las dibuja el cliente) y no en la de `desde` si el cartel es de bandera. En una
+ * planta relevada, tampoco en la bahía de cualquiera de sus puertas que dé a la fachada. Si no queda ninguna, `fin`: la
+ * bandera choca con la escalera; la puerta, no.
  */
 export function aidEnds(l: LotShape): Punta[] {
-  const { n, bay: door } = doorBay(cumulative(l.front).at(-1)!, l.lote.puerta);
+  const len = cumulative(l.front).at(-1)!;
+  const { n, bay: door } = doorBay(len, l.lote.puerta);
+  const bw = len / n;
+  const spans = 'planta' in l ? plantaDoorSpans(l as PlantaShape) : [];
+  const busy = (k: number): boolean => k === door || spans.some(([a, b]) => Math.min(b, (k + 1) * bw) - Math.max(a, k * bw) > 1e-6);
   const ends: Punta[] = [];
-  if (n === 1 || door !== n - 1) ends.push('fin');
-  if ((n === 1 || door !== 0) && l.lote.cartel?.posicion !== 'bandera') ends.push('inicio');
+  if (n === 1 || !busy(n - 1)) ends.push('fin');
+  if ((n === 1 || !busy(0)) && l.lote.cartel?.posicion !== 'bandera') ends.push('inicio');
   return ends.length > 0 ? ends : ['fin'];
 }
 

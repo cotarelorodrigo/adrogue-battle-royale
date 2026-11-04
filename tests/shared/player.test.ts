@@ -184,6 +184,27 @@ describe('trepar', () => {
   });
 });
 
+describe('trepar bajo una losa (D2)', () => {
+  const losa = box(-20, -20, 20, 20, 3.2, 3.0); // cielorraso de 3,0 a 3,2 sobre todo
+  const sawMantle = (w: CollisionWorld, secs: number): { saw: boolean; s: PlayerState } => {
+    let saw = false;
+    const s = trace(at(0.3, 0), fwdJump, secs, (q) => { if (q.mode === 'mantle') saw = true; }, w);
+    return { saw, s };
+  };
+  test('a un mostrador de 1,1 m: salto + W pasa por el mantle y termina parado arriba', () => {
+    const w = new CollisionWorld([losa, box(1, -2, 15, 2, 1.1)], [], bounds);
+    const { saw, s } = sawMantle(w, 1);
+    expect(saw).toBe(true);
+    const end = run(s, idle, 0.5, w);
+    expect(end.onGround).toBe(true);
+    expect(end.pos[1]).toBeCloseTo(1.1, 2);
+  });
+  test('a un estante de 2,2 m el mantle ni arranca: arriba no entra el cuerpo', () => {
+    const w = new CollisionWorld([losa, box(1, -2, 15, 2, 2.2)], [], bounds);
+    expect(sawMantle(w, 2).saw).toBe(false);
+  });
+});
+
 describe('escaleras', () => {
   const climbed = run(atLadder, fwd, 1); // a ~3 m del suelo
   test('sube a 3 m/s y soltar forward lo deja quieto en la escalera', () => {

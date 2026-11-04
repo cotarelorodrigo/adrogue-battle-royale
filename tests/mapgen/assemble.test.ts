@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import polygonClipping from 'polygon-clipping';
 import { assembleMap } from '../../src/mapgen/assemble.ts';
 import { filterTrees } from '../../src/mapgen/trees.ts';
-import { SPAWN_RELAXED, findFreeSpot, isFatalWarning, randomSpawns, seesSign } from '../../src/mapgen/spawns.ts';
+import { SPAWN_RELAXED, findFreeSpot, isFatalWarning, isFreeSpot, randomSpawns, seesSign } from '../../src/mapgen/spawns.ts';
 import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
 import { SIN_LOTE, loadPlantas } from '../../src/mapgen/plantas-input.ts';
@@ -14,7 +14,8 @@ import { FACADE_BY_TYPE } from '../../src/mapgen/place-facades.ts';
 import { outwardNormal } from '../../src/mapgen/places.ts';
 import { polygonDist } from '../../src/mapgen/spatial.ts';
 import { climbOut, regionAt } from './pocket-exit.ts';
-import { buildCollisionWorld } from '../../src/shared/collision.ts';
+import { CollisionWorld, buildCollisionWorld } from '../../src/shared/collision.ts';
+import type { Prism } from '../../src/shared/collision.ts';
 import { AWNING } from '../../src/client/world/fronts.ts';
 import { distPointSegment, pointInPolygon, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
@@ -399,11 +400,22 @@ describe('assembleMap con el frente de prueba', () => {
   }));
 });
 
+describe('isFreeSpot con prismas sueltos', () => {
+  const box = (x0: number, z0: number, x1: number, z1: number, minY: number, maxY: number): Prism =>
+    ({ polygon: [[x0, z1], [x1, z1], [x1, z0], [x0, z0]], minY, maxY });
+  const w = (...ps: Prism[]) => new CollisionWorld(ps, [], { minX: -20, maxX: 20, minZ: -20, maxZ: 20 });
+  const losa = box(-5, -5, 5, 5, 3.0, 3.2);
+  test('una losa de 3,0 a 3,2 encima no lo hace fallar (§2.5)', () => expect(isFreeSpot(w(losa), 0, 0)).toBe(true));
+  test('un banco de 0 a 0,5 sí', () => expect(isFreeSpot(w(box(-1, -1, 1, 1, 0, 0.5)), 0, 0)).toBe(false));
+  test('sobre la losa, a y = 3,2', () => expect(isFreeSpot(w(losa), 0, 0, 3.2)).toBe(true));
+  test('adentro de un sólido de 0 a 3', () => expect(isFreeSpot(w(box(-5, -5, 5, 5, 0, 3)), 0, 0)).toBe(false));
+});
+
 describe('findFreeSpot / randomSpawns en un mundo chico', () => {
   const tiny: MapData = {
     version: 1, origin: { lat: 0, lon: 0 }, bounds: { minX: -10, maxX: 10, minZ: -10, maxZ: 10 },
     buildings: [{ id: 'b', footprint: [[-2, -2], [2, -2], [2, 2], [-2, 2]], height: 4, floors: 1, kind: 'house', wall: 'plaster', tint: '#ccc' }],
-    outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props: [], trees: [], randomSpawns: [], lootSpots: [], signs: [],
+    outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props: [], trees: [], randomSpawns: [], lootSpots: [], signs: [], interiors: [],
   };
   const w = buildCollisionWorld(tiny);
   test('devuelve el punto libre más cercano', () => {

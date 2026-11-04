@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GROUND_CELLS, LOT_OPENINGS, isLotCell } from '../../shared/interiors/openings.ts';
+import type { LotCell } from '../../shared/interiors/openings.ts';
 import type { Arriba, PlantaBaja } from '../../shared/mapdata.ts';
 import { averageLuminance, bars, frame, glass, shutter } from './facades.ts';
 import { BAY_W, FLOOR_H } from './wall-kit.ts';
@@ -29,15 +31,8 @@ export function cellRect(c: FrontCell, size = DEFAULT_SIZE): { u0: number; v0: n
 const withBrick = (c: FrontCell, ladrillo: boolean): FrontCell =>
   ladrillo && (FRONT_CELLS as readonly string[]).includes(`${c}-l`) ? (`${c}-l` as FrontCell) : c;
 
-const GROUND: Record<PlantaBaja, [FrontCell, FrontCell]> = {
-  vidriera: ['vidriera-puerta', 'vidriera'],
-  persiana: ['persiana', 'persiana'],
-  porton: ['porton', 'ventana-pb'],
-  puerta: ['puerta', 'ventana-pb'],
-  banco: ['banco-puerta', 'banco'],
-  acceso: ['acceso', 'vidriera'],
-  pared: ['pared-pb', 'pared-pb'],
-};
+/** La tabla es la de src/shared (mapgen la usa para las aberturas de los lotes). */
+const GROUND: Record<PlantaBaja, readonly [FrontCell, FrontCell]> = GROUND_CELLS;
 
 /** Celda de la bahía de la puerta y la del resto de la planta baja. */
 export function groundCells(pb: PlantaBaja, ladrillo: boolean): { door: FrontCell; rest: FrontCell } {
@@ -70,8 +65,8 @@ function texFill(c: Ctx, img: Img, fallback: string, x: number, y: number, w: nu
   c.drawImage(img, x, y, w, h);
 }
 
-/** Vidrio con parteluces verticales; `door` agrega una hoja vidriada con manija. */
-function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullions: number, frameColor: string, door = false): void {
+/** Vidrio con parteluces verticales (`mullions` paños) y su marco. */
+function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullions: number, frameColor: string): void {
   const { c, u } = p;
   glass(c, x, y, w, h);
   c.strokeStyle = frameColor;
@@ -82,40 +77,60 @@ function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullion
     c.lineTo(x + (w * i) / mullions, y + h);
     c.stroke();
   }
-  if (door) {
-    const [dx, dw] = [x + 0.15 * u, 0.95 * u];
-    frame(c, dx, y + 0.1 * u, dw, h - 0.1 * u, 0.07 * u, frameColor);
-    c.fillStyle = '#c8c8c8';
-    c.fillRect(dx + dw - 0.2 * u, y + h * 0.5, 0.05 * u, 0.4 * u);
-  }
   frame(c, x, y, w, h, 0.1 * u, frameColor);
   unpaint(p, x - 0.05 * u, y - 0.05 * u, w + 0.1 * u, h + 0.1 * u);
 }
 
+/** Puerta: el hueco con la hoja de vidrio abierta hacia adentro (D10, solo dibujo). Se ve el vidrio oscurecido por el
+ *  interior, con el marco y la hoja de canto contra la jamba, con su manija; de 2 m o más, dos hojas. */
+function drawDoor(p: Pen, x: number, y: number, w: number, h: number, frameColor: string): void {
+  const { c, u } = p;
+  glass(c, x, y, w, h);
+  c.fillStyle = 'rgba(0,0,0,0.35)';
+  c.fillRect(x, y, w, h);
+  frame(c, x, y, w, h, 0.1 * u, frameColor);
+  c.fillStyle = frameColor;
+  c.fillRect(x + 0.05 * u, y, 0.08 * u, h); // la hoja abierta, de canto contra la jamba
+  if (w >= 2 * u) c.fillRect(x + w - 0.13 * u, y, 0.08 * u, h); // la otra hoja, contra la otra jamba
+  c.fillStyle = '#c8c8c8';
+  c.fillRect(x + 0.16 * u, y + h * 0.45, 0.04 * u, 0.35 * u);
+  unpaint(p, x - 0.05 * u, y - 0.05 * u, w + 0.1 * u, h + 0.05 * u);
+}
+
 /** Banda de dintel (2,4 a 3,2 m) libre arriba de la planta baja: queda de pared para el cartel. */
 const LINTEL = 0.8;
+
+/** Marco y ancho de paño de cada familia de celdas con aberturas. */
+const OPENING_LOOK: Record<LotCell, { frame: string; pane: number }> = {
+  vidriera: { frame: '#2c2c2c', pane: 0.9 },
+  'vidriera-puerta': { frame: '#2c2c2c', pane: 0.9 },
+  banco: { frame: '#9ea3a8', pane: 1.4 },
+  'banco-puerta': { frame: '#9ea3a8', pane: 1.4 },
+  acceso: { frame: '#3a3a3a', pane: 1.4 },
+};
+
+/** Las aberturas de una celda de lote, exactamente en los rectángulos de LOT_OPENINGS: lo pintado coincide con el hueco
+ *  del interior. */
+function drawOpenings(p: Pen, cell: LotCell): void {
+  const { u } = p;
+  const look = OPENING_LOOK[cell];
+  for (const o of LOT_OPENINGS[cell]) {
+    const [x, y, w, h] = [o.x0 * u, (FLOOR_H - o.y1) * u, (o.x1 - o.x0) * u, (o.y1 - o.y0) * u];
+    if (o.kind === 'puerta') drawDoor(p, x, y, w, h, look.frame);
+    else drawGlazing(p, x, y, w, h, Math.max(1, Math.round((o.x1 - o.x0) / look.pane)), look.frame);
+  }
+}
 
 function drawGround(p: Pen, cell: string): void {
   const { c, u } = p;
   const top = LINTEL * u;
   const kind = cell.replace(/-l$/, '');
   const H = FLOOR_H * u;
+  if (isLotCell(kind)) {
+    drawOpenings(p, kind);
+    return;
+  }
   switch (kind) {
-    case 'vidriera': drawGlazing(p, 0.15 * u, top + 0.1 * u, 2.7 * u, H - top - 0.4 * u, 3, '#2c2c2c'); break;
-    case 'vidriera-puerta': drawGlazing(p, 0.15 * u, top + 0.1 * u, 2.7 * u, H - top - 0.4 * u, 3, '#2c2c2c', true); break;
-    case 'banco': drawGlazing(p, 0.1 * u, top + 0.1 * u, 2.8 * u, H - top - 0.3 * u, 2, '#9ea3a8'); break;
-    case 'banco-puerta': drawGlazing(p, 0.1 * u, top + 0.1 * u, 2.8 * u, H - top - 0.3 * u, 2, '#9ea3a8', true); break;
-    case 'acceso': {
-      const [x, y, w, h] = [0.4 * u, top + 0.1 * u, 2.2 * u, H - top - 0.1 * u];
-      glass(c, x, y, w, h);
-      c.fillStyle = 'rgba(0,0,0,0.35)';
-      c.fillRect(x, y, w, h);
-      frame(c, x, y, w, h, 0.12 * u, '#3a3a3a');
-      c.fillStyle = '#3a3a3a';
-      c.fillRect(x + w / 2 - 0.025 * u, y, 0.05 * u, h);
-      unpaint(p, x - 0.06 * u, y - 0.06 * u, w + 0.12 * u, h + 0.06 * u);
-      break;
-    }
     case 'persiana': {
       const [x, y, w, h] = [0.1 * u, top + 0.1 * u, 2.8 * u, H - top - 0.1 * u];
       texFill(c, p.img.metal, '#8b9097', x, y, w, h);

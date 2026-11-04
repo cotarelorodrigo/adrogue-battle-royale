@@ -175,7 +175,7 @@ const road = (id: string, kind: Road['kind'], points: Vec2[], width = 8, sidewal
 const baseMap = (over: Partial<MapData>): MapData => ({
   version: 1, origin: { lat: 0, lon: 0 }, bounds: { minX: 0, maxX: 400, minZ: 0, maxZ: 200 },
   buildings: [], outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props: [], trees: [],
-  randomSpawns: [], lootSpots: [], signs: [], ...over,
+  randomSpawns: [], lootSpots: [], signs: [], interiors: [], ...over,
 });
 const meshes = (groups: THREE.Group[]) => groups.flatMap((gr) => gr.children as THREE.Mesh[]);
 const namesIn = (groups: THREE.Group[], i: number, j: number) =>

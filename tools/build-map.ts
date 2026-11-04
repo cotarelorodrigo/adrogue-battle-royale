@@ -42,6 +42,7 @@ console.log(`fachadas de lugar: ${facades.length} (${count(facades.map((f) => ({
 const lots = map.buildings.filter((b) => b.front);
 console.log(`frentes: ${frentes.frentes.length}, lotes: ${lots.length}, carteles de lotes: ${map.signs.length + map.places.filter((p) => lots.some((b) => b.id === p.buildingId)).length}`);
 console.log(`plantas: ${plantas.length} (de ${SIN_LOTE.length})`);
+console.log(`interiores: ${map.interiors.length}, puertas: ${map.interiors.reduce((n, i) => n + i.openings.filter((o) => o.kind === 'puerta').length, 0)}`);
 for (const l of report) console.log(`  ${l}`);
 console.log(`warnings: ${warnings.length}`);
 for (const w of warnings) console.log(`  - ${w}`);

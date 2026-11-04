@@ -1,6 +1,8 @@
-import { ORIGIN, areaRect } from '../shared/geo.ts';
+import { ORIGIN, areaRect, pointInPolygon } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
+import type { CollisionWorld } from '../shared/collision.ts';
+import { doorsOf } from '../shared/interiors/openings.ts';
 import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
 import { applyFrentes, lotSigns } from './frentes.ts';
@@ -22,11 +24,14 @@ import { placeFacades } from './place-facades.ts';
 import type { PhotoEdge } from './place-facades.ts';
 import { placeProps } from './props.ts';
 import { placeLootSpots } from './loot-spots.ts';
+import { interiorInputs } from './interior-inputs.ts';
 import { ring, rn, v2 } from './round.ts';
-import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts';
+import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign, walksIn } from './spawns.ts';
 
 const SPAWN_RADIUS = 16;
 const SPAWN_CLEARANCE = 2.5;
+/** El punto de aparición de un lugar con interior se busca a esto (m) de la puerta principal, hacia afuera. */
+const DOOR_SPAWN = 5;
 const NO_FRENTES: FrentesInput = { frentes: [], calzadas: {} };
 /** D8: un edificio que pisa un andén más que esto (m²) rompe el build. La esquina de b0769 pisa 0,3 m² y no salta. */
 const ANDEN_MAX = 1;
@@ -122,6 +127,7 @@ export function assembleMap(
     trees: kept.map((t) => ({ ...t, position: v2(t.position), scale: rn(t.scale) })),
     randomSpawns: [],
     lootSpots: [],
+    interiors: [],
   };
 
   // huecos de suelo sin salida: escalera adentro o relleno (antes de los spawns, que usan el mundo final)
@@ -133,40 +139,67 @@ export function assembleMap(
 
   // los lugares todavía no tienen spawn, pero la estación ya ubica sus postes: el mundo es el mismo que el del juego
   const world = buildCollisionWorld({ ...map, places: matched.places.map((p) => ({ type: p.type, position: v2(p.position) })) });
-  map.places = matched.places.map((p0): Place => {
-    const p: Omit<Place, 'spawn'> = {
-      ...p0,
-      position: v2(p0.position),
-      ...(p0.sign ? { sign: roundSign(p0.sign) } : {}),
-    };
+  const bare = matched.places.map((p0): Omit<Place, 'spawn'> => ({
+    ...p0,
+    position: v2(p0.position),
+    ...(p0.sign ? { sign: roundSign(p0.sign) } : {}),
+  }));
+  // los interiores, sobre las plantas y los lugares ya redondeados: el marco de un lote sale de su fachada
+  const interiors = interiorInputs(map.buildings, bare, fr.plantas, new Map([...fr.fronts].map(([id, f]) => [id, f.front])));
+  warnings.push(...interiors.warnings);
+  map.interiors = interiors.inputs;
+  const byId = new Map(map.buildings.map((b) => [b.id, b]));
+  const claims = map.interiors.flatMap((i) => [byId.get(i.buildingId)!.footprint, ...i.patios]);
+  // las apariciones quedan afuera: ni en la planta ni en un patio de un interior
+  const outside = (x: number, z: number): boolean => !claims.some((r) => pointInPolygon([x, z], r));
+  const mainDoor = new Map(map.interiors.flatMap((i) => doorsOf(byId.get(i.buildingId)!, i).slice(0, 1).map((d) => [i.placeId, d] as const)));
+  map.places = bare.map((p): Place => {
+    // con interior: frente a la puerta principal (D10), con camino recto hasta ella; si no, frente al cartel
+    const door = mainDoor.get(p.id);
     let near: Vec2 | null = null;
-    if (p.sign) near = [p.sign.anchor[0] + p.sign.normal[0] * 7, p.sign.anchor[1] + p.sign.normal[1] * 7];
+    if (door) near = [door.at[0] + door.normal[0] * DOOR_SPAWN, door.at[1] + door.normal[1] * DOOR_SPAWN];
+    else if (p.sign) near = [p.sign.anchor[0] + p.sign.normal[0] * 7, p.sign.anchor[1] + p.sign.normal[1] * 7];
     else if (p.type === 'plaza' || p.type === 'monument') near = [p.position[0], p.position[1] + 10];
     if (!near) { warnings.push(`${p.id}: no se pudo ubicar el punto de aparición`); near = p.position; }
     const sign = p.sign;
-    const accept = sign ? (v: Vec3): boolean => seesSign(world, sign, v) : undefined;
-    let spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE, accept);
-    if (!spawn && accept) {
-      spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE);
-      if (spawn) warnings.push(`${SPAWN_RELAXED} ${p.id}: punto de aparición sin línea de vista de frente al cartel`);
-    }
-    if (!spawn) {
-      spawn = findFreeSpot(world, near, SPAWN_RADIUS, 1);
-      if (spawn) warnings.push(`${SPAWN_RELAXED} ${p.id}: punto de aparición con solo 1 m libre`);
-    }
+    const accept = door ? (v: Vec3): boolean => walksIn(world, v, door) : sign ? (v: Vec3): boolean => seesSign(world, sign, v) : undefined;
+    const why = door ? 'sin camino recto a la puerta' : 'sin línea de vista de frente al cartel';
+    const spawn = spawnNear(world, near, outside, accept, (w) => warnings.push(`${SPAWN_RELAXED} ${p.id}: punto de aparición ${w ?? why}`));
     if (!spawn) warnings.push(`${p.id}: sin punto libre cerca de ${near.map((n) => rn(n, 1)).join(', ')}`);
-    return { ...p, spawn: spawn ?? [rn(near[0]), 0, rn(near[1])] };
+    return { ...p, ...(door ? { door: v2(door.at) } : {}), spawn: spawn ?? [rn(near[0]), 0, rn(near[1])] };
   });
   // fachadas por lugar sobre las plantas y los carteles ya redondeados (los índices de arista son los del archivo)
   warnings.push(...placeFacades(map.buildings, map.places, raw.places, raw.photos ?? []));
   warnings.push(...lotPhotoWarnings(map, raw.photos ?? []));
-  map.randomSpawns = randomSpawns(world);
+  map.randomSpawns = randomSpawns(world, 64, undefined, undefined, outside);
   if (map.randomSpawns.length < 64) warnings.push(`randomSpawns: solo ${map.randomSpawns.length} de 64`);
   // botín: con los props, las ayudas de ascenso y los carteles ya en su lugar, sobre el mismo mundo
   const loot = placeLootSpots(map, world);
   map.lootSpots = loot.spots;
   warnings.push(...loot.warnings);
   return { map, warnings, stats, pockets: holes.stats, report: fr.report };
+}
+
+/**
+ * El punto libre más cercano a `near`, afuera de los interiores (`outside`), con SPAWN_CLEARANCE m de aire y que cumple
+ * `accept`. Si no hay, relaja como siempre: primero sin `accept` y después con solo 1 m libre; `relaxed` recibe cada
+ * relajación (undefined: la de `accept`, que nombra el que llama).
+ */
+function spawnNear(
+  world: CollisionWorld, near: Vec2, outside: (x: number, z: number) => boolean, accept: ((v: Vec3) => boolean) | undefined,
+  relaxed: (why?: string) => void,
+): Vec3 | null {
+  const out = (v: Vec3): boolean => outside(v[0], v[2]);
+  let spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE, accept ? (v) => out(v) && accept(v) : out);
+  if (!spawn && accept) {
+    spawn = findFreeSpot(world, near, SPAWN_RADIUS, SPAWN_CLEARANCE, out);
+    if (spawn) relaxed();
+  }
+  if (!spawn) {
+    spawn = findFreeSpot(world, near, SPAWN_RADIUS, 1, out);
+    if (spawn) relaxed('con solo 1 m libre');
+  }
+  return spawn;
 }
 
 /** Los edificios que pisan un andén más de ANDEN_MAX (D8). */
