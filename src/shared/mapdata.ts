@@ -33,11 +33,15 @@ export type Prop =
   | { kind: 'fountain'; position: Vec2; radius: number }
   | { kind: 'monument'; placeId: string; position: Vec2; style: 'equestrian'|'statue'|'column' };
 export interface Tree { position: Vec2; variant: 0|1|2; scale: number }
+/** Nivel de un punto de botín (spec 2a §5): vereda, techo alcanzable o frente de un lugar entrable. */
+export type LootTier = 'calle' | 'techo' | 'lugar';
+/** Punto de botín: `pos` es el piso donde se apoya el objeto (y = 0 en la calle, el alto del techo arriba). */
+export interface LootSpot { pos: Vec3; tier: LootTier }
 export interface MapData { version: 1; origin: { lat: number; lon: number }; bounds: Bounds;
   buildings: Building[]; outskirts: OutskirtBuilding[]; roads: Road[]; railways: Vec2[][];
   platforms: Vec2[][]; parks: Park[]; places: Place[];
   /** Carteles de lotes que no son de un lugar. */
-  signs: Sign[]; props: Prop[]; trees: Tree[]; randomSpawns: Vec3[] }
+  signs: Sign[]; props: Prop[]; trees: Tree[]; randomSpawns: Vec3[]; lootSpots: LootSpot[] }
 
 export type PlantaBaja = 'vidriera' | 'persiana' | 'porton' | 'puerta' | 'banco' | 'acceso' | 'pared';
 export type Arriba = 'ventanas' | 'balcones' | 'vidriado' | 'ciego';

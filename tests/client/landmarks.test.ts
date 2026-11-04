@@ -42,7 +42,7 @@ const map = {
   version: 1, origin: { lat: 0, lon: 0 }, bounds: { minX: -100, maxX: 100, minZ: -100, maxZ: 100 },
   buildings: [], outskirts: [], roads: [], railways: [track(0), track(4.2)], platforms: [westPlatform, eastPlatform], parks: [],
   places: [{ id: 'estacion-adrogue', name: 'Estación Adrogué', type: 'station', position: [12, 10], enterable: false, spawn: [12, 0, 10] }],
-  props: [], trees: [], randomSpawns: [], signs: [],
+  props: [], trees: [], randomSpawns: [], lootSpots: [], signs: [],
 } satisfies MapData;
 
 describe('estación', () => {

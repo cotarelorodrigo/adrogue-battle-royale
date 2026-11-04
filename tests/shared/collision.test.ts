@@ -407,6 +407,7 @@ const map: MapData = {
   ],
   trees: [{ position: [-10, -20], variant: 1, scale: 1.3 }],
   randomSpawns: [],
+  lootSpots: [],
 };
 const bw = buildCollisionWorld(map);
 const top = (x: number, z: number) => bw.raycast([x, 50, z], [0, -1, 0], 100);
@@ -495,7 +496,7 @@ describe('buildCollisionWorld', () => {
 
 const mapWith = (part: Partial<MapData>): MapData => ({
   version: 1, origin: { lat: 0, lon: 0 }, bounds, buildings: [], outskirts: [], roads: [], railways: [], platforms: [], parks: [],
-  places: [], signs: [], props: [], trees: [], randomSpawns: [], ...part,
+  places: [], signs: [], props: [], trees: [], randomSpawns: [], lootSpots: [], ...part,
 });
 // el cuadrado de 10 × 10 de arriba (x ∈ [0, 10], z ∈ [−10, 0]) con 6 m de alto
 const roof6: Building = { id: 'p6', footprint: square.polygon, height: 6, floors: 2, kind: 'house', wall: 'plaster', tint: '#ccc' };

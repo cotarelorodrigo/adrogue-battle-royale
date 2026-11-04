@@ -31,6 +31,7 @@ console.log(`outskirts: ${map.outskirts.length}`);
 console.log(`calles: ${map.roads.length}, parques: ${map.parks.length}, lugares: ${map.places.length}`);
 console.log(`props: ${map.props.length} (${count(map.props)})`);
 console.log(`arboles: ${map.trees.length}, randomSpawns: ${map.randomSpawns.length}`);
+console.log(`puntos de botín: ${map.lootSpots.length} (${count(map.lootSpots.map((s) => ({ kind: s.tier })))})`);
 console.log(`ayudas de ascenso: clusters=${stats.clusters} dumpsters=${stats.dumpsters} ladders=${stats.ladders} tier0=${stats.tier0} tier1=${stats.tier1} fallback=${stats.fallback} sinAyuda=${stats.noAid} sinAyudaAfuera=${stats.noAidOutside}`);
 console.log(`huecos de suelo: encontrados=${pockets.pockets} escaleras=${pockets.ladders} rellenos=${pockets.filled}`);
 const facades = map.buildings.flatMap((b) => b.facades ?? []);

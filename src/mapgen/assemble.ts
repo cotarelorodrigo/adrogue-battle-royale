@@ -18,6 +18,7 @@ import type { PocketStats } from './pockets.ts';
 import { placeFacades } from './place-facades.ts';
 import type { PhotoEdge } from './place-facades.ts';
 import { placeProps } from './props.ts';
+import { placeLootSpots } from './loot-spots.ts';
 import { ring, rn, v2 } from './round.ts';
 import { SPAWN_RELAXED, findFreeSpot, randomSpawns, seesSign } from './spawns.ts';
 
@@ -109,6 +110,7 @@ export function assembleMap(
     }),
     trees: kept.map((t) => ({ ...t, position: v2(t.position), scale: rn(t.scale) })),
     randomSpawns: [],
+    lootSpots: [],
   };
 
   // huecos de suelo sin salida: escalera adentro o relleno (antes de los spawns, que usan el mundo final)
@@ -146,6 +148,10 @@ export function assembleMap(
   warnings.push(...lotPhotoWarnings(map, raw.photos ?? []));
   map.randomSpawns = randomSpawns(world);
   if (map.randomSpawns.length < 64) warnings.push(`randomSpawns: solo ${map.randomSpawns.length} de 64`);
+  // botín: con los props, las ayudas de ascenso y los carteles ya en su lugar, sobre el mismo mundo
+  const loot = placeLootSpots(map, world);
+  map.lootSpots = loot.spots;
+  warnings.push(...loot.warnings);
   return { map, warnings, stats, pockets: holes.stats, report: fr.report };
 }
 

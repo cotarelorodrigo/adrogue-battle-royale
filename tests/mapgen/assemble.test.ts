@@ -393,7 +393,7 @@ describe('findFreeSpot / randomSpawns en un mundo chico', () => {
   const tiny: MapData = {
     version: 1, origin: { lat: 0, lon: 0 }, bounds: { minX: -10, maxX: 10, minZ: -10, maxZ: 10 },
     buildings: [{ id: 'b', footprint: [[-2, -2], [2, -2], [2, 2], [-2, 2]], height: 4, floors: 1, kind: 'house', wall: 'plaster', tint: '#ccc' }],
-    outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props: [], trees: [], randomSpawns: [], signs: [],
+    outskirts: [], roads: [], railways: [], platforms: [], parks: [], places: [], props: [], trees: [], randomSpawns: [], lootSpots: [], signs: [],
   };
   const w = buildCollisionWorld(tiny);
   test('devuelve el punto libre más cercano', () => {
