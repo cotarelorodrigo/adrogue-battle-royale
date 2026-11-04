@@ -1,4 +1,4 @@
-// Presupuestos de rendimiento por calidad: draw calls y triángulos (renderer.info, con la pasada de sombras) en los 6
+// Presupuestos de rendimiento por calidad: draw calls y triángulos (renderer.info, con la pasada de sombras) en los
 // puntos del recorrido, el tamaño en disco de lo que baja el navegador y el benchmark corto. Con SwiftShader los fps no
 // dicen nada de una placa de verdad: se anotan solo como referencia relativa. Deja una captura por punto y calidad en
 // test-results/perf/ para mirar a ojo la niebla y el corte de camera.far.
@@ -6,7 +6,7 @@ import { mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Quality } from '../src/client/render/quality.ts';
-import { collectErrors, frames, goTo, open, play, TOUR6 } from './helpers.ts';
+import { collectErrors, frames, goTo, open, play, TOUR } from './helpers.ts';
 
 const DIR = 'test-results/perf';
 
@@ -36,7 +36,7 @@ for (const q of ['baja', 'media', 'alta'] as const) {
     await page.evaluate(() => window.__adrogue.photosReady);
     await page.evaluate((x) => window.__adrogue.setQuality(x), q);
     await play(page); // sin la interfaz encima de las capturas
-    for (const stop of TOUR6) {
+    for (const stop of TOUR) {
       await goTo(page, stop);
       await frames(page, 6); // culling, sombra y shaders del lugar nuevo ya resueltos
       const s = await page.evaluate(() => window.__adrogue.stats());

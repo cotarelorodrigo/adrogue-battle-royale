@@ -40,8 +40,8 @@ export function tallestRoof(): Vec3 {
 /** Un punto del recorrido de medición: un lugar (teletransporte) o una posición y hacia dónde mirar. */
 export type TourStop = { id: string } & ({ place: string } | { pos: Vec3; yaw: number });
 
-/** Los 6 puntos de los presupuestos de rendimiento. yaw 0 mira a −z; π/2, a −x. */
-export const TOUR6: TourStop[] = [
+/** Los puntos de los presupuestos de rendimiento. yaw 0 mira a −z; π/2, a −x. */
+export const TOUR: TourStop[] = [
   { id: 'estacion', place: 'estacion-adrogue' },
   { id: 'plaza-brown', place: 'plaza-almirante-brown' },
   // sobre la calle Esteban Adrogué, mirando a lo largo de ella hacia el este
@@ -52,6 +52,8 @@ export const TOUR6: TourStop[] = [
   { id: 'techo', pos: tallestRoof(), yaw: -Math.PI / 2 },
   // borde este, mirando hacia el oeste: todo el mapa por delante
   { id: 'borde', pos: eastEdge(), yaw: Math.PI / 2 },
+  // frente relevado más cargado (Mitre–Pellerano, vereda sur), de cerca: lotes con cartel, toldo y fachada propia
+  ...faceStops().filter((s) => s.id === 'frente-ea-mitre-pellerano-s'),
 ];
 
 /** Ids de los frentes relevados en `data/frentes.json`. */
