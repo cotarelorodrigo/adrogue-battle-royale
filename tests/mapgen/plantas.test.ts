@@ -225,6 +225,25 @@ describe('assembleMap con plantas', () => {
     for (const b of con.map.buildings.filter((x) => x.id.startsWith('b0001'))) expect(lotOverlap(b.footprint, pl.footprint).area).toBeLessThan(0.01);
   });
 
+  test('una planta que arranca a 0,5 m de la línea y sin patio: el recorte llega hasta la fachada', () => {
+    const ps = with_((p) => { p[0].planta = [[0, 0.5], [9.6, 0.5], [9.6, 17.5], [0, 17.5]]; p[0].patios = []; });
+    const [shape] = placePlantas(ps, roads);
+    // b0001 estirado al norte hasta 0,5 m sobre la vereda (v = −0,5), como un bloque fusionado de Microsoft
+    const vereda = unproject(toWorld(shape.frame, [0, -0.5])).lat;
+    const estirado = structuredClone(ms);
+    const f = estirado.features.find((x) => x.properties?.name === 'grande-esteban')!;
+    const norte = Math.max(...f.geometry.coordinates[0].map((c) => c[1]));
+    f.geometry.coordinates[0] = f.geometry.coordinates[0].map(([lon, lat]) => [lon, lat === norte ? vereda : lat]);
+    const conBloque = (pl: PlantaInput[]) => assembleMap({ osm, buildings: estirado, places, plantas: pl });
+    // la franja entre la línea de edificación y la fachada, a lo ancho de la planta
+    const franja = ([[0, 0], [9.6, 0], [9.6, 0.5], [0, 0.5]] as Vec2[]).map((q) => toWorld(shape.frame, q));
+    const enFranja = (m: MapData) => m.buildings.filter((b) => b.id.startsWith('b0001')).reduce((a, b) => a + lotOverlap(b.footprint, franja).area, 0);
+    expect(enFranja(conBloque([]).map)).toBeGreaterThan(4); // sin la planta, el bloque la tapa (9,6 × 0,5 m)
+    const res = conBloque(ps);
+    expect(enFranja(res.map)).toBeLessThan(0.01);
+    expect(res.warnings.filter((w) => w.includes(' da a '))).toEqual([]);
+  });
+
   test('con "reemplaza", el bloque desaparece entero; sin "reemplaza", queda lo que no tapa', () => {
     expect(area(sin.map, 'b0002')).toBeGreaterThan(70);
     expect(con.map.buildings.filter((b) => b.id === 'b0002' || b.id.startsWith('b0002-'))).toEqual([]);
