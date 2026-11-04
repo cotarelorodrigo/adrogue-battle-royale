@@ -156,9 +156,14 @@ export function layoutLots(f: FrenteInput, fr: Frontage, roads: Road[]): LotShap
   return out;
 }
 
+/** Vértices a una grilla de 1 mm: polygon-clipping no logra cerrar la unión cuando lotes vecinos comparten aristas
+ *  casi coincidentes (diferencias de 1e-12 m). */
+const snapMm = (r: Vec2[]): Vec2[] => r.map(([x, z]): Vec2 => [Math.round(x * 1000) / 1000, Math.round(z * 1000) / 1000]);
+
 export function carveLots(buildings: Building[], claims: Vec2[][]): Building[] {
   if (claims.length === 0) return buildings;
-  const union = polygonClipping.union(poly(claims[0]), ...claims.slice(1).map(poly));
+  const snapped = claims.map(snapMm);
+  const union = polygonClipping.union(poly(snapped[0]), ...snapped.slice(1).map(poly));
   const boxes = union.map((p) => bbox(outer(p)));
   const out: Building[] = [];
   for (const b of buildings) {

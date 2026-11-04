@@ -133,6 +133,18 @@ test('carveLots: recorta, conserva el id de la pieza mayor, numera el resto y ti
   expect(far[0]).toEqual(b);
 });
 
+test('carveLots: claims vecinos con aristas casi coincidentes (1e-12 m) se unen sin error', () => {
+  const b = edificio('b0001', [[0, 0], [40, 0], [40, 20], [0, 20]]);
+  const e = 1e-12;
+  const claims: Vec2[][] = [
+    [[10, -5], [20 + e, -5], [20 - e, 25], [10, 25]],
+    [[20, -5 + e], [30, -5], [30, 25], [20 + e, 25 - e]],
+  ];
+  const out = carveLots([b], claims);
+  expect(out.map((o) => o.id)).toEqual(['b0001', 'b0001-2']);
+  out.forEach((o) => expect(polygonArea(o.footprint)).toBeCloseTo(200, 1));
+});
+
 test('frontEdgesOf: encuentra la arista del frente con 4 mm de error y no las de los costados', () => {
   const fp: Vec2[] = [[0, 0.004], [10, 0], [10, 15], [0, 15]];
   expect(frontEdgesOf(fp, [[0, 0], [10, 0]])).toEqual([0]);
