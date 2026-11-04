@@ -455,9 +455,13 @@ describe('empedrado', () => {
   test('calzada asfalto saca el sett que traía OSM', () => {
     const rosales = (rs: typeof roads) => rs.filter((r) => r.name === 'Leonardo Rosales');
     expect(rosales(roads).some((r) => r.surface === 'sett')).toBe(true);
-    const asfaltada = assembleMap({ ...raw, frentes: { frentes: [], calzadas: { 'Leonardo Rosales': 'asfalto' } } }).map.roads;
+    const res = assembleMap({ ...raw, frentes: { frentes: [], calzadas: { 'Leonardo Rosales': 'asfalto', 'Calle Inventada': 'empedrado' } } });
+    const asfaltada = res.map.roads;
     expect(rosales(asfaltada).length).toBeGreaterThan(0);
     expect(rosales(asfaltada).every((r) => r.surface === undefined)).toBe(true);
+    // una calzada para una calle que OSM no tiene no hace nada: avisa
+    expect(res.warnings).toContain('calle "Calle Inventada": OSM no tiene ninguna calle con ese nombre (la calzada no se aplica)');
+    expect(res.warnings.some((w) => w.includes('Leonardo Rosales'))).toBe(false);
   });
   test('otras vías vehiculares con sett de OSM se conservan', () => {
     const others = roads.filter((r) => r.surface === 'sett' && r.kind !== 'footway' && r.kind !== 'pedestrian' && r.name !== 'Esteban Adrogué');

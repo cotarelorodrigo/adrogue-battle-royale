@@ -58,3 +58,26 @@ test('data/frentes.json y el fixture de prueba son válidos', () => {
   expect(() => loadFrentes()).not.toThrow();
   expect(() => loadFrentes('tests/fixtures/frentes-prueba.json')).not.toThrow();
 });
+test('cartel.ancho entre 0,5 y 20 m', () => {
+  const l = (ancho: number) => [{ ancho: 8, pisos: 1, color: '#ffffff', cartel: { ...cartel, ancho } }];
+  expect(() => validateFrentes(base(l(0.3)), 'x', IDS)).toThrow('x: frente f1, lote 1: cartel.ancho tiene que ser un número entre 0,5 y 20 (vino 0.3)');
+  expect(() => validateFrentes(base(l(40)), 'x', IDS)).toThrow(/lote 1: cartel.ancho tiene que ser un número entre 0,5 y 20/);
+  expect(validateFrentes(base(l(0.5)), 'x', IDS).frentes[0].lotes[0].cartel!.ancho).toBe(0.5);
+});
+test('cada estilo se valida solo, aunque ningún lote lo use, y el error nombra el estilo', () => {
+  const ok = [{ ancho: 8, pisos: 1, color: '#ffffff' }];
+  const d = (e: object) => ({ estilos: { malo: e }, ...base(ok) });
+  expect(() => validateFrentes(d({ pb: 'local' }), 'x', IDS)).toThrow(/^x: estilo "malo": pb tiene que ser uno de vidriera/);
+  expect(() => validateFrentes(d({ cartel: { ...cartel, fondo: 'rojo' } }), 'x', IDS)).toThrow(/^x: estilo "malo": cartel.fondo tiene que ser #rrggbb/);
+  expect(() => validateFrentes(d({ fondo: 2 }), 'x', IDS)).toThrow(/^x: estilo "malo": fondo/);
+  // un estilo puede no traer pisos ni color: los pone el lote
+  expect(() => validateFrentes(d({ pb: 'puerta', material: 'ladrillo' }), 'x', IDS)).not.toThrow();
+  expect(() => validateFrentes(d({ lugar: 'galicia' }), 'x', IDS)).toThrow('x: estilo "malo": un estilo no puede tener lugar');
+});
+test('id del frente: minúsculas, números y guiones, y no como los de Microsoft', () => {
+  const l = [{ ancho: 8, pisos: 1, color: '#ffffff' }];
+  const conId = (id: string) => ({ calles: [{ calle: 'Esteban Adrogué', frentes: [{ ...base(l).calles[0].frentes[0], id }] }] });
+  expect(() => validateFrentes(conId('EA Norte'), 'x', IDS)).toThrow('x: frente EA Norte: id tiene que tener solo minúsculas sin acento, números y guiones (vino "EA Norte")');
+  expect(() => validateFrentes(conId('b0837'), 'x', IDS)).toThrow('x: frente b0837: id no puede ser una b y un número, como los edificios de Microsoft');
+  expect(validateFrentes(conId('ea-b0837'), 'x', IDS).frentes[0].id).toBe('ea-b0837');
+});

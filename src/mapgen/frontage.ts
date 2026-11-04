@@ -161,7 +161,10 @@ function resolve(roads: Road[], f: Pick<FrenteInput, 'id' | 'calle' | 'desde' | 
   const dPlus = avgDot(plus, compass);
   const dMinus = avgDot(minus, compass);
   if (Math.abs(dPlus - dMinus) < 0.3 * 2 * setback) {
-    throw new Error(`la vereda "${f.vereda}" no es clara para esta calle; usá norte o sur`);
+    // el par que mejor separa las dos veredas: norte/sur en una calle este–oeste, este/oeste en una norte–sur
+    const gap = (k: Vec2): number => Math.abs(avgDot(plus, k) - avgDot(minus, k));
+    const par = gap(COMPASS.sur) >= gap(COMPASS.este) ? 'norte o sur' : 'este u oeste';
+    throw new Error(`la vereda "${f.vereda}" no es clara para esta calle; usá ${par}`);
   }
   const inward: 1 | -1 = dPlus > dMinus ? 1 : -1;
   const off = inward === 1 ? plus : minus;

@@ -27,7 +27,9 @@ const VEREDAS: readonly string[] = ['norte', 'sur', 'este', 'oeste'];
 const CALZADAS: readonly string[] = ['empedrado', 'asfalto'];
 
 const LOTE_KEYS = ['ancho', 'pisos', 'fondo', 'retiro', 'color', 'colorPB', 'pb', 'arriba', 'material', 'puerta', 'toldo', 'cartel', 'lugar', 'osm', 'nota', 'usa'];
-const ESTILO_KEYS = LOTE_KEYS.filter((k) => k !== 'ancho' && k !== 'usa');
+/** Un estilo no lleva ancho (es de cada lote), usa (no se encadenan) ni lugar (cada lugar va en un solo lote). */
+const NO_ESTILO = ['ancho', 'usa', 'lugar'];
+const ESTILO_KEYS = LOTE_KEYS.filter((k) => !NO_ESTILO.includes(k));
 const CARTEL_KEYS = ['texto', 'fondo', 'letra', 'marco', 'fuente', 'cursiva', 'posicion', 'ancho'];
 const TOLDO_KEYS = ['color', 'rayas'];
 const FRENTE_KEYS = ['id', 'desde', 'hasta', 'vereda', 'fecha', 'osmAusentes', 'lotes'];
@@ -37,6 +39,11 @@ const RAIZ_KEYS = ['estilos', 'calles'];
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const COLOR = /^#[0-9a-fA-F]{6}$/;
+/** Ids de frente: van a los ids de los edificios (`<id>-k`) y a una RegExp de los tests e2e. */
+const ID = /^[a-z0-9-]+$/;
+/** Como los edificios de Microsoft (b0837): sus pedazos recortados se llaman b0837-2, como el lote 2 de un frente así. */
+const ID_MICROSOFT = /^b\d+$/;
+const dec = (n: number): string => String(n).replace('.', ',');
 
 export function loadFrentes(path = 'data/frentes.json', placeIds: readonly string[] = loadPlaces().map((p) => p.id)): FrentesInput {
   return validateFrentes(JSON.parse(readFileSync(path, 'utf8')), path, placeIds);
@@ -55,7 +62,7 @@ function checkUnknownFields(data: Obj, source: string): void {
     if (!isObj(data.estilos)) throw new Error(`${source}: estilos tiene que ser un objeto`);
     for (const [name, e] of Object.entries(data.estilos)) {
       if (!isObj(e)) throw new Error(`${source}: estilo "${name}" tiene que ser un objeto`);
-      for (const k of ['ancho', 'usa']) if (k in e) throw new Error(`${source}: estilo "${name}": un estilo no puede tener ${k}`);
+      for (const k of NO_ESTILO) if (k in e) throw new Error(`${source}: estilo "${name}": un estilo no puede tener ${k}`);
       unknownField(`${source}: estilo "${name}"`, e, ESTILO_KEYS);
       checkSubFields(`${source}: estilo "${name}"`, e);
     }
@@ -95,7 +102,7 @@ function color(where: string, field: string, v: unknown): string {
 function num(where: string, field: string, v: unknown, min: number, max: number, opts: { int?: boolean; excludeMin?: boolean } = {}): number {
   const ok = typeof v === 'number' && Number.isFinite(v) && (opts.excludeMin ? v > min : v >= min) && v <= max && (!opts.int || Number.isInteger(v));
   if (!ok) {
-    throw new Error(`${where}: ${field} tiene que ser ${opts.int ? 'un entero' : 'un número'} entre ${min}${opts.excludeMin ? ' (sin incluirlo)' : ''} y ${max} (vino ${JSON.stringify(v)})`);
+    throw new Error(`${where}: ${field} tiene que ser ${opts.int ? 'un entero' : 'un número'} entre ${dec(min)}${opts.excludeMin ? ' (sin incluirlo)' : ''} y ${dec(max)} (vino ${JSON.stringify(v)})`);
   }
   return v as number;
 }
@@ -148,7 +155,7 @@ function validateLote(raw: Obj, where: string, estilos: Obj, placeIds: readonly 
     };
     if (c.cursiva !== undefined && typeof c.cursiva !== 'boolean') throw new Error(`${where}: cartel.cursiva tiene que ser true o false`);
     if (c.marco !== undefined) cartel.marco = color(where, 'cartel.marco', c.marco);
-    if (c.ancho !== undefined) cartel.ancho = num(where, 'cartel.ancho', c.ancho, 0, 60, { excludeMin: true });
+    if (c.ancho !== undefined) cartel.ancho = num(where, 'cartel.ancho', c.ancho, 0.5, 20);
     lote.cartel = cartel;
   }
   if (merged.lugar !== undefined) {
@@ -164,6 +171,9 @@ export function validateFrentes(data: unknown, source: string, placeIds: readonl
   if (!isObj(data)) throw new Error(`${source}: se esperaba un objeto con "estilos" y "calles"`);
   checkUnknownFields(data, source);
   const estilos = (data.estilos ?? {}) as Obj;
+  // cada estilo, solo y una vez (aunque ningún lote lo use): así el error nombra el estilo y no el primer lote que lo usa.
+  // Lo que un estilo puede no traer porque lo pone cada lote (ancho, pisos, color) va con un valor cualquiera válido.
+  for (const [name, e] of Object.entries(estilos)) validateLote({ ancho: 1, pisos: 1, color: '#000000', ...(e as Obj) }, `${source}: estilo "${name}"`, {}, placeIds);
   const out: FrentesInput = { frentes: [], calzadas: {} };
   const ids = new Set<string>();
   const lugares = new Map<string, string>();
@@ -173,6 +183,8 @@ export function validateFrentes(data: unknown, source: string, placeIds: readonl
     for (const f of c.frentes as Obj[]) {
       const id = str(source, 'id del frente', f.id);
       const fw = `${source}: frente ${id}`;
+      if (!ID.test(id)) throw new Error(`${fw}: id tiene que tener solo minúsculas sin acento, números y guiones (vino "${id}")`);
+      if (ID_MICROSOFT.test(id)) throw new Error(`${fw}: id no puede ser una b y un número, como los edificios de Microsoft`);
       if (ids.has(id)) throw new Error(`${fw}: id repetido`);
       ids.add(id);
       const desde = str(fw, 'desde', f.desde), hasta = str(fw, 'hasta', f.hasta);

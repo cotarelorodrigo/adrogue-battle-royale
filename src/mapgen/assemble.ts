@@ -38,6 +38,9 @@ export function assembleMap(
     if (calzada === 'empedrado') r.surface = 'sett';
     else if (calzada === 'asfalto') delete r.surface;
   }
+  for (const name of Object.keys(raw.frentes?.calzadas ?? {})) {
+    if (!roads.some((r) => r.name === name)) warnings.push(`calle "${name}": OSM no tiene ninguna calle con ese nombre (la calzada no se aplica)`);
+  }
   const built = buildBuildings(raw.buildings, roads, parks);
   const fr = applyFrentes(raw.frentes ?? NO_FRENTES, roads, built.buildings, raw.places, pois);
   warnings.push(...fr.warnings);

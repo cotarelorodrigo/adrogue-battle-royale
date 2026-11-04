@@ -76,3 +76,16 @@ test('datos reales: EA de Bartolomé Mitre a Pellerano resuelve igual que de Som
   expect(Math.hypot(a.line[0][0] - b.line[0][0], a.line[0][1] - b.line[0][1])).toBeLessThan(0.1);
   expect(Math.hypot(a.line.at(-1)![0] - b.line.at(-1)![0], a.line.at(-1)![1] - b.line.at(-1)![1])).toBeLessThan(0.1);
 });
+
+test('vereda que no sirve: sugiere el par que sí (este u oeste en una calle norte–sur)', () => {
+  const ns: Road[] = [
+    road('N', 'residential', [[0, -100], [0, 100]]),
+    road('P', 'residential', [[-60, -40], [60, -40]]),
+    road('Q', 'residential', [[-60, 40], [60, 40]]),
+  ];
+  expect(() => resolveFrontage(ns, { id: 't', calle: 'N', desde: 'P', hasta: 'Q', vereda: 'norte' }))
+    .toThrow('la vereda "norte" no es clara para esta calle; usá este u oeste');
+  expect(() => resolveFrontage(roads, { id: 't', calle: 'A', desde: 'B', hasta: 'C', vereda: 'este' }))
+    .toThrow('la vereda "este" no es clara para esta calle; usá norte o sur');
+  expect(resolveFrontage(ns, { id: 't', calle: 'N', desde: 'P', hasta: 'Q', vereda: 'este' }).length).toBeGreaterThan(50);
+});
