@@ -3,17 +3,22 @@ import mini from '../fixtures/osm-mini.json';
 import { assembleMap } from '../../src/mapgen/assemble.ts';
 import type { GeoJSONFeatureCollection } from '../../src/mapgen/buildings.ts';
 import { cumulative, pointAt, resolveFrontage, streetChain } from '../../src/mapgen/frontage.ts';
+import { applyFrentes } from '../../src/mapgen/frentes.ts';
 import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
 import type { FrentesInput, LoteInput } from '../../src/mapgen/frentes-input.ts';
 import { lotOverlap } from '../../src/mapgen/lots.ts';
 import { parseOsm } from '../../src/mapgen/osm.ts';
-import { loadPlaces } from '../../src/mapgen/places-input.ts';
+import type { PhotoEdge } from '../../src/mapgen/place-facades.ts';
+import { ENTERABLE_IDS, loadPlaces } from '../../src/mapgen/places-input.ts';
 import { SIN_LOTE, loadPlantas, validatePlantas } from '../../src/mapgen/plantas-input.ts';
 import type { PlantaInput } from '../../src/mapgen/plantas-input.ts';
 import { placePlantas, toWorld } from '../../src/mapgen/plantas.ts';
-import { distPointSegment, polygonArea, project, signedAreaFromAbove, unproject } from '../../src/shared/geo.ts';
+import { isFreeSpot } from '../../src/mapgen/spawns.ts';
+import { buildCollisionWorld } from '../../src/shared/collision.ts';
+import { distPointSegment, pointInPolygon, polygonArea, project, signedAreaFromAbove, unproject } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
-import type { MapData } from '../../src/shared/mapdata.ts';
+import { doorsOf } from '../../src/shared/interiors/openings.ts';
+import type { Building, MapData } from '../../src/shared/mapdata.ts';
 
 const FIXTURE = 'tests/fixtures/plantas-prueba.json';
 const NO_FRENTES: FrentesInput = { frentes: [], calzadas: {} };
@@ -49,7 +54,18 @@ describe('validatePlantas', () => {
     expect(p.patios).toHaveLength(1);
     // lo que no viene queda vacío
     const { patios: _p, vidrios: _v, reemplaza: _r, ...min } = ok();
-    expect(check(min)[0]).toMatchObject({ patios: [], vidrios: [], reemplaza: [] });
+    expect(check(min)[0]).toMatchObject({ patios: [], despejes: [], vidrios: [], reemplaza: [] });
+  });
+
+  test('despejes: anillos como los patios, validados igual', () => {
+    const despeje: Vec2[] = [[0, -3], [9.6, -3], [9.6, 0], [0, 0]];
+    expect(check({ ...ok(), despejes: [despeje] })[0].despejes).toEqual([despeje]);
+    expect(() => check({ ...ok(), despejes: [[[0, 0], [9.6, 0]]] })).toThrow(/^x: planta de guernica-bar: el despeje 1 tiene que ser una lista de 3 o más puntos \[u, v\]$/);
+    expect(() => check({ ...ok(), despejes: [despeje, [[0, 0], [9.6, 0], [0, 4], [9.6, 4]]] })).toThrow(/^x: planta de guernica-bar: el despeje 2 se cruza: la arista 1 corta a la arista 3$/);
+    expect(() => check({ ...ok(), despejes: [[[0, 0], [0.5, 0], [0.5, 0.5]]] })).toThrow(/^x: planta de guernica-bar: el despeje 1 tiene menos de 1 m²$/);
+    expect(() => check({ ...ok(), despejes: 'vereda' })).toThrow(/^x: planta de guernica-bar: despejes tiene que ser una lista$/);
+    // con otro nombre sigue siendo un campo desconocido
+    expect(() => check({ ...ok(), despeje: [despeje] })).toThrow(/^x: planta de guernica-bar: campo desconocido "despeje" \(van lugar, fecha, marco, planta, patios, despejes, /);
   });
 
   test('el fixture y data/plantas.json son válidos', () => {
@@ -156,9 +172,30 @@ describe('placePlantas', () => {
     expect(shapes.map((s) => s.id)).toEqual(['pl-guernica-bar', 'pl-mcdonalds']);
     for (const s of shapes) expect(signedAreaFromAbove(s.footprint!)).toBeGreaterThan(0);
     expect(frente.front).toHaveLength(2);
-    expect(frente.claim).toHaveLength(3); // la planta, el patio y la franja de la calle
+    // la planta, el patio y la franja de la calle, fusionados en una sola pieza: 9,6 m de ancho, del eje al fondo
+    const { setback } = resolveFrontage(roads, { id: 'x', ...(plantas[0].marco as { calle: string; vereda: 'sur'; desde: string; hasta: string }) });
+    expect(frente.claim).toHaveLength(1);
+    expect(polygonArea(frente.claim[0])).toBeCloseTo(9.6 * (setback + 21), 6);
     expect(frente.patios).toHaveLength(1);
-    expect(geo.claim).toHaveLength(1); // sin patios ni calle
+    expect(geo.claim).toEqual([geo.footprint]); // sin patios ni calle
+  });
+
+  test('claim: la unión sin redondear de la planta, los patios y los despejes, en anillos antihorarios', () => {
+    // girada 33°, con un patio sobre un pedazo de la arista de atrás y un despeje pegado al frente: una sola pieza
+    const m = plantas[1].marco as { lat: number; lon: number; rumbo: number };
+    const girada: PlantaInput = {
+      ...plantas[1], marco: { ...m, rumbo: 33 },
+      patios: [[[2, 6], [6, 6], [6, 9], [2, 9]]], despejes: [[[0, -2], [8, -2], [8, 0], [0, 0]]],
+    };
+    const [s] = placePlantas([girada], roads);
+    expect(s.claim).toHaveLength(1);
+    expect(polygonArea(s.claim[0])).toBeCloseTo(8 * 6 + 4 * 3 + 8 * 2, 6);
+    expect(signedAreaFromAbove(s.claim[0])).toBeGreaterThan(0);
+    expect(s.patios).toHaveLength(1);
+    // un despeje suelto queda como otra pieza
+    const [suelto] = placePlantas([{ ...girada, despejes: [[[20, 0], [24, 0], [24, 4], [20, 4]]] }], roads);
+    expect(suelto.claim).toHaveLength(2);
+    for (const r of suelto.claim) expect(signedAreaFromAbove(r)).toBeGreaterThan(0);
   });
 
   test('marco de frente: [0, 0] sobre la línea a s y [0, 1] a 1 m hacia la manzana', () => {
@@ -194,6 +231,28 @@ describe('placePlantas', () => {
     const m = plantas[0].marco as { s: number };
     expect(() => placePlantas([{ ...plantas[0], marco: { ...m, s: 500 } as PlantaInput['marco'] }], roads)).toThrow(/^planta de guernica-bar: marco: s es 500 m y el frente mide 169,0 m$/);
     expect(() => placePlantas([{ ...plantas[0], marco: { ...m, hasta: 'Inventada' } as PlantaInput['marco'] }], roads)).toThrow(/^planta de guernica-bar: marco: no hay ninguna calle "Inventada"|^planta de guernica-bar: marco: "Inventada" no cruza/);
+  });
+});
+
+describe('applyFrentes: recorte de una planta girada', () => {
+  const plantas = loadPlantas(NO_FRENTES, FIXTURE);
+  test('una planta girada 33° adentro de un bloque grande, con un patio pegado a una arista: el patio queda sin Microsoft', () => {
+    const bloque: Building = { id: 'b0001', footprint: [[-40, -40], [40, -40], [40, 40], [-40, 40]], height: 6.6, floors: 2, kind: 'shop', wall: 'plaster', tint: '#aaaaaa' };
+    // el patio, sobre un pedazo de la arista de atrás de la planta de 8 × 6 m
+    const patio: Vec2[] = [[2, 6], [6, 6], [6, 9], [2, 9]];
+    const girada: PlantaInput = { ...plantas[1], marco: { ...unproject([-3, -4]), rumbo: 33 }, patios: [patio], reemplaza: [] };
+    const shapes = placePlantas([girada], []);
+    const res = applyFrentes(NO_FRENTES, [], [bloque], [], [], shapes);
+    const microsoft = res.buildings.filter((b) => !b.id.startsWith('pl-'));
+    expect(microsoft.length).toBeGreaterThan(0);
+    // el centro y un punto a 0,3 m de cada esquina hacia adentro, del patio y de la planta
+    const probes: Vec2[] = [[4, 7.5], [2.3, 6.3], [5.7, 6.3], [5.7, 8.7], [2.3, 8.7], [4, 3], [0.3, 0.3], [7.7, 0.3], [7.7, 5.7], [0.3, 5.7]];
+    for (const q of probes) {
+      const w = toWorld(shapes[0].frame, q);
+      expect(microsoft.filter((b) => pointInPolygon(w, b.footprint)).map((b) => b.id), `[${q}]`).toEqual([]);
+    }
+    // lo que no tapa queda: el bloque menos la planta y el patio
+    expect(microsoft.reduce((a, b) => a + polygonArea(b.footprint), 0)).toBeCloseTo(80 * 80 - 8 * 6 - 4 * 3, 1);
   });
 });
 
@@ -266,6 +325,14 @@ describe('assembleMap con plantas', () => {
     expect(m.front!.edges).toHaveLength(1);
   });
 
+  test('la planta de un lugar de tipo station sale con kind station; las otras, con la del lote', () => {
+    expect(byId(con.map, 'pl-mcdonalds')!.kind).toBe('shop');
+    const estacion = run(with_((ps) => { ps[1].lugar = 'estacion-adrogue'; ps[1].lote.lugar = 'estacion-adrogue'; })).map;
+    expect(estacion.places.find((p) => p.id === 'estacion-adrogue')!.buildingId).toBe('pl-estacion-adrogue');
+    expect(byId(estacion, 'pl-estacion-adrogue')!.kind).toBe('station');
+    expect(byId(estacion, 'pl-guernica-bar')!.kind).toBe('shop');
+  });
+
   test('el lugar queda con ese edificio y el cartel del archivo', () => {
     const g = con.map.places.find((p) => p.id === 'guernica-bar')!;
     expect(g.buildingId).toBe('pl-guernica-bar');
@@ -298,6 +365,20 @@ describe('assembleMap con plantas', () => {
     expect(encima).toContain('planta de mcdonalds se pisa con planta de guernica-bar (48,0 m²)');
   });
 
+  test('un despeje recorta el bloque de Microsoft y no es un patio del interior', () => {
+    // al oeste de la planta del McDonald's (U = +x, V = +z): la mitad oeste de b0002, que la planta no tapa
+    const despeje: Vec2[] = [[-5, 2], [0, 2], [0, 10], [-5, 10]];
+    const sinReemplazo = run(with_((ps) => { ps[1].reemplaza = []; })).map;
+    const conDespeje = run(with_((ps) => { ps[1].reemplaza = []; ps[1].despejes = [despeje]; })).map;
+    const [shape] = placePlantas([{ ...plantas[1], despejes: [despeje] }], roads);
+    const tapado = lotOverlap(byId(sin.map, 'b0002')!.footprint, despeje.map((q) => toWorld(shape.frame, q))).area;
+    expect(tapado).toBeCloseTo(40, 1);
+    expect(area(conDespeje, 'b0002')).toBeCloseTo(area(sinReemplazo, 'b0002') - tapado, 0);
+    // no entra a los patios: ni a los de la planta ni a los del interior
+    expect(shape.patios).toEqual([]);
+    expect(conDespeje.interiors.find((i) => i.placeId === 'mcdonalds')!.patios).toEqual([]);
+  });
+
   test('aviso: "reemplaza" que no es un edificio de Microsoft', () => {
     const w = run(with_((ps) => { ps[1].reemplaza = ['b0002', 'b9999']; })).warnings;
     expect(w).toContain('planta de mcdonalds: "reemplaza" nombra b9999, que no es un edificio de Microsoft');
@@ -314,5 +395,54 @@ describe('assembleMap con plantas', () => {
   test('aviso: un edificio que pisa un andén', () => {
     const w = run(with_((ps) => { ps[1].marco = geoAt(-100, 192); })).warnings;
     expect(w.filter((x) => x.includes('andén'))).toEqual(['pl-mcdonalds: pisa un andén (32,0 m²)']);
+  });
+});
+
+describe('las plantas del mapa real', () => {
+  const frentes = loadFrentes();
+  const plantas = loadPlantas(frentes);
+  const { map } = assembleMap({
+    osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')) as unknown,
+    buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')) as GeoJSONFeatureCollection,
+    places: loadPlaces(),
+    photos: JSON.parse(readFileSync('data/photo-facades.json', 'utf8')) as PhotoEdge[],
+    frentes,
+    plantas,
+  });
+  const byId = new Map(map.buildings.map((b) => [b.id, b]));
+
+  test('un interior por cada lugar entrable; los de las plantas, con sus patios y sin los despejes', () => {
+    expect(map.interiors.map((i) => i.placeId).sort()).toEqual([...ENTERABLE_IDS].sort());
+    expect(plantas.map((p) => p.lugar).sort()).toEqual([...SIN_LOTE].sort());
+    for (const p of plantas) {
+      const i = map.interiors.find((x) => x.placeId === p.lugar)!;
+      expect(i.buildingId).toBe(`pl-${p.lugar}`);
+      expect(i.patios, p.lugar).toHaveLength(p.patios.length);
+    }
+    expect(plantas.filter((p) => p.despejes.length > 0).map((p) => p.lugar).sort()).toEqual(['cine-pixel', 'guernica-bar', 'mcdonalds']);
+  });
+
+  test('Guernica: 2 pisos y 7,0 m; La Veneciana: 1 piso', () => {
+    const g = byId.get('pl-guernica-bar')!;
+    expect([g.floors, g.height]).toEqual([2, 7.0]);
+    expect(byId.get('pl-la-veneciana')!.floors).toBe(1);
+  });
+
+  test('ningún edificio pisa un andén más de 1 m² (D8)', () => {
+    for (const b of map.buildings) expect(map.platforms.reduce((a, p) => a + lotOverlap(b.footprint, p).area, 0), b.id).toBeLessThanOrEqual(1);
+  });
+
+  test('1 m afuera de cada puerta de la planta baja el punto está libre', () => {
+    const world = buildCollisionWorld(map);
+    const altas: string[] = [];
+    for (const i of map.interiors) {
+      for (const d of doorsOf(byId.get(i.buildingId)!, i)) {
+        // una puerta de un piso alto da a un balcón que arma el interior (el del Guernica, Tarea 9): mapgen no tiene la
+        // losa del balcón y ahí afuera no hay piso; no se mira
+        if (d.level >= 1) { altas.push(i.placeId); continue; }
+        expect(isFreeSpot(world, d.at[0] + d.normal[0], d.at[1] + d.normal[1]), `${i.placeId}: [${d.at}]`).toBe(true);
+      }
+    }
+    expect(altas).toEqual(['guernica-bar']);
   });
 });

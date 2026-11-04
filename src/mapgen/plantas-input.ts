@@ -1,6 +1,8 @@
 // Plantas relevadas (data/plantas.json): los lugares que caen en bloques fusionados de Microsoft y no tienen lote en
-// data/frentes.json. Cada una es un lote suelto: la planta real en un marco local, sus puertas y vidrios, y el aspecto
-// con los mismos campos que un lote.
+// data/frentes.json. Cada una es un lote suelto: la planta real en un marco local, sus patios y despejes, sus puertas y
+// vidrios, y el aspecto con los mismos campos que un lote. Un patio es parte del lugar sin losa ni techo (lo amuebla el
+// interior); un despeje es suelo que solo se le saca a los bloques de Microsoft (una vereda o un pasillo que tapaban),
+// sin ser parte del interior.
 import { readFileSync } from 'node:fs';
 import { AREA, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
@@ -26,6 +28,9 @@ export interface PlantaInput {
   planta: Vec2[];
   /** Patios: fuera de la planta (sin losa ni techo), dentro del recorte de Microsoft (D12). */
   patios: Vec2[][];
+  /** Despejes: suelo que se le saca a los bloques de Microsoft sin ser parte del interior (una vereda tapada, el pasillo
+   *  delante del cine). Solo entran al recorte: ni a los patios del interior ni a los filtros de las apariciones. */
+  despejes: Vec2[][];
   /** Aristas de `planta` sobre la fachada: seguidas. */
   frente: number[];
   /** Bloques de Microsoft que se borran enteros (D8). */
@@ -40,7 +45,7 @@ const VEREDAS: readonly string[] = ['norte', 'sur', 'este', 'oeste'];
 const PUERTAS: readonly Puerta[] = ['inicio', 'medio', 'fin'];
 /** Los campos de aspecto, sueltos como en un lote (los valida validateLote). */
 const ASPECTO = ['pisos', 'alto', 'color', 'colorPB', 'material', 'pb', 'arriba', 'puerta', 'toldo', 'cartel', 'nota'];
-const PLANTA_KEYS = ['lugar', 'fecha', 'marco', 'planta', 'patios', 'frente', 'reemplaza', 'puertas', 'vidrios', ...ASPECTO];
+const PLANTA_KEYS = ['lugar', 'fecha', 'marco', 'planta', 'patios', 'despejes', 'frente', 'reemplaza', 'puertas', 'vidrios', ...ASPECTO];
 const MARCO_FRENTE_KEYS = ['calle', 'vereda', 'desde', 'hasta', 's'];
 const MARCO_GEO_KEYS = ['lat', 'lon', 'rumbo'];
 const PUERTA_KEYS = ['arista', 'centro', 'ancho', 'alto', 'piso'];
@@ -117,7 +122,7 @@ function points(where: string, field: string, v: unknown): Vec2[] {
   });
 }
 
-/** Un anillo que cierra: sin aristas de largo 0, sin cruzarse y con área. `what`: "la planta" o "el patio k". */
+/** Un anillo que cierra: sin aristas de largo 0, sin cruzarse y con área. `what`: "la planta", "el patio k" o "el despeje k". */
 function checkRing(where: string, what: string, r: Vec2[]): void {
   r.forEach((_, i) => {
     if (edgeLen(r, i) < 1e-3) throw new Error(`${where}: ${what} tiene la arista ${i} de largo 0 (el punto ${i} y el siguiente son iguales)`);
@@ -190,6 +195,11 @@ function validatePlanta(e: Obj, where: string, frentes: FrentesInput, seen: Set<
     checkRing(where, `el patio ${k + 1}`, ring);
     return ring;
   });
+  const despejes = list(where, 'despejes', e.despejes ?? []).map((r, k) => {
+    const ring = points(where, `el despeje ${k + 1}`, r);
+    checkRing(where, `el despeje ${k + 1}`, ring);
+    return ring;
+  });
   const n = planta.length;
   const frente = validateFrente(where, e.frente, n);
   const run = frontRun(planta, frente);
@@ -256,7 +266,7 @@ function validatePlanta(e: Obj, where: string, frentes: FrentesInput, seen: Set<
         + (fits ? `usá "${fits}"` : 'ninguna de inicio, medio y fin cae ahí: corré la puerta'));
     }
   }
-  return { lugar, fecha: e.fecha, marco, planta, patios, frente, reemplaza: reemplaza as string[], puertas, vidrios, lote };
+  return { lugar, fecha: e.fecha, marco, planta, patios, despejes, frente, reemplaza: reemplaza as string[], puertas, vidrios, lote };
 }
 
 /** Valida data/plantas.json (`source`: de dónde vino, para el mensaje) contra los lotes de `frentes`, completa los valores

@@ -191,6 +191,28 @@ export function lotOverlap(a: Vec2[], b: Vec2[]): { area: number; width: number 
  *  casi coincidentes (diferencias de 1e-12 m). */
 const snapMm = (r: Vec2[]): Vec2[] => r.map(([x, z]): Vec2 => [Math.round(x * 1000) / 1000, Math.round(z * 1000) / 1000]);
 
+/**
+ * Los pedazos sin agujeros de `p`, un resto de carveLots: un edificio guarda solo su anillo de afuera, y un agujero (lo
+ * recortado por una planta entera adentro del bloque) se perdería y el bloque seguiría tapándola. Mientras tenga, se
+ * corta con una recta por el medio del primero, de través a su lado más largo (así lo cruza aunque sea una astilla), y
+ * se sigue con cada mitad: el agujero cortado se abre y un semiplano no abre ninguno nuevo, así que cada corte saca al
+ * menos uno (`budget`: los cortes que quedan).
+ */
+function splitHoles(p: Multi[number], id: string, budget = p.length - 1): Vec2[][] {
+  if (p.length === 1) return [outer(p)];
+  if (budget <= 0) throw new Error(`${id}: el resto del recorte sigue con agujeros después de cortarlo por cada uno`);
+  const [x0, z0, x1, z1] = bbox(outer(p)).map((v, i) => v + (i < 2 ? -1 : 1));
+  const [hx0, hz0, hx1, hz1] = bbox(p[1].slice(0, -1) as Vec2[]);
+  const [cx, cz] = [(hx0 + hx1) / 2, (hz0 + hz1) / 2];
+  const halves: Vec2[][] = hx1 - hx0 >= hz1 - hz0
+    ? [[[x0, z0], [cx, z0], [cx, z1], [x0, z1]], [[cx, z0], [x1, z0], [x1, z1], [cx, z1]]]
+    : [[[x0, z0], [x1, z0], [x1, cz], [x0, cz]], [[x0, cz], [x1, cz], [x1, z1], [x0, z1]]];
+  const copy = (): Multi[number] => p.map((r) => r.map((q): [number, number] => [q[0], q[1]]));
+  return halves.flatMap((h) => polygonClipping.intersection(copy(), poly(h))).flatMap((q) => splitHoles(q, id, budget - 1));
+}
+
+/** Los edificios de Microsoft menos los `claims`. Cada edificio tocado se queda con sus restos sin agujeros (splitHoles)
+ *  de al menos MIN_AREA: el mayor con su id y los otros `id-2`, `id-3`…, por área (a igual área, el de x menor primero). */
 export function carveLots(buildings: Building[], claims: Vec2[][]): Building[] {
   if (claims.length === 0) return buildings;
   const snapped = claims.map(snapMm);
@@ -203,7 +225,8 @@ export function carveLots(buildings: Building[], claims: Vec2[][]): Building[] {
     const hit = polygonClipping.intersection(poly(b.footprint), union);
     if (hit.every((p) => polygonArea(outer(p)) < 1e-6)) { out.push(b); continue; }
     const rest = polygonClipping.difference(poly(b.footprint), union)
-      .map((p) => ensureCCW(outer(p)))
+      .flatMap((p) => splitHoles(p, b.id))
+      .map(ensureCCW)
       .map((fp) => ({ fp, area: polygonArea(fp), x: Math.min(...fp.map((p) => p[0])) }))
       .filter((p) => p.area >= MIN_AREA)
       .sort((a, c) => (Math.abs(a.area - c.area) > 1e-6 ? c.area - a.area : a.x - c.x));

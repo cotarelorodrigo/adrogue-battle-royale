@@ -18,8 +18,8 @@ const PROGRESS_MS = 250;
 
 /** Pies de la cámara (el ojo va PLAYER.eye más arriba), por el medio de las calles y después sobre los techos. */
 export const BENCH_PATH: Vec3[] = [
-  // estación: del spawn frente a la fachada, por la calle de servicio hasta Somellera y Esteban Adrogué
-  [-308.52, 0, 40.34], [-299, 0, 46], [-292, 0, 51], [-279, 0, 54], [-250, 0, 96],
+  // estación: del spawn frente a la puerta de la boletería, por la calle de servicio hasta Somellera y Esteban Adrogué
+  [-308.85, 0, 33.1], [-299, 0, 46], [-292, 0, 51], [-279, 0, 54], [-250, 0, 96],
   // Esteban Adrogué hacia el este, hasta Avenida Espora
   [-68, 0, 131], [-45, 0, 130], [12, 0, 102], [163, 0, 28], [179.5, 0, 19.4],
   // la mano este de Espora hacia el norte, y alrededor de la Plaza Esteban Adrogué

@@ -193,6 +193,8 @@ export function matchPlaces(
         place.buildingId = b.id;
         place.sign = lot.sign;
         b.landmarkId ??= inp.id;
+        // el tipo del edificio sí sale del lugar: la boletería relevada sigue siendo la estación
+        if (inp.type === 'station') b.kind = 'station';
       } else warnings.push(`${inp.id}: el lote ${lot.buildingId} no existe`);
       continue;
     }

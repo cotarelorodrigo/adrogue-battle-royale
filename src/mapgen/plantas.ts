@@ -14,8 +14,9 @@ import { frontRun } from './plantas-input.ts';
 import type { PlantaInput } from './plantas-input.ts';
 
 /** Una planta en el mundo, como lote: `id` es `pl-<lugar>`; `footprint`, la planta antihoraria; `front`, la corrida de
- *  las aristas `frente` de punta a punta (en el sentido de U); `claim`, la planta, los patios y, con marco de frente, la
- *  franja de delante, del eje de la calle a la fachada. `patios`, antihorarios. */
+ *  las aristas `frente` de punta a punta (en el sentido de U); `claim`, la unión de la planta, los patios, los despejes
+ *  y, con marco de frente, la franja de delante, del eje de la calle a la fachada: uno o más anillos exteriores ya
+ *  fusionados, antihorarios. `patios`, antihorarios (sin los despejes, que no son parte del interior). */
 export interface PlantaShape extends LotShape { footprint: Vec2[]; planta: PlantaInput; frame: Frame; patios: Vec2[][] }
 
 /** Más que esto de la planta sobre la calzada y la vereda de una calle vehicular (m²) es un error del marco. */
@@ -64,7 +65,8 @@ export function placePlantas(plantas: PlantaInput[], roads: Road[]): PlantaShape
     const world = (r: Vec2[]): Vec2[] => r.map((q) => toWorld(frame, q));
     const footprint = ensureCCW(world(p.planta));
     const patios = p.patios.map((r) => ensureCCW(world(r)));
-    const claim = [footprint, ...patios];
+    // los despejes solo entran al recorte: no son patios del interior
+    const pieces = [footprint, ...patios, ...p.despejes.map(world)];
     const run = frontRun(p.planta, p.frente);
     if (fr) {
       // la franja de delante, del eje de la calle a la fachada (como el claim de un lote, retiro incluido): un bloque de
@@ -73,8 +75,12 @@ export function placePlantas(plantas: PlantaInput[], roads: Road[]): PlantaShape
       const us = [...p.planta, ...p.patios.flat()].map((q) => q[0]);
       const [u0, u1] = [Math.min(...us), Math.max(...us)];
       const vFront = Math.max(0, Math.min(...run.points.map((q) => q[1])));
-      claim.push(ensureCCW(world([[u0, -fr.setback], [u1, -fr.setback], [u1, vFront], [u0, vFront]])));
+      pieces.push(world([[u0, -fr.setback], [u1, -fr.setback], [u1, vFront], [u0, vFront]]));
     }
+    // fusionadas acá, sin redondear: carveLots redondea al milímetro cada anillo por separado, y un patio girado que toca
+    // la planta en un pedazo de arista quedaría despegado por menos de 1 mm (la unión daría dos piezas y el bloque de
+    // Microsoft seguiría sobre el patio). Un hueco rodeado por las piezas también se reclama: van solo los anillos de afuera
+    const claim = polygonClipping.union(poly(pieces[0]), ...pieces.slice(1).map(poly)).map((pg) => ensureCCW(pg[0].slice(0, -1) as Vec2[]));
     // como Frontage.inward: el sentido de la manzana respecto de la fachada (que corre en el sentido de U)
     const inward = frame.v[0] * -frame.u[1] + frame.v[1] * frame.u[0] > 0 ? 1 : -1;
     return {

@@ -145,6 +145,23 @@ test('carveLots: claims vecinos con aristas casi coincidentes (1e-12 m) se unen 
   out.forEach((o) => expect(polygonArea(o.footprint)).toBeCloseTo(200, 1));
 });
 
+test('carveLots: una planta entera adentro de un bloque lo parte alrededor; el resto nunca se queda con el agujero', () => {
+  const b = edificio('b0001', [[0, 0], [40, 0], [40, 40], [0, 40]]);
+  const sq = (x: number, z: number, s: number): Vec2[] => [[x, z], [x + s, z], [x + s, z + s], [x, z + s]];
+  const total = (bs: Building[]): number => bs.reduce((a, o) => a + polygonArea(o.footprint), 0);
+  const out = carveLots([b], [sq(15, 15, 10)]);
+  for (const o of out) expect(pointInPolygon([20, 20], o.footprint), o.id).toBe(false);
+  expect(total(out)).toBeCloseTo(1600 - 100, 6);
+  // dos pedazos iguales: el de x menor conserva el id
+  expect(out.map((o) => o.id)).toEqual(['b0001', 'b0001-2']);
+  expect(Math.min(...out[0].footprint.map((p) => p[0]))).toBe(0);
+  // con dos plantas adentro, ningún pedazo se queda con ninguna
+  const two = carveLots([b], [sq(5, 5, 8), sq(25, 22, 6)]);
+  for (const o of two) for (const c of [[9, 9], [28, 25]] as Vec2[]) expect(pointInPolygon(c, o.footprint), `${o.id} ${c}`).toBe(false);
+  expect(total(two)).toBeCloseTo(1600 - 64 - 36, 6);
+  expect(two.map((o) => o.id)).toEqual(two.map((_, i) => (i === 0 ? 'b0001' : `b0001-${i + 1}`)));
+});
+
 test('frontEdgesOf: encuentra la arista del frente con 4 mm de error y no las de los costados', () => {
   const fp: Vec2[] = [[0, 0.004], [10, 0], [10, 15], [0, 15]];
   expect(frontEdgesOf(fp, [[0, 0], [10, 0]])).toEqual([0]);

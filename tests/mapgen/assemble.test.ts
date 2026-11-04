@@ -5,7 +5,7 @@ import { filterTrees } from '../../src/mapgen/trees.ts';
 import { SPAWN_RELAXED, findFreeSpot, isFatalWarning, isFreeSpot, randomSpawns, seesSign } from '../../src/mapgen/spawns.ts';
 import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
-import { SIN_LOTE, loadPlantas } from '../../src/mapgen/plantas-input.ts';
+import { loadPlantas } from '../../src/mapgen/plantas-input.ts';
 import { parkFractionOf } from '../../src/mapgen/buildings.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
 import { lotOverlap } from '../../src/mapgen/lots.ts';
@@ -34,12 +34,6 @@ function loadRaw() {
     plantas: loadPlantas(frentes),
   };
 }
-/** Excepción declarada de la etapa 2b, de la Tarea 1 a la 3: mientras data/plantas.json no tenga las 5 plantas, faltan
- *  y el edificio de Microsoft de la estación (b0714) sigue sobre el andén. Cuando la Tarea 3 las carga, no queda ninguno
- *  de estos avisos y el filtro no hace nada (se puede borrar). */
-const relevamientoPendiente = (w: string): boolean =>
-  SIN_LOTE.some((l) => w === `${l}: falta relevar la planta (data/plantas.json)`) || /^b0714: pisa un andén \(\d+,\d m²\)$/.test(w);
-
 function roadPointsInsideBuildings(map: MapData): string[] {
   const bad: string[] = [];
   for (const r of map.roads) {
@@ -148,8 +142,8 @@ const { map, warnings, stats } = assembleMap(loadRaw());
 const world = buildCollisionWorld(map);
 
 describe('assembleMap sobre datos reales', () => {
-  test('sin warnings salvo relajaciones del punto de aparición (y el relevamiento pendiente)', () => {
-    expect(warnings.filter(isFatalWarning).filter((w) => !relevamientoPendiente(w))).toEqual([]);
+  test('sin warnings salvo relajaciones del punto de aparición', () => {
+    expect(warnings.filter(isFatalWarning)).toEqual([]);
   });
   test('cantidades razonables', () => {
     // los que cruzan el borde del área también son edificios (≈ 56 más); los rellenos de huecos y los lotes relevados
@@ -253,7 +247,7 @@ describe('assembleMap sobre datos reales', () => {
     const onLot = map.places.filter((p) => p.buildingId && byId.get(p.buildingId)!.front);
     for (const p of onLot) expect(byId.get(p.buildingId!)!.facades, p.id).toBeUndefined();
     const signed = map.places.filter((p) => p.sign && !photos.some((f) => f.placeId === p.id) && !onLot.includes(p));
-    expect(signed.length).toBeGreaterThanOrEqual(15);
+    expect(signed.length).toBeGreaterThanOrEqual(14); // los lugares con planta relevada (data/plantas.json) son lotes
     const firstOnEdge = new Map<string, string>();
     for (const p of map.places.filter((q) => q.sign && !onLot.includes(q))) {
       const b = byId.get(p.buildingId!)!;
@@ -331,7 +325,7 @@ describe('assembleMap con el frente de prueba', () => {
   const fw = buildCollisionWorld(m);
   const lots = m.buildings.filter((b) => b.id.startsWith('ea-prueba-'));
   const withSign = raw.frentes.frentes.flatMap((f) => f.lotes).filter((l) => l.cartel);
-  test('sin warnings fatales (salvo el relevamiento pendiente)', () => expect(res.warnings.filter(isFatalWarning).filter((w) => !relevamientoPendiente(w))).toEqual([]));
+  test('sin warnings fatales', () => expect(res.warnings.filter(isFatalWarning)).toEqual([]));
   test('los lugares ligados usan el lote y su cartel', () => {
     for (const id of ['banco-nacion', 'galicia', 'luccianos']) {
       const p = m.places.find((x) => x.id === id)!;

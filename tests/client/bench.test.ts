@@ -46,13 +46,16 @@ describe('camino fijo', () => {
     const p = viewAt(BENCH_PATH, s).pos;
     return Math.hypot(p[0] - x, p[2] - z);
   };
-  /** Dónde (en metros de camino) pasa más cerca de un punto del mapa, y a qué distancia. */
+  /** Dónde (en metros de camino) pasa más cerca de un punto del mapa, y a qué distancia: cada 0,5 m y en cada vértice
+   *  (un punto que es un vértice del camino, como el spawn de la plaza, da justo ahí y no en la muestra de al lado). */
   const closest = (q: Vec2): { s: number; d: number } => {
     let best = { s: 0, d: Infinity };
-    for (let s = 0; s <= L; s += 0.5) {
+    const at = (s: number): void => {
       const d = near(s, q);
       if (d < best.d) best = { s, d };
-    }
+    };
+    for (let s = 0; s <= L; s += 0.5) at(s);
+    BENCH_PATH.forEach((_, i) => at(pathLength(BENCH_PATH.slice(0, i + 1))));
     return best;
   };
 

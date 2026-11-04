@@ -1,13 +1,5 @@
 [
   {
-    "placeId": "estacion-adrogue",
-    "commonsFile": "Estación de Adrogué - Octubre 2022 (1).jpg",
-    "corners": [[0, 560], [1335, 335], [1335, 940], [0, 880]],
-    "widthM": 20,
-    "heightM": 5,
-    "edgeIndex": 5
-  },
-  {
     "placeId": "casa-de-la-cultura",
     "commonsFile": "Casa de la Cultura.jpg",
     "corners": [[70, 560], [1380, 150], [1255, 1385], [10, 1385]],
