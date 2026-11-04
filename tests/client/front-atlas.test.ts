@@ -112,6 +112,11 @@ describe('frontMaterial', () => {
     expect(s.fragmentShader).not.toContain('#include <color_fragment>');
     expect(mat.customProgramCacheKey()).toBe('front-mask');
   });
+  test('si three ya no tiene color_fragment, el parche no falla en silencio', () => {
+    const mat = frontMaterial(new THREE.Texture(), true);
+    const s = { fragmentShader: 'a\nb', vertexShader: '' };
+    expect(() => mat.onBeforeCompile(s as never, {} as never)).toThrow('frontMaterial: el shader de three no tiene #include <color_fragment>');
+  });
   test('en media/alta es standard con roughness 0,85 y metalness 0', () => {
     const mat = frontMaterial(new THREE.Texture(), false) as THREE.MeshStandardMaterial;
     expect(mat.roughness).toBe(0.85);

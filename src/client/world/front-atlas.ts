@@ -336,8 +336,14 @@ export function frontMaterial(map: THREE.Texture, lambert: boolean): THREE.Mater
     ? new THREE.MeshLambertMaterial(params)
     : new THREE.MeshStandardMaterial({ ...params, roughness: 0.85, metalness: 0 });
   mat.onBeforeCompile = (shader) => {
+    // si una versión nueva de three renombra el chunk, el replace no haría nada y el color teñiría todo el atlas
+    // (vidrio y metal incluidos): mejor que se rompa a la vista
+    const chunk = '#include <color_fragment>';
+    if (!shader.fragmentShader.includes(chunk)) {
+      throw new Error(`frontMaterial: el shader de three no tiene ${chunk}; hay que adaptar la máscara del atlas a esta versión`);
+    }
     shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <color_fragment>',
+      chunk,
       `diffuseColor.rgb *= mix( vec3( 1.0 ), vColor.rgb, sampledDiffuseColor.a );
 diffuseColor.a = opacity;`,
     );
