@@ -30,6 +30,7 @@ import { createZoneWall } from './combat/zone-wall.ts';
 import { debugEnabled, installDebug, matchParams } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
+import { adapt, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from './render/exposure.ts';
 import { loadQuality, QUALITY, saveQuality } from './render/quality.ts';
 import type { Quality } from './render/quality.ts';
 import { createScene, FOV } from './render/scene.ts';
@@ -37,7 +38,7 @@ import { createHud, FpsMeter } from './ui/hud.ts';
 import { createOverlay, showFatal } from './ui/overlay.ts';
 import type { Overlay } from './ui/overlay.ts';
 import { buildChunks } from './world/chunks.ts';
-import { exteriorParts } from './world/interiors/exterior.ts';
+import { exteriorSigns } from './world/interiors/exterior.ts';
 import { createInteriorViews } from './world/interiors/view.ts';
 import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
@@ -221,11 +222,10 @@ async function run(boot: Boot): Promise<void> {
   scene.addChunks(chunks.groups);
   const interiorViews = createInteriorViews(interiors, materials, quality, chunks.tapas);
   scene.addStatic([interiorViews.group]);
-  const outSigns = interiors.flatMap((i) => {
-    const parts = exteriorParts(i);
-    parts.geometry.dispose(); // la geometría ya va en el chunk: acá solo hacen falta los carteles
-    return parts.signs;
-  });
+  // los programas de los interiores (escondidos) se compilan ya, no cuando se ve el primero (H9)
+  const warmInteriors = (): void => void scene.compile(interiorViews.group).catch((e: unknown) => console.warn('No se precompilaron los interiores:', e));
+  warmInteriors();
+  const outSigns = interiors.flatMap(exteriorSigns); // la geometría de afuera ya va en el chunk
   const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark);
   // Las fotos (~1,7 MB y la rectificación) se suman cuando llegan: el juego no las espera. Se recortan en las aberturas
   // de los interiores, y lo recortado tapa los huecos de lejos.
@@ -355,6 +355,7 @@ async function run(boot: Boot): Promise<void> {
     }
     scene.setMaterials(next);
     interiorViews.setQuality(q); // vuelve a armar con los materiales nuevos, si cambia el detalle
+    warmInteriors(); // los materiales son otros: sus programas también
     disposeMaterials(materials);
     materials = next;
     quality = q;
@@ -390,6 +391,7 @@ async function run(boot: Boot): Promise<void> {
   const fixed = new FixedStep(); // la simulación avanza a 60 Hz sin importar los fps del cuadro
   let last = performance.now();
   let first = true;
+  let exposure = OUTDOOR_EXPOSURE; // la adaptación del ojo (H2e): va de a poco hacia la de adentro o la de la calle
   function frame(now: number): void {
     raf = requestAnimationFrame(frame);
     const dt = (now - last) / 1000; // FixedStep descarta dt ≤ 0 y limita los pasos por cuadro
@@ -432,6 +434,8 @@ async function run(boot: Boot): Promise<void> {
       reloadSound(events, match); // si la recarga se cancela (o se deja la partida), lo que faltaba de su sonido no suena
     }
     interiorViews.update(scene.camera);
+    exposure = adapt(exposure, interiorViews.inside() ? INDOOR_EXPOSURE : OUTDOOR_EXPOSURE, dt);
+    scene.renderer.toneMappingExposure = exposure;
     scene.render();
     if (f) {
       viewmodel.render(); // encima del mundo, en el mismo cuadro: renderer.info suma las dos pasadas

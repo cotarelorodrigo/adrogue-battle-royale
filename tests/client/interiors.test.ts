@@ -2,15 +2,21 @@
 // El dibujo de los interiores (tarea 5): texturas, luz horneada, mallas, vistas, fachada con huecos y tapas, cambio de
 // calidad y liberación. Sobre el local de prueba de la tarea 4 (tests/shared/interiors/fixture.ts).
 import * as THREE from 'three';
+import { ADAPT_TIME, adapt, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
+import { QUALITY } from '../../src/client/render/quality.ts';
+import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
-import { lightAt } from '../../src/client/world/interiors/bake.ts';
-import { buildInterior3D } from '../../src/client/world/interiors/build.ts';
-import { exteriorParts } from '../../src/client/world/interiors/exterior.ts';
+import { lightAt, OPENING_MAX } from '../../src/client/world/interiors/bake.ts';
+import { buildInterior3D, INTERIOR_EXPOSURE, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
+import { exteriorGeometry, exteriorSigns } from '../../src/client/world/interiors/exterior.ts';
+import { GLASS_INSIDE, GLASS_OUTSIDE, glassMaterial } from '../../src/client/world/interiors/glass.ts';
+import { ITEM_GLASS, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
 import { interiorTextures } from '../../src/client/world/interiors/textures.ts';
 import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import { buildPhotoFacades } from '../../src/client/world/photo-facades.ts';
+import { tintColor } from '../../src/client/world/wall-kit.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
-import { signedAreaFromAbove } from '../../src/shared/geo.ts';
+import { pointInPolygon, signedAreaFromAbove } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { Kit } from '../../src/shared/interiors/kit.ts';
 import type { Interior } from '../../src/shared/interiors/types.ts';
@@ -60,13 +66,33 @@ const furnish = (k: Kit): void => {
   }
 };
 
-/** El local de prueba corrido (dx, dz), con otro id: para ver varios interiores a la vez. */
-function shifted(id: string, dx: number, dz: number): Interior {
+const LABEL_LOOK = { fondo: '#123456', letra: '#ffffff', marco: '#123456', fuente: 'sans' as const };
+
+/** Lo de un interior cargado, para el tope de draw calls (H3): lo de `furnish`, un bloque de cada Mat que falta (las
+ *  9 con textura y la luz), 4 banquetas, 4 sillones y 4 lámparas, y 3 carteles. Sin compactar son 17 mallas: 11 Mats,
+ *  5 InstancedMesh y una página de carteles. */
+const load = (k: Kit): void => {
+  furnish(k);
+  (['madera', 'machimbre', 'baldosa', 'ceramico', 'tela', 'metal', 'ladrillo', 'luz'] as const).forEach((mat, n) => {
+    const look = { mat, color: '#808080' };
+    k.block([[1 + n, 13], [1.5 + n, 13], [1.5 + n, 13.5], [1 + n, 13.5]], 0, 1, 'solid', 'otro', { top: look, side: look });
+  });
+  for (let n = 0; n < 4; n++) {
+    k.furniture('banqueta', [1 + n, 11], 0, 0);
+    k.furniture('sillon', [6 + n, 11.5], 0, 0);
+    k.furniture('lampara', [1 + n, 12], 0, 0);
+  }
+  for (const [text, x] of [['CAJA', 2], ['BAÑO', 5], ['SALIDA', 8]] as const) k.label(text, [x, 14.8], 2.2, [0, -1], 1.6, 0.4, LABEL_LOOK);
+};
+
+/** El local de prueba corrido (dx, dz), con otro id: para ver varios interiores a la vez. `extra`, en el marco local. */
+function shifted(id: string, dx: number, dz: number, extra?: (k: Kit) => void): Interior {
   const { b, input } = testInterior();
   const move = (p: Vec2): Vec2 => [p[0] + dx, p[1] + dz];
   const k = new Kit({ ...b, id: `b-${id}`, footprint: b.footprint.map(move) },
     { ...input, placeId: id, buildingId: `b-${id}`, frame: { ...input.frame, origin: move(input.frame.origin) } });
   k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+  extra?.(k);
   return k.done(0.8);
 }
 
@@ -160,10 +186,66 @@ describe('buildInterior3D', () => {
     for (const x of meshes.filter((y) => !(y instanceof THREE.InstancedMesh))) {
       for (const t of triangles(x.geometry)) expect(Math.max(t.a.z, t.b.z, t.c.z)).toBeGreaterThan(-0.05);
     }
-    const out = exteriorParts(i);
-    expect(out.signs).toEqual([{ text: 'AFUERA', anchor: [5, -0.06], normal: [0, -1], width: 3, bottomY: 2.8 - 0.45, look }]);
-    expect(areaOf(triangles(out.geometry))).toBeCloseTo(10 * 1.2 + 2 * (10 + 1.2) * 0.2, 4); // tope y costados
-    expect(Object.keys(out.geometry.attributes).sort()).toEqual(['color', 'normal', 'position', 'uv']);
+    // los carteles salen sin armar la geometría (H7: main solo necesita los carteles; la geometría es del chunk)
+    expect(exteriorSigns(i)).toEqual([{ text: 'AFUERA', anchor: [5, -0.06], normal: [0, -1], width: 3, bottomY: 2.8 - 0.45, look }]);
+    const out = exteriorGeometry(i);
+    expect(areaOf(triangles(out))).toBeCloseTo(10 * 1.2 + 2 * (10 + 1.2) * 0.2, 4); // tope y costados
+    expect(Object.keys(out.attributes).sort()).toEqual(['color', 'normal', 'position', 'uv']);
+  });
+});
+
+describe('tope de draw calls por calidad (H3, H6)', () => {
+  const m = fakeMaterials();
+  const { interior: heavy } = testInterior({ extra: load });
+  const instancedOf = (ms: THREE.Mesh[]): THREE.InstancedMesh[] => ms.filter((x): x is THREE.InstancedMesh => x instanceof THREE.InstancedMesh);
+
+  test.each(['baja', 'media', 'alta'] as const)('%s: el interior cargado (y el de furnish) entra en interiors.calls', (q) => {
+    for (const i of [heavy, testInterior({ extra: furnish }).interior]) {
+      const meshes = meshesOf(buildInterior3D(i, m, q).group);
+      expect(meshes.length).toBeLessThanOrEqual(Math.min(MAX_MESHES, QUALITY[q].interiors.calls));
+    }
+  });
+
+  test('sin compactar si entra (alta: 11 Mats, 5 instancias y una página); en baja, compactado: una malla opaca sin textura, el vidrio y una página', () => {
+    const alta = meshesOf(buildInterior3D(heavy, m, 'alta').group);
+    expect(alta).toHaveLength(17);
+    expect(instancedOf(alta).map((x) => x.count).sort((a, b) => a - b)).toEqual([4, 4, 4, 10, 30]);
+    const baja = meshesOf(buildInterior3D(heavy, m, 'baja').group);
+    expect(instancedOf(baja)).toEqual([]);
+    expect(baja.map((x) => x.name).sort()).toEqual(['in_mueble', 'in_vidrio', 'labels:0']);
+    // todo lo opaco con el material sin textura y color por vértice; las 30 sillas siguen estando (en la malla junta)
+    const opaque = baja.find((x) => x.name === 'in_mueble')!;
+    expect(opaque.material).toBe(m.in_mueble);
+    expect(opaque.geometry.getAttribute('color')).toBeDefined();
+    const sillas = meshesOf(buildInterior3D(heavy, m, 'alta').group).find((x) => x instanceof THREE.InstancedMesh && x.count === 30)!;
+    const perSilla = sillas.geometry.getAttribute('position').count;
+    expect(opaque.geometry.getAttribute('position').count).toBeGreaterThan(30 * perSilla);
+  });
+
+  test('si ni compactado entra, tira un error con el placeId (H6)', () => {
+    const calls = QUALITY.media.interiors.calls;
+    try {
+      QUALITY.media.interiors.calls = 2; // las paredes y el piso, más el vidrio: 3
+      expect(() => buildInterior3D(testInterior().interior, m, 'media')).toThrow(/prueba/);
+    } finally {
+      QUALITY.media.interiors.calls = calls;
+    }
+  });
+
+  test('las vistas eligen del más cercano al más lejano mientras la suma de mallas entre en calls (y en max)', () => {
+    // tres cargados en fila, en alta (max 3, calls 36): de 17 mallas cada uno entran los dos más cercanos
+    const list = [shifted('lejos', 0, 45, load), shifted('a', 0, 0, load), shifted('medio', 0, 25, load)];
+    const views = createInteriorViews(list, m, 'alta', new Map());
+    views.update(cameraAt([5, 0, -10], Math.PI));
+    expect(views.drawn()).toEqual(['a', 'medio']);
+    const drawnMeshes = views.group.children.filter((c) => c.name.startsWith('interior:') && c.visible).flatMap(meshesOf);
+    expect(drawnMeshes.length).toBeLessThanOrEqual(QUALITY.alta.interiors.calls);
+    // adentro, ese solo (RF5), y en baja, compactado, siempre entra solo
+    views.setQuality('baja');
+    views.update(cameraAt([5, 0, 7], Math.PI));
+    expect(views.drawn()).toEqual(['a']);
+    const inside = views.group.children.filter((c) => c.name.startsWith('interior:') && c.visible).flatMap(meshesOf);
+    expect(inside.length).toBeLessThanOrEqual(QUALITY.baja.interiors.calls);
   });
 });
 
@@ -190,12 +272,165 @@ describe('lightAt', () => {
     expect(lightAt(blinding, [5, 0.02, 12], [0, 1, 0])).toBe(1);
   });
 
+  test('la luz no atraviesa paredes (H5): un cuarto detrás de un tabique queda en ambient, aunque haya una vidriera y una lámpara del otro lado', () => {
+    const { interior: split } = testInterior({ extra: (k) => {
+      k.wall([0.2, 5], [9.8, 5], { look: LOOKS.pared }); // un tabique de lado a lado, del piso al techo
+      k.lamp([5, 4], 2.5, 6, 1);
+    } });
+    const dark: Interior = { ...split, ambient: 0.05 };
+    // en el cuarto de atrás, lejos de las paredes (sin oclusión de rincón): a 2 m de la lámpara y a 7 m de la vidriera
+    for (const p of [[5, 0.02, 7], [2, 0.02, 8], [8, 1.5, 8]] as Vec3[]) expect(lightAt(dark, p, [0, 1, 0]), p.join(', ')).toBeCloseTo(0.05, 6);
+    // y del lado de la vidriera sí llega (el vidrio deja pasar)
+    expect(lightAt(dark, [2.1, 0.02, 2], [0, 1, 0])).toBeGreaterThan(0.2);
+  });
+
+  test('la luz de las aberturas va por área (H2b): la misma vidriera partida en 8 paños no da más luz', () => {
+    const { b, input } = testInterior();
+    const panes = (o: Opening): Opening[] => Array.from({ length: 8 }, (_, k) => ({ ...o, s0: o.s0 + (k * (o.s1 - o.s0)) / 8, s1: o.s0 + ((k + 1) * (o.s1 - o.s0)) / 8 }));
+    const k = new Kit(b, { ...input, openings: input.openings.flatMap((o) => (o.kind === 'vidrio' ? panes(o) : [o])) });
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    const many = { ...k.done(0.8), ambient: 0.05 };
+    const one: Interior = { ...interior, ambient: 0.05, lamps: [] };
+    expect(many.blocks.filter((x) => x.role === 'vidrio').length).toBe(16);
+    for (const p of [[2.1, 0.02, 1], [5, 0.02, 4], [5, 0.02, 10]] as Vec3[]) {
+      expect(lightAt(many, p, [0, 1, 0]), p.join(', ')).toBeLessThan(lightAt(one, p, [0, 1, 0]) * 1.05 + 0.005);
+    }
+  });
+
+  test('la luz de las aberturas tiene tope: pegado a una vidriera enorme no pasa de ambient + OPENING_MAX', () => {
+    const { b } = testInterior();
+    const k = new Kit(b, { placeId: 'vidriera', buildingId: b.id, frame: { origin: [0, 0], u: [1, 0], v: [0, 1] }, patios: [],
+      openings: [{ kind: 'vidrio', edge: 0, s0: 0.2, s1: 9.8, y0: 0.05, y1: 3.0 }, { kind: 'vidrio', edge: 1, s0: 0.2, s1: 14.8, y0: 0.05, y1: 3.0 }] });
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    const glassy = { ...k.done(0.05), lamps: [] };
+    for (const [p, n] of [[[0.5, 1, 0.5], [0, 1, 0]], [[5, 0.02, 0.4], [0, 1, 0]], [[0.4, 1.5, 7], [1, 0, 0]], [[5, 1, 0.4], [0, 0, -1]]] as [Vec3, Vec3][]) {
+      expect(lightAt(glassy, p, n), p.join(', ')).toBeLessThanOrEqual(0.05 + OPENING_MAX + 1e-9);
+    }
+    // de frente a la vidriera, a 0,4 m y lejos de los rincones: llega al tope
+    expect(lightAt(glassy, [5, 1, 0.4], [0, 0, -1])).toBeGreaterThan(0.05 + OPENING_MAX * 0.9);
+  });
+
   test('oclusión de rincón: sin aberturas, el rincón da menos que el borde contra una pared, y este menos que el medio', () => {
     const closed: Interior = { ...interior, doors: [], blocks: interior.blocks.filter((b) => b.role !== 'vidrio') };
     const [corner, edge, middle] = ([[0.25, 0.02, 14.75], [5, 0.02, 14.75], [5, 0.02, 7.5]] as Vec3[]).map((p) => lightAt(closed, p, [0, 1, 0]));
     expect(corner).toBeLessThan(edge - 0.02);
     expect(edge).toBeLessThan(middle - 0.1);
     expect(middle).toBeCloseTo(closed.ambient, 6);
+  });
+});
+
+describe('exposición, vidrio y adaptación del ojo (H2, H10)', () => {
+  const m = fakeMaterials();
+  const colorAt = (g: THREE.BufferGeometry, k: number): number[] => [0, 1, 2].map((c) => g.getAttribute('color').array[k * 3 + c]);
+  const vec = (g: THREE.BufferGeometry, name: string, k: number): Vec3 => [0, 1, 2].map((c) => g.getAttribute(name).array[k * 3 + c]) as Vec3;
+  const lit = testInterior({ extra: (k) => {
+    k.block([[4, 13], [6, 13], [6, 13.5], [4, 13.5]], 2.5, 2.6, 'none', 'otro', { bottom: { mat: 'luz', color: '#fff4e0' } });
+    for (let n = 0; n < 4; n++) {
+      k.furniture('lampara', [1 + n, 12], 0, 0);
+      k.furniture('silla', [6 + n, 12], 0, 0, '#a0a0a0');
+    }
+    k.label('ABIERTO', [3, 14.8], 2.2, [0, -1], 1.6, 0.4, LABEL_LOOK, { glow: true });
+    k.label('CAJA', [7, 14.8], 2.2, [0, -1], 1.6, 0.4, LABEL_LOOK);
+  } }).interior;
+  // se arma en cada test: los carteles dibujan en el canvas de mentira, que se pone en beforeEach
+  const build = (): THREE.Mesh[] => meshesOf(buildInterior3D(lit, m, 'alta').group);
+  const named = (meshes: THREE.Mesh[], name: string): THREE.Mesh => meshes.find((x) => x.name === name && !(x instanceof THREE.InstancedMesh))!;
+
+  test('INTERIOR_EXPOSURE escala lo horneado de los bloques, los muebles y los carteles; lo que brilla queda en 1 (H2a)', () => {
+    expect(INTERIOR_EXPOSURE).toBeGreaterThan(0.1);
+    expect(INTERIOR_EXPOSURE).toBeLessThan(0.7);
+    const meshes = build();
+    const byName = (name: string): THREE.Mesh => named(meshes, name);
+    const floor = byName('in_porcelanato').geometry;
+    const tint = tintColor(LOOKS.piso.color);
+    for (let k = 0; k < floor.getAttribute('position').count; k += 7) {
+      const want = lightAt(lit, vec(floor, 'position', k), vec(floor, 'normal', k)) * INTERIOR_EXPOSURE;
+      expect(colorAt(floor, k)[0]).toBeCloseTo(tint.r * want, 5);
+    }
+    const glow = byName('in_luz').geometry, warm = tintColor('#fff4e0');
+    for (let k = 0; k < glow.getAttribute('position').count; k++) expect(colorAt(glow, k)).toEqual([warm.r, warm.g, warm.b].map((v) => Math.fround(v)));
+    const inst = meshes.filter((x): x is THREE.InstancedMesh => x instanceof THREE.InstancedMesh);
+    expect(inst.map((x) => x.count)).toEqual([4, 4]);
+    const lampVerts = ITEM_MODELS.lampara().getAttribute('position').count;
+    const lamps = inst.find((x) => x.geometry.getAttribute('position').count === lampVerts)!, chairs = inst.find((x) => x !== lamps)!;
+    expect(Array.from(lamps.instanceColor!.array).every((v) => v === 1)).toBe(true); // brillan: blanco pleno
+    const grey = tintColor('#a0a0a0');
+    lit.items.filter((it) => it.model === 'silla').forEach((it, k) => {
+      const want = grey.r * lightAt(lit, [it.at[0], it.at[1] + 0.6, it.at[2]], [0, 1, 0]) * INTERIOR_EXPOSURE;
+      expect(chairs.instanceColor!.array[k * 3]).toBeCloseTo(want, 5);
+    });
+    const labels = byName('labels:0').geometry;
+    for (const [k, l] of lit.labels.entries()) {
+      const c: Vec3 = [l.at[0] + l.normal[0] * 0.02, l.at[1], l.at[2] + l.normal[1] * 0.02];
+      const want = l.glow ? 1 : lightAt(lit, c, [l.normal[0], 0, l.normal[1]]) * INTERIOR_EXPOSURE;
+      for (let v = 0; v < 4; v++) expect(colorAt(labels, k * 4 + v)).toEqual([want, want, want].map((x) => Math.fround(x)));
+    }
+  });
+
+  test('el vidrio no se hornea: de afuera GLASS_OUTSIDE, de adentro GLASS_INSIDE, con cualquier ambient (H2c)', () => {
+    const g = named(build(), 'in_vidrio').geometry;
+    for (const ambient of [0.05, 0.8]) {
+      const other = meshesOf(buildInterior3D({ ...lit, ambient }, m, 'alta').group).find((x) => x.name === 'in_vidrio')!.geometry;
+      expect(Array.from(other.getAttribute('color').array)).toEqual(Array.from(g.getAttribute('color').array));
+      for (let k = 0; k < g.getAttribute('position').count; k++) {
+        const [p, n] = [vec(g, 'position', k), vec(g, 'normal', k)];
+        const outside = !pointInPolygon([p[0] + n[0] * 0.3, p[2] + n[2] * 0.3], lit.footprint);
+        expect(colorAt(g, k)[0]).toBeCloseTo(outside ? GLASS_OUTSIDE : GLASS_INSIDE, 6);
+      }
+    }
+  });
+
+  test('el material del vidrio: color de cielo, transparente, sin escribir profundidad, y Fresnel en el shader (H2c)', () => {
+    const glass = glassMaterial();
+    expect(glass.transparent).toBe(true);
+    expect(glass.depthWrite).toBe(false);
+    expect(glass.side).toBe(THREE.DoubleSide);
+    expect(glass.vertexColors).toBe(true);
+    const shader = { vertexShader: THREE.ShaderLib.basic.vertexShader, fragmentShader: THREE.ShaderLib.basic.fragmentShader, uniforms: {} } as unknown as THREE.WebGLProgramParametersWithUniforms;
+    glass.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
+    expect(shader.vertexShader).not.toBe(THREE.ShaderLib.basic.vertexShader);
+    expect(shader.fragmentShader).toMatch(/gl_FrontFacing/);
+    expect(shader.fragmentShader).toMatch(/pow\(/);
+    expect(glass.customProgramCacheKey()).not.toBe(new THREE.MeshBasicMaterial().customProgramCacheKey());
+  });
+
+  test('la hoja de vidrio abierta lleva su paño en in_vidrio; el marco, en los muebles (H10)', () => {
+    const { interior: door } = testInterior({ extra: (k) => k.furniture('hoja-vidrio', [5, 1], 0, Math.PI / 2) });
+    const built = meshesOf(buildInterior3D(door, m, 'alta').group);
+    const plain = meshesOf(buildInterior3D(testInterior().interior, m, 'alta').group).find((x) => x.name === 'in_vidrio')!;
+    const glass = built.find((x) => x.name === 'in_vidrio')!;
+    // el paño: una caja de 0,8 × 2,0 × 0,01 m
+    expect(areaOf(triangles(glass.geometry)) - areaOf(triangles(plain.geometry))).toBeCloseTo(2 * (0.8 * 2.0 + 0.8 * 0.01 + 2.0 * 0.01), 4);
+    const frame = built.find((x) => x.name === 'in_mueble')!;
+    expect(areaOf(triangles(frame.geometry))).toBeCloseTo(areaOf(triangles(ITEM_MODELS['hoja-vidrio']())), 4);
+    expect(ITEM_GLASS['hoja-vidrio']).toBeDefined();
+  });
+
+  test('adaptación del ojo (H2e): hacia el valor de adentro con una constante de ~1 s, sin pasarse, y de vuelta a la de afuera', () => {
+    expect(adapt(OUTDOOR_EXPOSURE, INDOOR_EXPOSURE, 0)).toBe(OUTDOOR_EXPOSURE);
+    const oneSecond = adapt(OUTDOOR_EXPOSURE, INDOOR_EXPOSURE, 1);
+    expect(oneSecond).toBeCloseTo(INDOOR_EXPOSURE + (OUTDOOR_EXPOSURE - INDOOR_EXPOSURE) * Math.exp(-1 / ADAPT_TIME), 9);
+    let x = OUTDOOR_EXPOSURE;
+    for (let k = 0; k < 60; k++) x = adapt(x, INDOOR_EXPOSURE, 1 / 60);
+    expect(x).toBeCloseTo(oneSecond, 9); // no depende de los cuadros por segundo
+    for (let k = 0; k < 20 * 60; k++) { // 20 s afuera
+      const next = adapt(x, OUTDOOR_EXPOSURE, 1 / 60);
+      expect(Math.abs(next - OUTDOOR_EXPOSURE)).toBeLessThanOrEqual(Math.abs(x - OUTDOOR_EXPOSURE));
+      x = next;
+    }
+    expect(x).toBeCloseTo(OUTDOOR_EXPOSURE, 6);
+    expect(adapt(OUTDOOR_EXPOSURE, INDOOR_EXPOSURE, 1e6)).toBe(INDOOR_EXPOSURE);
+    expect(INDOOR_EXPOSURE).toBeGreaterThan(OUTDOOR_EXPOSURE);
+    expect(OUTDOOR_EXPOSURE).toBe(0.7);
+  });
+
+  test('las vistas dicen si la cámara está adentro de un interior (la misma regla de update)', () => {
+    const views = createInteriorViews([shifted('a', 0, 0)], m, 'media', new Map());
+    views.update(cameraAt([5, 0, 7], Math.PI));
+    expect(views.inside()).toBe(true);
+    views.update(cameraAt([5, 0, -5], Math.PI));
+    expect(views.drawn()).toEqual(['a']);
+    expect(views.inside()).toBe(false);
   });
 });
 
@@ -289,10 +524,17 @@ describe('fachada con huecos', () => {
   const cwOpenings = openings.map((o): Opening => ({ ...o, edge: (2 * n - 2 - o.edge) % n,
     s0: lenOf(b.footprint, o.edge) - o.s1, s1: lenOf(b.footprint, o.edge) - o.s0 }));
 
+  // un lote recorrido `contra` (H4), con una abertura asimétrica en el frente: si se diera vuelta, quedaría en s 8-9
+  const contra: Building = { ...b, front: { edges: [0], corner: [], pb: 'vidriera', arriba: 'ventanas', puerta: 'inicio', contra: true } };
+  const asymmetric: Opening[] = [{ kind: 'vidrio', edge: 0, s0: 1, s1: 2, y0: 0.3, y1: 2.3 }, ...openings.filter((o) => o.edge !== 0)];
+
   test.each([
     ['un edificio común', b, openings],
     ['un lote (frente con el atlas, costados de parapet)', lot, openings],
     ['una planta guardada en sentido horario', cw, cwOpenings],
+    ['un lote con contra y una abertura asimétrica (H4)', contra, asymmetric],
+    ['una planta horaria con una abertura asimétrica (H4)', { ...cw, front: contra.front }, asymmetric.map((o): Opening => ({ ...o, edge: (2 * n - 2 - o.edge) % n,
+      s0: lenOf(b.footprint, o.edge) - o.s1, s1: lenOf(b.footprint, o.edge) - o.s0 }))],
   ] as const)('%s: ninguna pared cubre el centro de una abertura y las tapas suman su área', (_name, bd, os) => {
     const e = extrudeBuilding(bd, os);
     const ts = wallsOf(e).flatMap((g) => triangles(g));
@@ -314,7 +556,10 @@ describe('fachada con huecos', () => {
     expect(extrudeBuilding(b).tapas).toEqual({});
   });
 
-  test('la foto de fachada se recorta en las aberturas de su arista y lo recortado es su tapa, con el mismo material (D5)', async () => {
+  test.each([
+    ['las del local', openings],
+    ['una asimétrica (H4)', asymmetric],
+  ] as const)('la foto de fachada se recorta en las aberturas de su arista y lo recortado es su tapa, con el mismo material (D5): %s', async (_name, os) => {
     class LoadingImage {
       onload: (() => void) | null = null;
       onerror: (() => void) | null = null;
@@ -326,12 +571,12 @@ describe('fachada con huecos', () => {
       sign: { text: 'P', anchor: [5, -0.1] as Vec2, normal: [0, -1] as Vec2, width: 6, bottomY: 2.4 }, spawn: [5, 0, -3] as Vec3 };
     const map = { places: [place], buildings: [b] } as unknown as MapData;
     const photo = { placeId: 'prueba', commonsFile: 'x.jpg', corners: [[0, 0], [8, 0], [8, 8], [0, 8]] as [Vec2, Vec2, Vec2, Vec2], widthM: 10, heightM: 3 };
-    const { group, tapas } = await buildPhotoFacades(map, [photo], '/', 32, 1, new Map([['prueba', openings]]));
+    const { group, tapas } = await buildPhotoFacades(map, [photo], '/', 32, 1, new Map([['prueba', [...os]]]));
     group.updateMatrixWorld(true);
     const [wall, tapa] = ['photoFacade-prueba', 'photoFacade-prueba:tapa'].map((name) => group.getObjectByName(name) as THREE.Mesh);
     expect(tapas.get('prueba')).toEqual([tapa]);
     expect(tapa.material).toBe(wall.material);
-    const front = input.openings; // las de la arista 0, la de la foto
+    const front = os.filter((o) => o.edge === 0); // las de la arista 0, la de la foto
     for (const o of front) {
       const { at, out } = centre(b.footprint, o);
       expect(hits(triangles(wall.geometry, wall.matrixWorld), at, out)).toBe(false);
@@ -339,6 +584,57 @@ describe('fachada con huecos', () => {
     }
     expect(Math.abs(areaOf(triangles(tapa.geometry)) - openingArea(front))).toBeLessThan(1e-6);
     expect(areaOf(triangles(wall.geometry)) + areaOf(triangles(tapa.geometry))).toBeCloseTo(10 * 3, 6);
+  });
+});
+
+describe('sombra entera (H1)', () => {
+  // Un local de 2 m de fondo a lo largo del sol y 6 m de ancho, de 5 m de alto: el frente (arista 3) mira para el lado
+  // contrario al sol y el fondo (arista 1), al sol. Una vidriera en cada uno, en el medio: A de 0,3 a 2,8 m y B de 2 a 4.
+  const sunH = new THREE.Vector2(SUN_DIR.x, SUN_DIR.z).normalize();
+  const u: Vec2 = [sunH.x, sunH.y], w: Vec2 = [-sunH.y, sunH.x];
+  const at = (a: number, c: number): Vec2 => [100 + u[0] * a + w[0] * c, 50 + u[1] * a + w[1] * c];
+  const bd: Building = { id: 'b-sol', footprint: [at(0, 0), at(2, 0), at(2, 6), at(0, 6)], height: 5, floors: 1, kind: 'shop', wall: 'plaster', tint: '#d8d0c0' };
+  const A: Opening = { kind: 'vidrio', edge: 3, s0: 2, s1: 4, y0: 0.3, y1: 2.8 };
+  const B: Opening = { kind: 'vidrio', edge: 1, s0: 2, s1: 4, y0: 2.0, y1: 4.0 };
+  /** Lo que proyecta en el chunk (SHADOW_CASTERS): las paredes, el techo y el pretil; las tapas no. */
+  const casters = (b: Building, os: Opening[]): THREE.Triangle[] => {
+    const e = extrudeBuilding(b, os);
+    return [e.walls.ground, e.walls.upper, e.walls.front, ...e.walls.overrides.map((o) => o.geometry), e.roof, e.parapet].flatMap((g) => triangles(g));
+  };
+  /** ¿El rayo desde el suelo hacia el sol pega en una cara de espaldas al sol (las que dibuja la pasada de sombras)? */
+  const shaded = (ts: THREE.Triangle[], from: Vec2): boolean => {
+    const ray = new THREE.Ray(new THREE.Vector3(from[0], 0.02, from[1]), SUN_DIR.clone());
+    const n = new THREE.Vector3();
+    return ts.some((t) => t.getNormal(n).dot(SUN_DIR) < 0 && ray.intersectTriangle(t.a, t.b, t.c, false, new THREE.Vector3()) !== null);
+  };
+  // a d m del frente, del lado de la sombra: el rayo cruza el frente a 1,19·d m de alto y el fondo a 1,19·(d + 2)
+  const ground = (d: number, c: number): Vec2 => at(-d, c);
+
+  test('el rayo que entra por la vidriera de la sombra y sale por el techo o por pared maciza da sombra (la cáscara)', () => {
+    const ts = casters(bd, [A]);
+    for (const c of [2.5, 3, 3.5]) for (const d of [0.3, 0.5, 1, 1.5]) expect(shaded(ts, ground(d, c)), `d ${d} c ${c}`).toBe(true);
+  });
+
+  test('con dos vidrieras alineadas el sol pasa; por encima de B (d = 1,5) vuelve la sombra', () => {
+    const ts = casters(bd, [A, B]);
+    for (const c of [2.5, 3, 3.5]) {
+      for (const d of [0.3, 0.5, 1]) expect(shaded(ts, ground(d, c)), `d ${d} c ${c}`).toBe(false);
+      expect(shaded(ts, ground(1.5, c)), `d 1,5 c ${c}`).toBe(true);
+    }
+  });
+
+  test('la cáscara: el techo del mismo polígono, 5 cm más abajo y mirando abajo; sin aberturas no hay cáscara', () => {
+    const roof = (os: Opening[]): THREE.Triangle[] => triangles(extrudeBuilding(bd, os).roof);
+    const n = new THREE.Vector3();
+    const up = roof([]);
+    expect(up.every((t) => t.getNormal(n).y > 0.999 && t.a.y === 5)).toBe(true);
+    const withShell = roof([A]);
+    const down = withShell.filter((t) => t.getNormal(n).y < -0.999);
+    expect(down.every((t) => Math.abs(t.a.y - 4.95) < 1e-6)).toBe(true);
+    expect(areaOf(down)).toBeCloseTo(areaOf(up), 6);
+    // y las paredes, 5 cm hacia adentro y dadas vuelta: todo el contorno sin la vidriera
+    const walls = withShell.filter((t) => Math.abs(t.getNormal(n).y) < 1e-6);
+    expect(areaOf(walls)).toBeCloseTo(2 * (2 - 0.1) * 5 + 2 * (6 - 0.1) * 5 - (4 - 2) * (2.8 - 0.3), 3);
   });
 });
 

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clipSegment, pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
-import type { Block, Interior, Item, Label, Look, Mat } from '../../../shared/interiors/types.ts';
+import type { Block, Interior, Item, ItemModel, Label, Look, Mat } from '../../../shared/interiors/types.ts';
 import { SIGN_H } from '../../../shared/mapdata.ts';
 import { QUALITY } from '../../render/quality.ts';
 import type { Quality } from '../../render/quality.ts';
@@ -15,9 +15,15 @@ import type { InteriorKey, WorldMaterials } from '../types.ts';
 import { cutRect, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
 import type { Builder, Rect } from '../wall-kit.ts';
 import { lightAt } from './bake.ts';
-import { ITEM_GLOW, ITEM_MODELS } from './models.ts';
+import { glassTone } from './glass.ts';
+import { ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
 import { TILE_M } from './textures.ts';
 
+/** Multiplica la luz horneada de los bloques, los muebles y los carteles que no brillan (H2a); lo que brilla (in_luz,
+ *  ITEM_GLOW y los carteles `glow`) va en 1. Con la exposición de la calle, un interior visto por la vidriera queda más
+ *  oscuro que la vereda en sombra (en alta, desde la vereda de enfrente: BBVA 60 contra 108 de la vereda, en luma sRGB),
+ *  como de día; adentro lo aclara la adaptación del ojo (render/exposure.ts). */
+export const INTERIOR_EXPOSURE = 0.15;
 /** A lo sumo esta cantidad de mallas (draw calls) por interior. */
 export const MAX_MESHES = 20;
 /** Un modelo con esta cantidad de copias o más va instanciado. */
@@ -45,18 +51,24 @@ function baker(i: Interior): (p: Vec3, n: Vec3) => number {
   };
 }
 
-/** Lo que pinta una cara: su color y si se le hornea la luz (lo que brilla, no). */
-interface Paint { look: Look; light: (p: Vec3, n: Vec3) => number }
+/** Lo que pinta una cara: su color, la luz horneada y el lado de las de vidrio. */
+interface Paint { look: Look; light: (p: Vec3, n: Vec3) => number; glass: (p: Vec3, n: Vec3) => number }
 
 /** Una cara de normal `n` con uv planas (metros / TILE_M): un rectángulo (`rect`, antihorario visto desde `n`) o un
- *  pedazo recortado de una cara horizontal, que se triangula. */
+ *  pedazo recortado de una cara horizontal, que se triangula. Lo que brilla va con su color pleno; el vidrio no se
+ *  hornea: su color es el lado de la cara (glass.ts), uno por cara; lo demás, su color por la luz y INTERIOR_EXPOSURE. */
 function emit(b: Builder, corners: Vec3[], n: Vec3, uvOf: (p: Vec3) => [number, number], paint: Paint, rect: boolean): void {
-  const base = paint.look.mat === 'luz' ? null : paint;
+  const { mat } = paint.look;
   const color = tintColor(paint.look.color);
   const first = b.pos.length / 3;
+  const mid = (): Vec3 => corners.reduce((s, p): Vec3 => [s[0] + p[0] / corners.length, s[1] + p[1] / corners.length, s[2] + p[2] / corners.length], [0, 0, 0]);
+  const side = mat === 'vidrio' ? paint.glass(mid(), n) : 0;
   for (const p of corners) {
-    const k = base ? base.light(p, n) : 1;
-    vert(b, p, n, uvOf(p), new THREE.Color(color.r * k, color.g * k, color.b * k));
+    if (mat === 'vidrio') vert(b, p, n, uvOf(p), new THREE.Color(side, side, side));
+    else {
+      const k = mat === 'luz' ? 1 : paint.light(p, n) * INTERIOR_EXPOSURE;
+      vert(b, p, n, uvOf(p), new THREE.Color(color.r * k, color.g * k, color.b * k));
+    }
   }
   if (rect) {
     b.idx.push(first, first + 1, first + 2, first, first + 2, first + 3);
@@ -131,9 +143,9 @@ function covered(p: Vec2, q: Vec2, y0: number, y1: number, others: Block[]): Rec
   return out;
 }
 
-/** Las caras de los bloques que no son `out`, por Mat, partidas en la grilla de `step` m y horneadas. */
-function blockGeometries(i: Interior, step: number): Map<Mat, THREE.BufferGeometry> {
-  const light = baker(i);
+/** Las caras de los bloques que no son `out`, por Mat, partidas en la grilla de `step` m y horneadas con `light`. */
+function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) => number): Map<Mat, THREE.BufferGeometry> {
+  const glass = (p: Vec3, n: Vec3): number => glassTone(i, p, n);
   const builders = new Map<Mat, Builder>();
   const builder = (mat: Mat): Builder => {
     let b = builders.get(mat);
@@ -152,7 +164,7 @@ function blockGeometries(i: Interior, step: number): Map<Mat, THREE.BufferGeomet
       if (!look) continue;
       for (const c of cells(b.polygon, step)) {
         const ring = n[1] > 0 ? c.ring : [...c.ring].reverse();
-        emit(builder(look.mat), ring.map((p): Vec3 => [p[0], y, p[1]]), [...n], flat, { look, light }, c.rect);
+        emit(builder(look.mat), ring.map((p): Vec3 => [p[0], y, p[1]]), [...n], flat, { look, light, glass }, c.rect);
       }
     }
     if (!b.side) continue;
@@ -178,7 +190,7 @@ function blockGeometries(i: Interior, step: number): Map<Mat, THREE.BufferGeomet
           for (let c = 0; c < ny; c++) {
             const [s0, s1] = [r.s0 + ((r.s1 - r.s0) * a) / ns, r.s0 + ((r.s1 - r.s0) * (a + 1)) / ns];
             const [ya, yb] = [r.y0 + ((r.y1 - r.y0) * c) / ny, r.y0 + ((r.y1 - r.y0) * (c + 1)) / ny];
-            emit(builder(look.mat), [at(s0, ya), at(s1, ya), at(s1, yb), at(s0, yb)], normal, uv, { look, light }, true);
+            emit(builder(look.mat), [at(s0, ya), at(s1, ya), at(s1, yb), at(s0, yb)], normal, uv, { look, light, glass }, true);
           }
         }
       }
@@ -191,57 +203,92 @@ function blockGeometries(i: Interior, step: number): Map<Mat, THREE.BufferGeomet
 const placeOf = (it: Item): THREE.Matrix4 =>
   new THREE.Matrix4().makeRotationY(it.yaw).setPosition(it.at[0], it.at[1], it.at[2]);
 
-/** El color de un mueble: el suyo (o blanco) por la luz de donde está, salvo los que brillan. */
-function itemColor(i: Interior, it: Item, light: (p: Vec3, n: Vec3) => number): THREE.Color {
+/** El color de un mueble: el suyo (o blanco) por la luz de donde está y INTERIOR_EXPOSURE, salvo los que brillan. */
+function itemColor(it: Item, light: (p: Vec3, n: Vec3) => number): THREE.Color {
   const c = new THREE.Color(it.color ?? '#ffffff');
-  return ITEM_GLOW[it.model] ? c : c.multiplyScalar(light([it.at[0], it.at[1] + 0.6, it.at[2]], [0, 1, 0]));
+  return ITEM_GLOW[it.model] ? c : c.multiplyScalar(light([it.at[0], it.at[1] + 0.6, it.at[2]], [0, 1, 0]) * INTERIOR_EXPOSURE);
 }
 
-/** Los muebles: una InstancedMesh por modelo con INSTANCE_MIN copias o más (los más repetidos, mientras entren en
- *  `room` mallas) y los demás juntos en una malla. */
-function itemMeshes(i: Interior, items: Item[], material: THREE.Material, room: number): THREE.Mesh[] {
-  const light = baker(i);
-  const byModel = new Map<Item['model'], Item[]>();
+/** Las partes de vidrio de los muebles (ITEM_GLASS), en su lugar, sin uv y con el lado de cada cara en el color: van en
+ *  la malla de in_vidrio. */
+function itemGlass(i: Interior, items: Item[]): THREE.BufferGeometry[] {
+  return items.flatMap((it) => {
+    const part = ITEM_GLASS[it.model];
+    if (!part) return [];
+    const g = part().applyMatrix4(placeOf(it));
+    const [pos, nor, col] = [g.getAttribute('position'), g.getAttribute('normal'), g.getAttribute('color')];
+    for (let v = 0; v < pos.count; v++) {
+      const k = glassTone(i, [pos.getX(v), pos.getY(v), pos.getZ(v)], [nor.getX(v), nor.getY(v), nor.getZ(v)]);
+      col.setXYZ(v, k, k, k);
+    }
+    return [g];
+  });
+}
+
+/** Los muebles por modelo: los que tienen INSTANCE_MIN copias o más (de más a menos) y el resto. */
+function itemPlan(items: Item[]): { repeated: [ItemModel, Item[]][]; rest: Item[] } {
+  const byModel = new Map<ItemModel, Item[]>();
   for (const it of items) byModel.set(it.model, [...(byModel.get(it.model) ?? []), it]);
   const repeated = [...byModel].filter(([, list]) => list.length >= INSTANCE_MIN).sort((a, b) => b[1].length - a[1].length);
-  const rest = items.length - repeated.reduce((s, [, list]) => s + list.length, 0);
-  const take = repeated.length + (rest > 0 ? 1 : 0) <= room ? repeated.length : Math.max(0, room - 1);
-  const instanced = repeated.slice(0, take);
-  const out: THREE.Mesh[] = [];
-  for (const [model, list] of instanced) {
+  const done = new Set(repeated.map(([model]) => model));
+  return { repeated, rest: items.filter((it) => !done.has(it.model)) };
+}
+
+/** Una InstancedMesh por modelo repetido, con la luz de cada copia en su color. */
+function instancedMeshes(repeated: [ItemModel, Item[]][], material: THREE.Material, light: (p: Vec3, n: Vec3) => number): THREE.Mesh[] {
+  return repeated.map(([model, list]) => {
     const mesh = new THREE.InstancedMesh(ITEM_MODELS[model](), material, list.length);
     list.forEach((it, k) => {
       mesh.setMatrixAt(k, placeOf(it));
-      mesh.setColorAt(k, itemColor(i, it, light));
+      mesh.setColorAt(k, itemColor(it, light));
     });
     mesh.computeBoundingSphere();
-    out.push(mesh);
-  }
-  const done = new Set(instanced.map(([model]) => model));
-  const loose = items.filter((it) => !done.has(it.model)).map((it) => {
-    const g = ITEM_MODELS[it.model]().applyMatrix4(placeOf(it));
-    const k = itemColor(i, it, light);
-    const col = g.getAttribute('color');
-    for (let v = 0; v < col.count; v++) col.setXYZ(v, col.getX(v) * k.r, col.getY(v) * k.g, col.getZ(v) * k.b);
-    return g;
+    return mesh;
   });
-  if (loose.length > 0) {
-    const merged = mergeGeometries(loose, false);
-    if (!merged) throw new Error(`${i.placeId}: no se pudieron juntar los muebles`);
-    for (const g of loose) g.dispose();
-    out.push(new THREE.Mesh(merged, material));
-  }
-  for (const mesh of out) mesh.name = 'in_mueble';
-  return out;
 }
 
-/** Los carteles de adentro: los textos en páginas de atlas (signTexture), un cuadro por cartel y una malla por página. */
-function labelMeshes(i: Interior, labels: Label[]): THREE.Mesh[] {
-  if (labels.length === 0) return [];
-  const light = baker(i);
-  // signTexture dibuja con la proporción ancho × SIGN_H: el ancho que pide da la del cartel
-  const canvases = labels.map((l) => signTexture(l.text, l.look, (l.width * SIGN_H) / l.height));
-  const { rects, pages } = packSigns(canvases.map((c) => ({ w: c.width, h: c.height })), PAGE, LABEL_GUTTER);
+/** Cada mueble en su lugar, con su color ya multiplicado: para juntarlos en una sola geometría. */
+const looseGeometries = (items: Item[], light: (p: Vec3, n: Vec3) => number): THREE.BufferGeometry[] => items.map((it) => {
+  const g = ITEM_MODELS[it.model]().applyMatrix4(placeOf(it));
+  const k = itemColor(it, light);
+  const col = g.getAttribute('color');
+  for (let v = 0; v < col.count; v++) col.setXYZ(v, col.getX(v) * k.r, col.getY(v) * k.g, col.getZ(v) * k.b);
+  return g;
+});
+
+/** Las geometrías en una (y las libera), o null si no hay ninguna. */
+function merged(i: Interior, parts: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  const g = mergeGeometries(parts, false);
+  if (!g) throw new Error(`${i.placeId}: no se pudieron juntar las mallas`);
+  for (const x of parts) x.dispose();
+  return g;
+}
+
+/** Los textos de los carteles (signTexture dibuja con la proporción ancho × SIGN_H: el ancho que se pide da la del
+ *  cartel). */
+const labelCanvases = (labels: Label[]): HTMLCanvasElement[] => labels.map((l) => signTexture(l.text, l.look, (l.width * SIGN_H) / l.height));
+
+/** Las páginas de atlas de los carteles: con `onePage`, los textos se achican a la mitad hasta entrar en una. */
+function packLabels(canvases: HTMLCanvasElement[], onePage: boolean): { canvases: HTMLCanvasElement[]; packed: ReturnType<typeof packSigns> } {
+  let cs = canvases;
+  for (;;) {
+    const packed = packSigns(cs.map((c) => ({ w: c.width, h: c.height })), PAGE, LABEL_GUTTER);
+    if (!onePage || packed.pages.length <= 1) return { canvases: cs, packed };
+    cs = cs.map((c) => {
+      const half = document.createElement('canvas');
+      half.width = Math.max(1, Math.round(c.width / 2));
+      half.height = Math.max(1, Math.round(c.height / 2));
+      half.getContext('2d')!.drawImage(c, 0, 0, half.width, half.height);
+      return half;
+    });
+  }
+}
+
+/** Los carteles de adentro: un cuadro por cartel y una malla por página de atlas. */
+function labelMeshes(labels: Label[], canvases: HTMLCanvasElement[], packed: ReturnType<typeof packSigns>, light: (p: Vec3, n: Vec3) => number): THREE.Mesh[] {
+  const { rects, pages } = packed;
   const pageCanvases = pages.map((pg) => {
     const c = document.createElement('canvas');
     c.width = pg.w;
@@ -263,7 +310,7 @@ function labelMeshes(i: Interior, labels: Label[]): THREE.Mesh[] {
     const [v0, v1] = [(pg.h - r.y - r.h) / pg.h, (pg.h - r.y) / pg.h];
     const corners: [Vec3, [number, number]][] = [[at(-1, -1), [u0, v0]], [at(1, -1), [u1, v0]], [at(1, 1), [u1, v1]], [at(-1, 1), [u0, v1]]];
     const b = builders[r.page], first = b.pos.length / 3;
-    const k0 = l.glow ? 1 : light(c, n);
+    const k0 = l.glow ? 1 : light(c, n) * INTERIOR_EXPOSURE;
     for (const [p, uv] of corners) vert(b, p, n, uv, new THREE.Color(k0, k0, k0));
     b.idx.push(first, first + 1, first + 2, first, first + 2, first + 3);
   });
@@ -277,27 +324,85 @@ function labelMeshes(i: Interior, labels: Label[]): THREE.Mesh[] {
   });
 }
 
-/** El interior para dibujar con los materiales `m` en la calidad `q`, y su caja (planta, patios y lo de adentro). */
+/**
+ * Hasta dónde se compacta un interior para entrar en las mallas de su calidad (H3):
+ * - 0: una malla por Mat, una InstancedMesh por modelo repetido, el resto de los muebles juntos y una por página;
+ * - 1: además, todos los muebles en una malla, sin instancias (instanciar ahorra memoria, no draw calls);
+ * - 2: además, los carteles en una página (achicados si hace falta);
+ * - 3 (solo en baja): además, todo lo opaco (bloques sin su textura y muebles) en una malla con color por vértice.
+ */
+type Level = 0 | 1 | 2 | 3;
+
+/** El interior para dibujar con los materiales `m` en la calidad `q`, y su caja (planta, patios y lo de adentro). Se
+ *  compacta hasta entrar en min(MAX_MESHES, interiors.calls) mallas; si ni así entra, tira un error con el lugar. */
 export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): { group: THREE.Group; box: THREE.Box3 } {
-  const { detail } = QUALITY[q].interiors;
-  const group = new THREE.Group();
-  group.name = `interior:${i.placeId}`;
+  const { detail, calls } = QUALITY[q].interiors;
+  const cap = Math.min(MAX_MESHES, calls);
+  const light = baker(i);
+  const blocks = blockGeometries(i, BAKE_STEP[detail], light);
+  const items = i.items.filter((it) => (it.detail ?? 1) <= detail);
+  const labels = i.labels.filter((l) => !l.out);
+  const canvases = labelCanvases(labels);
+  const plan = itemPlan(items);
+  const fullPages = labels.length === 0 ? 0 : packSigns(canvases.map((c) => ({ w: c.width, h: c.height })), PAGE, LABEL_GUTTER).pages.length;
+  const opaque = [...blocks.keys()].filter((mat) => mat !== 'vidrio');
+  // el vidrio de los bloques y el de los muebles, en una malla sin uv (no tiene textura)
+  const glassParts = [...(blocks.has('vidrio') ? [blocks.get('vidrio')!] : []), ...itemGlass(i, items)];
+  for (const g of glassParts) if (g.getAttribute('uv')) g.deleteAttribute('uv');
+  const hasGlass = glassParts.length > 0 ? 1 : 0;
+  const count = (level: Level): number => {
+    const blockMeshes = level < 3 ? opaque.length + hasGlass : (opaque.length + items.length > 0 ? 1 : 0) + hasGlass;
+    const itemMeshes = level === 3 ? 0 : level === 0 ? plan.repeated.length + (plan.rest.length > 0 ? 1 : 0) : items.length > 0 ? 1 : 0;
+    const labelPages = level < 2 ? fullPages : labels.length > 0 ? 1 : 0;
+    return blockMeshes + itemMeshes + labelPages;
+  };
+  const levels: Level[] = q === 'baja' ? [0, 1, 2, 3] : [0, 1, 2];
+  const level = levels.find((l) => count(l) <= cap);
+  if (level === undefined) {
+    for (const g of [...blocks.values(), ...glassParts]) g.dispose();
+    throw new Error(`${i.placeId}: no entra en ${cap} mallas en ${q}, ni compactado (${count(levels[levels.length - 1])})`);
+  }
+
   const meshes: THREE.Mesh[] = [];
-  for (const [mat, g] of blockGeometries(i, BAKE_STEP[detail])) {
-    const key: InteriorKey = `in_${mat}`;
+  const add = (g: THREE.BufferGeometry | null, key: InteriorKey): void => {
+    if (!g) return;
     const mesh = new THREE.Mesh(g, m[key]);
     mesh.name = key;
     meshes.push(mesh);
+  };
+  add(merged(i, glassParts), 'in_vidrio');
+  if (level < 3) {
+    for (const mat of opaque) add(blocks.get(mat)!, `in_${mat}`);
+  } else {
+    // sin textura: el color por vértice ya lleva el Look y la luz
+    const flat = opaque.map((mat) => {
+      const g = blocks.get(mat)!;
+      g.deleteAttribute('uv');
+      return g;
+    });
+    add(merged(i, [...flat, ...looseGeometries(items, light)]), 'in_mueble');
   }
-  const labels = labelMeshes(i, i.labels.filter((l) => !l.out));
-  const items = i.items.filter((it) => (it.detail ?? 1) <= detail);
-  meshes.push(...itemMeshes(i, items, m.in_mueble, MAX_MESHES - meshes.length - labels.length), ...labels);
+  if (level === 0) {
+    for (const mesh of instancedMeshes(plan.repeated, m.in_mueble, light)) {
+      mesh.name = 'in_mueble';
+      meshes.push(mesh);
+    }
+    add(merged(i, looseGeometries(plan.rest, light)), 'in_mueble');
+  } else if (level < 3) {
+    add(merged(i, looseGeometries(items, light)), 'in_mueble');
+  }
+  if (labels.length > 0) {
+    const { canvases: cs, packed } = packLabels(canvases, level >= 2);
+    meshes.push(...labelMeshes(labels, cs, packed, light));
+  }
   for (const mesh of meshes) {
     mesh.castShadow = mesh.receiveShadow = false;
     mesh.geometry.computeBoundingSphere();
     mesh.matrixAutoUpdate = false;
-    group.add(mesh);
   }
+  const group = new THREE.Group();
+  group.name = `interior:${i.placeId}`;
+  group.add(...meshes);
   const box = new THREE.Box3();
   const top = Math.max(0, ...i.blocks.filter((b) => !b.out).map((b) => b.y1));
   for (const ring of [i.footprint, ...i.patios, ...i.blocks.filter((b) => !b.out).map((b) => b.polygon)]) {

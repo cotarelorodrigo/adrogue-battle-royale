@@ -4,6 +4,7 @@ import type { Quality } from '../render/quality.ts';
 import { composeFacadeTile } from './facades.ts';
 import { composeFrontAtlas, frontMaterial, packAtlas } from './front-atlas.ts';
 import type { FacadeStyle } from './facades.ts';
+import { glassMaterial } from './interiors/glass.ts';
 import { interiorTextures } from './interiors/textures.ts';
 import type { InteriorKey, WorldMaterials } from './types.ts';
 
@@ -157,7 +158,7 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
     in_tela: baked(inTex.tela),
     in_metal: baked(inTex.metal),
     in_ladrillo: baked(inTex.ladrillo),
-    in_vidrio: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.25, depthWrite: false, side: THREE.DoubleSide }),
+    in_vidrio: glassMaterial(), // sin hornear: reflejo de cielo tipo Fresnel (H2c)
     in_luz: baked(null), // lo que brilla: su color pleno, sin sombra horneada
     in_mueble: baked(null),
   };

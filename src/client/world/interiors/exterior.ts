@@ -12,7 +12,8 @@ import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from '.
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
 const PLANAR_UV = 4;
 
-export function exteriorParts(i: Interior): { geometry: THREE.BufferGeometry; signs: Sign[] } {
+/** Los bloques `out` del interior, en una geometría para el merge `parapet` de su chunk. */
+export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
   const b = newBuilder(true);
   for (const block of i.blocks) {
     if (!block.out) continue;
@@ -43,8 +44,10 @@ export function exteriorParts(i: Interior): { geometry: THREE.BufferGeometry; si
         [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], [-ez, 0, ex], c);
     }
   }
-  const signs = i.labels.filter((l) => l.out).map((l): Sign => ({
-    text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - SIGN_H / 2, look: l.look,
-  }));
-  return { geometry: toGeometry(b), signs };
+  return toGeometry(b);
 }
+
+/** Los carteles `out` del interior, como Sign del mapa (los dibuja buildSigns con los demás). */
+export const exteriorSigns = (i: Interior): Sign[] => i.labels.filter((l) => l.out).map((l): Sign => ({
+  text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - SIGN_H / 2, look: l.look,
+}));

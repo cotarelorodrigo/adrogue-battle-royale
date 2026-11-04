@@ -30,11 +30,15 @@ function fillRect(ctx: Ctx, img: CanvasImageSource | undefined, fallback: string
   if (img) ctx.drawImage(img, x, y, w, h);
 }
 
-export function glass(ctx: Ctx, x: number, y: number, w: number, h: number): void {
+/** El degradado de un vidrio pintado: de arriba a la izquierda a abajo a la derecha. */
+export type GlassStops = readonly [string, string, string];
+const WINDOW_GLASS: GlassStops = ['#5d7383', '#33434f', '#202b33'];
+
+export function glass(ctx: Ctx, x: number, y: number, w: number, h: number, stops: GlassStops = WINDOW_GLASS): void {
   const g = ctx.createLinearGradient(x, y, x + w, y + h);
-  g.addColorStop(0, '#5d7383');
-  g.addColorStop(0.5, '#33434f');
-  g.addColorStop(1, '#202b33');
+  g.addColorStop(0, stops[0]);
+  g.addColorStop(0.5, stops[1]);
+  g.addColorStop(1, stops[2]);
   ctx.fillStyle = g;
   ctx.fillRect(x, y, w, h);
 }

@@ -3,6 +3,7 @@ import { GROUND_CELLS, LOT_OPENINGS, isLotCell } from '../../shared/interiors/op
 import type { LotCell } from '../../shared/interiors/openings.ts';
 import type { Arriba, PlantaBaja } from '../../shared/mapdata.ts';
 import { averageLuminance, bars, frame, glass, shutter } from './facades.ts';
+import type { GlassStops } from './facades.ts';
 import { BAY_W, FLOOR_H } from './wall-kit.ts';
 
 export const FRONT_CELLS = ['vidriera', 'vidriera-puerta', 'persiana', 'porton', 'puerta', 'ventana-pb', 'banco', 'banco-puerta',
@@ -65,10 +66,15 @@ function texFill(c: Ctx, img: Img, fallback: string, x: number, y: number, w: nu
   c.drawImage(img, x, y, w, h);
 }
 
+/** El vidrio de las vidrieras y puertas de los lotes, más claro que el de las ventanas: es la tapa de los huecos de los
+ *  interiores (D6) y de lejos tiene que parecerse a un interior visto por un vidrio que refleja el cielo, sin salto a
+ *  los 60 m (H2d: en alta, BBVA 72 → 56 y La Veneciana 41 → 35 de luma sRGB, a 59 y a 61 m). */
+const SHOP_GLASS: GlassStops = ['#a6b8c4', '#7d8f9b', '#62717b'];
+
 /** Vidrio con parteluces verticales (`mullions` paños) y su marco. */
 function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullions: number, frameColor: string): void {
   const { c, u } = p;
-  glass(c, x, y, w, h);
+  glass(c, x, y, w, h, SHOP_GLASS);
   c.strokeStyle = frameColor;
   c.lineWidth = 0.05 * u;
   for (let i = 1; i < mullions; i++) {
@@ -85,7 +91,7 @@ function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullion
  *  interior, con el marco y la hoja de canto contra la jamba, con su manija; de 2 m o más, dos hojas. */
 function drawDoor(p: Pen, x: number, y: number, w: number, h: number, frameColor: string): void {
   const { c, u } = p;
-  glass(c, x, y, w, h);
+  glass(c, x, y, w, h, SHOP_GLASS);
   c.fillStyle = 'rgba(0,0,0,0.35)';
   c.fillRect(x, y, w, h);
   frame(c, x, y, w, h, 0.1 * u, frameColor);

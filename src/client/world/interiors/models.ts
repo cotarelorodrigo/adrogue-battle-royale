@@ -48,10 +48,16 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   mesa: () => model(box(1.2, 0.04, 0.8, [0, 0.71, 0], WOOD), ...legs(1.2, 0.8, 0.71, 0.05, STEEL)),
   sillon: () => model(box(0.85, 0.42, 0.85, [0, 0, 0], FABRIC), box(0.85, 0.38, 0.16, [0, 0.42, -0.345], FABRIC),
     box(0.12, 0.2, 0.69, [-0.365, 0.42, 0.08], FABRIC), box(0.12, 0.2, 0.69, [0.365, 0.42, 0.08], FABRIC)),
-  // la hoja de vidrio abierta (D10): se dibuja el marco; el vidrio, que no frena, no se ve con un material opaco
+  // la hoja de vidrio abierta (D10): acá, el marco; el paño va en ITEM_GLASS
   'hoja-vidrio': () => model(box(0.05, 2.1, 0.04, [-0.425, 0, 0], ALUMINIUM), box(0.05, 2.1, 0.04, [0.425, 0, 0], ALUMINIUM),
     box(0.8, 0.05, 0.04, [0, 0, 0], ALUMINIUM), box(0.8, 0.05, 0.04, [0, 2.05, 0], ALUMINIUM)),
 };
 
 /** Los que brillan: van con su color pleno, sin la luz horneada. */
 export const ITEM_GLOW: Partial<Record<ItemModel, true>> = { lampara: true };
+
+/** Las partes de vidrio de un modelo, en su marco: van en la malla de in_vidrio del interior (con su material
+ *  transparente), no en la de los muebles. El color lo pone el interior (es el lado de la cara, glass.ts). */
+export const ITEM_GLASS: Partial<Record<ItemModel, () => THREE.BufferGeometry>> = {
+  'hoja-vidrio': () => box(0.8, 2.0, 0.01, [0, 0.05, 0], '#ffffff'),
+};

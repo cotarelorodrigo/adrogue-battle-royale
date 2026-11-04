@@ -6,6 +6,7 @@ import type { Vec3 } from '../../shared/geo.ts';
 import type { OutskirtBuilding } from '../../shared/mapdata.ts';
 import { CHUNK } from '../world/chunks.ts';
 import type { WorldMaterials } from '../world/types.ts';
+import { OUTDOOR_EXPOSURE } from './exposure.ts';
 import { FAR_PAST_FOG, QUALITY } from './quality.ts';
 import type { Quality } from './quality.ts';
 
@@ -22,7 +23,7 @@ const NEAR = 0.15;
  *  al este. Azimut desde el norte (−z) hacia el este (+x). */
 const SUN_ELEVATION = THREE.MathUtils.degToRad(50);
 const SUN_AZIMUTH = THREE.MathUtils.degToRad(40);
-const SUN_DIR = new THREE.Vector3(
+export const SUN_DIR = new THREE.Vector3(
   Math.cos(SUN_ELEVATION) * Math.sin(SUN_AZIMUTH),
   Math.sin(SUN_ELEVATION),
   -Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH),
@@ -53,6 +54,9 @@ export interface GameScene {
   project(p: Vec3): [number, number] | null;
   /** Dibuja el mundo y pone en cero renderer.info: las pasadas que siguen en el mismo cuadro se suman. */
   render(): void;
+  /** Compila de antemano los programas de los materiales de `object`, que ya está en la escena (aunque esté escondido:
+   *  three los recorre todos), para que mostrarlo después no dé un tirón (H9). */
+  compile(object: THREE.Object3D): Promise<void>;
 }
 
 interface Chunk { group: THREE.Group; cx: number; cz: number }
@@ -60,7 +64,7 @@ interface Chunk { group: THREE.Group; cx: number; cz: number }
 export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuilding[], q: Quality): GameScene {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.toneMapping = THREE.ACESFilmicToneMapping; // el cielo de Preetham está pensado para tone mapping
-  renderer.toneMappingExposure = 0.7;
+  renderer.toneMappingExposure = OUTDOOR_EXPOSURE; // adentro de un interior la cambia la adaptación del ojo (main)
   // Las estadísticas (renderer.info.render) se ponen en cero una sola vez por cuadro, en render(): lo que se dibuja
   // después en el mismo cuadro (el arma en mano, combat/viewmodel.ts, en una pasada aparte) se suma, y el HUD y los
   // presupuestos de e2e/perf.spec.ts ven el cuadro entero y no solo la última pasada.
@@ -197,6 +201,12 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
     render() {
       renderer.info.reset();
       renderer.render(scene, camera);
+    },
+    async compile(object) {
+      // sin KHR_parallel_shader_compile (SwiftShader, algunos navegadores) compileAsync avisa por consola y espera igual:
+      // ahí se compila de una, durante la carga
+      if (renderer.extensions.has('KHR_parallel_shader_compile')) await renderer.compileAsync(object, camera, scene);
+      else renderer.compile(object, camera, scene);
     },
   };
 }

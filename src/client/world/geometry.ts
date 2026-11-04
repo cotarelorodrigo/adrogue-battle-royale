@@ -24,6 +24,47 @@ export function triangulateUp(poly: Vec2[], base: number, idx: number[]): void {
   }
 }
 
+/** El techo: la planta `fp` a la altura `y`, con normal +y; con `down`, la misma planta mirando para abajo (la cáscara
+ *  de sombra). El techo del chunk y el de la cáscara salen de acá y del mismo polígono: un hueco que se le abra a uno
+ *  (la escalera de una terraza) se abre en los dos. */
+function roofCap(b: Builder, fp: Vec2[], y: number, color: THREE.Color, down = false): void {
+  const base = b.pos.length / 3;
+  for (const [x, z] of fp) vert(b, [x, y, z], [0, down ? -1 : 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
+  const idx: number[] = [];
+  triangulateUp(fp, base, idx);
+  if (down) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
+  b.idx.push(...idx);
+}
+
+/** La cáscara de sombra se mete esto (m) adentro del techo y de las paredes. */
+const SHELL_IN = 0.05;
+
+/**
+ * La cáscara de sombra de un edificio con aberturas (H1), en `b` (el techo del chunk, que ya proyecta: sin draw calls
+ * nuevos). La pasada de sombras dibuja las caras de espaldas al sol, y por una abertura de ese lado un rayo de sol
+ * entraba y salía por el techo o por una pared maciza del lado del sol, que miran al sol y no se dibujan: dejaba una
+ * mancha de sol en la sombra. La cáscara es lo macizo mirando para adentro: el techo a `height − SHELL_IN` con normal
+ * −y y las piezas macizas de cada pared (las mismas de cutRect con los mismos huecos), SHELL_IN m hacia adentro, dadas
+ * vuelta y recortadas SHELL_IN en cada punta (en una esquina recta se tocan justo). Desde afuera son caras de atrás;
+ * desde adentro quedan detrás de las paredes y la losa del interior. Un rayo que cruza dos aberturas sigue pasando.
+ */
+function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, Rect[]>, color: THREE.Color): void {
+  roofCap(b, fp, height - SHELL_IN, color, true);
+  for (let i = 0; i < fp.length; i++) {
+    const a = fp[i], c = fp[(i + 1) % fp.length];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    if (len <= 2 * SHELL_IN) continue;
+    const [ex, ez] = [(c[0] - a[0]) / len, (c[1] - a[1]) / len];
+    // adentro es −n, con n = (−ez, ex) la normal de afuera
+    const at = (s: number): Vec2 => [a[0] + ex * s + ez * SHELL_IN, a[1] + ez * s - ex * SHELL_IN];
+    for (const r of cutRect({ s0: SHELL_IN, s1: len - SHELL_IN, y0: 0, y1: height }, holes.get(i) ?? []).solid) {
+      const [p, q] = [at(r.s0), at(r.s1)];
+      const [u0, u1, v0, v1] = [r.s0 / PLANAR_UV, r.s1 / PLANAR_UV, r.y0 / PLANAR_UV, r.y1 / PLANAR_UV];
+      quad(b, [[q[0], r.y0, q[1]], [p[0], r.y0, p[1]], [p[0], r.y1, p[1]], [q[0], r.y1, q[1]]], [[u1, v0], [u0, v0], [u0, v1], [u1, v1]], [ez, 0, -ex], color);
+    }
+  }
+}
+
 /** `colorOf(i)`: color de la arista i de `fp`, o null para saltearla (va en otra banda). Los huecos de cada arista
  *  (`holes`) no se dibujan: lo recortado va a `tapa()`, con las mismas uv. */
 function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i: number) => THREE.Color | null,
@@ -91,7 +132,7 @@ export function wallMaterials(bd: Building): { ground: keyof WorldMaterials; upp
  * Un lote (`bd.front`) saca de ground/upper las aristas de su frente y su esquina: las dibuja `walls.front`.
  * Las paredes no dibujan nada adentro de `openings` (las aberturas de su interior, en cualquier arista): lo recortado
  * vuelve en `tapas`, una geometría por material de pared (wallMaterials, GROUND_MAT o `front`), para taparlas de lejos
- * (D6).
+ * (D6). Con aberturas, `roof` suma la cáscara de sombra (shadowShell).
  */
 export function extrudeBuilding(bd: Building, openings: readonly Opening[] = []): {
   walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry; front: THREE.BufferGeometry; overrides: { ground: FacadeGround; geometry: THREE.BufferGeometry }[] };
@@ -119,13 +160,13 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [])
   // aristas del frente de un lote: las dibuja walls.front
   const lotEdges = new Set([...(bd.front?.edges ?? []), ...(bd.front?.corner ?? [])].map(edgeOf));
 
-  const rb = newBuilder(true);
-  for (const [x, z] of fp) vert(rb, [x, bd.height, z], [0, 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
-  triangulateUp(fp, 0, rb.idx);
-
   const groundH = Math.min(FLOOR_H, bd.height);
   const grounds = [...new Set([...own.values()].map((o) => o.ground))].sort();
   const holes = edgeHoles(bd.footprint, fp, edgeOf, openings);
+
+  const rb = newBuilder(true);
+  roofCap(rb, fp, bd.height, color);
+  if (openings.length > 0) shadowShell(rb, fp, bd.height, holes, color);
   const mats = wallMaterials(bd);
   const tapaBuilders = new Map<keyof WorldMaterials, Builder>();
   const tapa = (mat: keyof WorldMaterials) => (): Builder => {

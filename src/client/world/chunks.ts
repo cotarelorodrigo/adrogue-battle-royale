@@ -5,7 +5,7 @@ import type { Vec2 } from '../../shared/geo.ts';
 import type { Interior } from '../../shared/interiors/types.ts';
 import type { MapData, Park, Road } from '../../shared/mapdata.ts';
 import { extrudeBuilding, GROUND_MAT, polygonGeometry, ribbon, wallMaterials } from './geometry.ts';
-import { exteriorParts } from './interiors/exterior.ts';
+import { exteriorGeometry } from './interiors/exterior.ts';
 import type { WorldMaterials } from './types.ts';
 
 export const CHUNK = 250;
@@ -85,7 +85,7 @@ export function buildChunks(map: MapData, materials: WorldMaterials, interiors: 
     add(ij, 'roof', e.roof);
     add(ij, 'parapet', e.parapet);
     if (!interior) continue;
-    add(ij, 'parapet', exteriorParts(interior).geometry);
+    add(ij, 'parapet', exteriorGeometry(interior));
     for (const [mat, geometry] of Object.entries(e.tapas) as [keyof WorldMaterials, THREE.BufferGeometry][]) {
       tapaParts.push({ ij, placeId: interior.placeId, mat, geometry });
     }
