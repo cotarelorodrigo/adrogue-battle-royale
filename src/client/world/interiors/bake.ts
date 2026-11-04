@@ -20,21 +20,41 @@ export const OPENING_MAX = OPEN_GAIN * OPEN_CAP;
 const AO = 0.35, AO_FACE = 0.6, AO_REACH = 0.9;
 /** Una fuente que aporta menos que esto no se mira (ni si se ve); una que aporta menos que FEW se mira por el medio. */
 const NEGLIGIBLE = 1e-4, FEW = 0.01;
+/** Más lejos que FAR veces su lado mayor, una abertura se toma como un solo disco de su área en el medio (N4). */
+const FAR = 2;
 /** Lado (m) de la grilla en planta de los que tapan la luz. */
 const GRID = 2;
 /** El segmento hasta la fuente se acorta esto (m) en cada punta: un punto sobre una cara no se tapa a sí mismo. */
 const TRIM = 0.02;
 
-/** Un prisma (planta en el mundo, alturas, caja en planta) que tapa la luz o hace rincón. */
-interface Prism { poly: Vec2[]; y0: number; y1: number; minX: number; maxX: number; minZ: number; maxZ: number; stamp: number }
-/** Una abertura como fuente: sus celdas (centro y área), su normal en planta, 3 puntos para ver si se la ve y su caja. */
-interface Source { k: number; normal: Vec2; cells: { at: Vec3; area: number }[]; samples: Vec3[] }
+/** Un prisma (planta en el mundo, alturas, caja en planta) que tapa la luz o hace rincón. `turn` es el sentido de la
+ *  planta si es convexa (1 o −1), o 0 si no lo es. */
+interface Prism { poly: Vec2[]; y0: number; y1: number; minX: number; maxX: number; minZ: number; maxZ: number; turn: number; stamp: number }
+/** Un pedazo de una abertura: su centro y su área. */
+interface Cell { at: Vec3; area: number }
+/** Una abertura como fuente: sus celdas (centro y área), su normal en planta, 3 puntos para ver si se la ve (y el del
+ *  medio solo), y la abertura entera como una sola celda (`disc`) con su lado mayor, para verla de lejos. */
+interface Source { k: number; normal: Vec2; cells: Cell[]; samples: Vec3[]; middle: Vec3[]; disc: Cell[]; size: number }
 interface Grid { x0: number; z0: number; nx: number; nz: number; cells: Prism[][] }
-interface Prepared { sources: Source[]; blockers: Grid; occluders: Prism[]; query: { n: number } }
+interface Prepared { sources: Source[]; blockers: Grid; slabs: Prism[]; occluders: Prism[]; query: { n: number } }
 
-const prism = (poly: Vec2[], y0: number, y1: number): Prism => {
+/** El sentido de una planta convexa (1 o −1, el signo del giro en cada vértice), o 0 si no es convexa. */
+function convexTurn(poly: Vec2[]): number {
+  let turn = 0;
+  for (let k = 0; k < poly.length; k++) {
+    const [p, q, r] = [poly[k], poly[(k + 1) % poly.length], poly[(k + 2) % poly.length]];
+    const cross = (q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]);
+    if (Math.abs(cross) < 1e-9) continue;
+    if (turn === 0) turn = Math.sign(cross);
+    else if (Math.sign(cross) !== turn) return 0;
+  }
+  return turn;
+}
+
+/** (Se exportan `prism`, `crosses`, `crossesConvex` y `hitsBox` para los tests.) */
+export const prism = (poly: Vec2[], y0: number, y1: number): Prism => {
   const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
-  return { poly, y0, y1, minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs), stamp: -1 };
+  return { poly, y0, y1, minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs), turn: convexTurn(poly), stamp: -1 };
 };
 
 /** Una abertura rectangular vertical: medio en planta `mid`, a lo largo de `e`, de `width` m y de y0 a y1. */
@@ -45,7 +65,9 @@ function source(mid: Vec2, e: Vec2, width: number, y0: number, y1: number, k: nu
   const cells: Source['cells'] = [];
   for (let a = 0; a < nw; a++) for (let b = 0; b < nh; b++) cells.push({ at: at(-width / 2 + (a + 0.5) * cw, y0 + (b + 0.5) * ch), area: cw * ch });
   const ym = (y0 + y1) / 2;
-  return { k, normal: [-e[1], e[0]], cells, samples: [at(-0.3 * width, ym), at(0, ym), at(0.3 * width, ym)] };
+  const centre = at(0, ym);
+  return { k, normal: [-e[1], e[0]], cells, samples: [at(-0.3 * width, ym), centre, at(0.3 * width, ym)], middle: [centre],
+    disc: [{ at: centre, area: width * (y1 - y0) }], size: Math.max(width, y1 - y0) };
 }
 
 /** Un vidrio: el paño va a lo largo de su arista más larga, por el medio del bloque. */
@@ -87,7 +109,9 @@ function prepare(i: Interior): Prepared {
       // el hueco de la puerta, como una lámina sobre la cara de afuera
       ...i.doors.map((d) => source(d.at, [-d.normal[1], d.normal[0]], d.width, d.level * LEVEL_H, d.level * LEVEL_H + LINTEL_MIN, DOOR_T)),
     ],
-    blockers: gridOf(i.blocks.filter((b) => b.role === 'pared' || b.role === 'tabique' || b.role === 'losa').map((b) => prism(b.polygon, b.y0, b.y1))),
+    // las paredes y los tabiques van en la grilla; las losas, que ocupan toda la planta (estarían en todas las celdas), aparte
+    blockers: gridOf(i.blocks.filter((b) => b.role === 'pared' || b.role === 'tabique').map((b) => prism(b.polygon, b.y0, b.y1))),
+    slabs: i.blocks.filter((b) => b.role === 'losa').map((b) => prism(b.polygon, b.y0, b.y1)),
     occluders: i.blocks.filter((b) => b.role !== 'vidrio' && b.role !== 'baranda').map((b) => prism(b.polygon, b.y0, b.y1)),
     query: { n: 0 },
   };
@@ -97,7 +121,7 @@ function prepare(i: Interior): Prepared {
 
 /** ¿El segmento a → b (ya acortado) pasa por adentro del prisma? En planta se parte por los cruces con sus aristas;
  *  en cada tramo adentro se mira si la altura del segmento se mete entre y0 e y1. */
-function crosses(q: Prism, a: Vec3, b: Vec3): boolean {
+export function crosses(q: Prism, a: Vec3, b: Vec3): boolean {
   const EPS = 1e-3;
   const [dx, dz] = [b[0] - a[0], b[2] - a[2]];
   const yAt = (t: number): number => a[1] + (b[1] - a[1]) * t;
@@ -126,36 +150,87 @@ function crosses(q: Prism, a: Vec3, b: Vec3): boolean {
   return false;
 }
 
-/** ¿Algo de `g` tapa el camino de p a c? Se recorren las celdas de la grilla que cruza el segmento (DDA). */
+/** `crosses` para un prisma convexo, sin armar tramos (N4): el tramo del segmento que queda adentro en planta sale de
+ *  recortarlo contra cada arista (Cyrus-Beck), y en ese tramo se mira la altura. Lo que roza el borde no tapa. */
+export function crossesConvex(q: Prism, a: Vec3, b: Vec3): boolean {
+  const EPS = 1e-3;
+  const dx = b[0] - a[0], dz = b[2] - a[2];
+  let t0 = 0, t1 = 1;
+  for (let k = 0; k < q.poly.length; k++) {
+    const p = q.poly[k], r = q.poly[(k + 1) % q.poly.length];
+    // la normal de afuera de la arista; adentro, (x − p)·n < 0
+    const nx = (r[1] - p[1]) * q.turn, nz = (r[0] - p[0]) * -q.turn;
+    const num = (p[0] - a[0]) * nx + (p[1] - a[2]) * nz, den = dx * nx + dz * nz;
+    if (Math.abs(den) < 1e-15) {
+      if (num <= 1e-12) return false; // paralelo y afuera (o sobre la arista)
+      continue;
+    }
+    if (den > 0) t1 = Math.min(t1, num / den);
+    else t0 = Math.max(t0, num / den);
+    if (t1 - t0 < 1e-9) return false;
+  }
+  const [ya, yb] = [a[1] + (b[1] - a[1]) * t0, a[1] + (b[1] - a[1]) * t1];
+  return Math.max(ya, yb) > q.y0 + EPS && Math.min(ya, yb) < q.y1 - EPS;
+}
+
+/** ¿El segmento a → b toca la caja del prisma (con un margen)? Es el filtro grueso de `crosses` (N4): lo que no toca
+ *  la caja no puede pasar por adentro del prisma, y casi nada la toca. Método de las losas (slabs), eje por eje. */
+export function hitsBox(q: Prism, a: Vec3, b: Vec3): boolean {
+  const M = 1e-4;
+  let t0 = 0, t1 = 1;
+  for (let k = 0; k < 3; k++) {
+    const [lo, hi] = k === 0 ? [q.minX, q.maxX] : k === 1 ? [q.y0, q.y1] : [q.minZ, q.maxZ];
+    const d = b[k] - a[k];
+    if (Math.abs(d) < 1e-12) {
+      if (a[k] < lo - M || a[k] > hi + M) return false;
+      continue;
+    }
+    const u = (lo - M - a[k]) / d, v = (hi + M - a[k]) / d;
+    t0 = Math.max(t0, Math.min(u, v));
+    t1 = Math.min(t1, Math.max(u, v));
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+/** ¿El prisma `q` tapa el segmento a → b? Primero su caja contra la del segmento (`box`: lx, hx, ly, hy, lz, hz), después
+ *  la caja contra el segmento y, si la toca, el prisma. */
+const hits = (q: Prism, a: Vec3, b: Vec3, box: number[]): boolean =>
+  !(box[1] < q.minX || box[0] > q.maxX || box[5] < q.minZ || box[4] > q.maxZ || box[3] <= q.y0 + 1e-3 || box[2] >= q.y1 - 1e-3) &&
+  hitsBox(q, a, b) && (q.turn !== 0 ? crossesConvex(q, a, b) : crosses(q, a, b));
+
+/** ¿Algo tapa el camino de p a c? Las losas se miran todas; las paredes y los tabiques, en las celdas de la grilla que
+ *  cruza el segmento (DDA). */
 function blocked(pr: Prepared, p: Vec3, c: Vec3): boolean {
   const g = pr.blockers;
-  if (g.nx === 0) return false;
+  if (g.nx === 0 && pr.slabs.length === 0) return false;
   const len = Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]);
   if (len < 2 * TRIM) return false;
   const k0 = TRIM / len, k1 = 1 - TRIM / len;
   const a: Vec3 = [p[0] + (c[0] - p[0]) * k0, p[1] + (c[1] - p[1]) * k0, p[2] + (c[2] - p[2]) * k0];
   const b: Vec3 = [p[0] + (c[0] - p[0]) * k1, p[1] + (c[1] - p[1]) * k1, p[2] + (c[2] - p[2]) * k1];
+  const box = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.max(a[2], b[2])];
+  for (const q of pr.slabs) if (hits(q, a, b, box)) return true;
+  if (g.nx === 0) return false;
   const stamp = ++pr.query.n;
-  // la caja del segmento: lo que no la toca (en planta o en altura) no hace falta mirarlo de cerca
-  const [lx, hx, ly, hy, lz, hz] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.max(a[2], b[2])];
-  const test = (cell: Prism[]): boolean => cell.some((q) => {
-    if (q.stamp === stamp) return false;
-    q.stamp = stamp;
-    if (hx < q.minX || lx > q.maxX || hz < q.minZ || lz > q.maxZ || hy <= q.y0 + 1e-3 || ly >= q.y1 - 1e-3) return false;
-    return crosses(q, a, b);
-  });
   // DDA en unidades de grilla
-  const [x, z] = [(a[0] - g.x0) / GRID, (a[2] - g.z0) / GRID];
-  const [ex, ez] = [(b[0] - g.x0) / GRID, (b[2] - g.z0) / GRID];
-  let [ix, iz] = [Math.floor(x), Math.floor(z)];
-  const [jx, jz] = [Math.floor(ex), Math.floor(ez)];
-  const [dx, dz] = [ex - x, ez - z];
-  const [sx, sz] = [Math.sign(dx), Math.sign(dz)];
-  const [tdx, tdz] = [sx !== 0 ? Math.abs(1 / dx) : Infinity, sz !== 0 ? Math.abs(1 / dz) : Infinity];
+  const x = (a[0] - g.x0) / GRID, z = (a[2] - g.z0) / GRID;
+  const ex = (b[0] - g.x0) / GRID, ez = (b[2] - g.z0) / GRID;
+  let ix = Math.floor(x), iz = Math.floor(z);
+  const jx = Math.floor(ex), jz = Math.floor(ez);
+  const dx = ex - x, dz = ez - z;
+  const sx = Math.sign(dx), sz = Math.sign(dz);
+  const tdx = sx !== 0 ? Math.abs(1 / dx) : Infinity, tdz = sz !== 0 ? Math.abs(1 / dz) : Infinity;
   let tx = sx > 0 ? (ix + 1 - x) * tdx : sx < 0 ? (x - ix) * tdx : Infinity;
   let tz = sz > 0 ? (iz + 1 - z) * tdz : sz < 0 ? (z - iz) * tdz : Infinity;
   for (;;) {
-    if (ix >= 0 && ix < g.nx && iz >= 0 && iz < g.nz && test(g.cells[ix + iz * g.nx])) return true;
+    if (ix >= 0 && ix < g.nx && iz >= 0 && iz < g.nz) {
+      for (const q of g.cells[ix + iz * g.nx]) {
+        if (q.stamp === stamp) continue;
+        q.stamp = stamp;
+        if (hits(q, a, b, box)) return true;
+      }
+    }
     if ((ix === jx && iz === jz) || Math.min(tx, tz) > 1) return false;
     if (tx < tz) {
       ix += sx;
@@ -190,9 +265,9 @@ const far = (q: Prism, p: Vec3, r: number): boolean =>
 
 /** Lo que la luz que viene de `c` le llega a una cara de normal `n` en `p`: de frente, toda; de canto, la mitad. */
 function facing(p: Vec3, c: Vec3, n: Vec3): number {
-  const d: Vec3 = [c[0] - p[0], c[1] - p[1], c[2] - p[2]];
-  const l = Math.hypot(...d);
-  return l < 1e-6 ? 1 : 0.5 + 0.5 * ((d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / l);
+  const [dx, dy, dz] = [c[0] - p[0], c[1] - p[1], c[2] - p[2]];
+  const l = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  return l < 1e-6 ? 1 : 0.5 + 0.5 * ((dx * n[0] + dy * n[1] + dz * n[2]) / l);
 }
 
 /** ¿El prisma se levanta delante de la cara (normal `n`, en `p`)? Una pared vecina en el mismo plano no. */
@@ -201,16 +276,21 @@ function rises(q: Prism, p: Vec3, n: Vec3): boolean {
   return h + Math.max((q.y0 - p[1]) * n[1], (q.y1 - p[1]) * n[1]) > 0.01;
 }
 
-/** El factor de forma de una abertura desde `p` (cara de normal `n`): la suma de sus celdas. */
+/** El factor de forma de una abertura desde `p` (cara de normal `n`): la suma de sus celdas; de lejos (más de FAR veces
+ *  su lado mayor), la de un solo disco con toda su área en el medio (N4). */
 function formFactor(s: Source, p: Vec3, n: Vec3): number {
+  const m = s.disc[0].at;
+  const [mx, my, mz] = [m[0] - p[0], m[1] - p[1], m[2] - p[2]];
+  const cells = mx * mx + my * my + mz * mz > (FAR * s.size) ** 2 ? s.disc : s.cells;
   let f = 0;
-  for (const c of s.cells) {
-    const d: Vec3 = [c.at[0] - p[0], c.at[1] - p[1], c.at[2] - p[2]];
-    const d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+  for (const c of cells) {
+    const [dx, dy, dz] = [c.at[0] - p[0], c.at[1] - p[1], c.at[2] - p[2]];
+    const d2 = dx * dx + dy * dy + dz * dz;
     const l = Math.sqrt(d2);
     if (l < 1e-6) continue;
-    const cosS = Math.abs((d[0] * s.normal[0] + d[2] * s.normal[1]) / l);
-    f += (c.area * facing(p, c.at, n) * cosS) / (Math.PI * d2 + c.area);
+    const cosS = Math.abs((dx * s.normal[0] + dz * s.normal[1]) / l);
+    const face = 0.5 + 0.5 * ((dx * n[0] + dy * n[1] + dz * n[2]) / l); // facing(p, c.at, n), sin volver a medir
+    f += (c.area * face * cosS) / (Math.PI * d2 + c.area);
   }
   return f;
 }
@@ -229,8 +309,9 @@ export function lightAt(i: Interior, p: Vec3, n: Vec3): number {
   for (const { s, f } of lit) {
     if (sky >= OPEN_CAP) break;
     // de lejos (lo que aporta poco) alcanza con el medio; de cerca, las tres muestras ven los marcos
-    const samples = f < FEW ? [s.samples[1]] : s.samples;
-    const seen = samples.filter((c) => !blocked(pr, p, c)).length;
+    const samples = f < FEW ? s.middle : s.samples;
+    let seen = 0;
+    for (const c of samples) if (!blocked(pr, p, c)) seen++;
     sky += (f * seen) / samples.length;
   }
   light += OPEN_GAIN * Math.min(OPEN_CAP, sky);

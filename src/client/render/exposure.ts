@@ -15,3 +15,34 @@ export function adapt(current: number, target: number, dt: number, tau = ADAPT_T
   if (dt <= 0) return current;
   return target + (current - target) * Math.exp(-dt / tau);
 }
+
+/** La exposición de cada cuadro. Caminando, la rampa de `adapt`; en un salto de cámara (partida nueva, aparición,
+ *  teletransporte), que no es entrar ni salir caminando, el cuadro siguiente va directo a la del lugar nuevo (N3). */
+export interface Eye {
+  /** La de ahora. */
+  readonly value: number;
+  /** Hubo un salto: el próximo `step` no hace rampa. */
+  jump(): void;
+  /** La del cuadro, con la cámara adentro de un interior o no, `dt` s después del anterior. */
+  step(inside: boolean, dt: number): number;
+}
+
+/** Arranca como si recién hubiera saltado: el primer cuadro ya es el del lugar. */
+export function createEye(): Eye {
+  let value = OUTDOOR_EXPOSURE;
+  let jumped = true;
+  return {
+    get value() {
+      return value;
+    },
+    jump() {
+      jumped = true;
+    },
+    step(inside, dt) {
+      const target = inside ? INDOOR_EXPOSURE : OUTDOOR_EXPOSURE;
+      value = jumped ? target : adapt(value, target, dt);
+      jumped = false;
+      return value;
+    },
+  };
+}

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GROUND_CELLS, LOT_OPENINGS, isLotCell } from '../../shared/interiors/openings.ts';
 import type { LotCell } from '../../shared/interiors/openings.ts';
 import type { Arriba, PlantaBaja } from '../../shared/mapdata.ts';
-import { averageLuminance, bars, frame, glass, shutter } from './facades.ts';
+import { averageLuminance, bars, frame, glass, shutter, WINDOW_GLASS } from './facades.ts';
 import type { GlassStops } from './facades.ts';
 import { BAY_W, FLOOR_H } from './wall-kit.ts';
 
@@ -66,15 +66,16 @@ function texFill(c: Ctx, img: Img, fallback: string, x: number, y: number, w: nu
   c.drawImage(img, x, y, w, h);
 }
 
-/** El vidrio de las vidrieras y puertas de los lotes, más claro que el de las ventanas: es la tapa de los huecos de los
- *  interiores (D6) y de lejos tiene que parecerse a un interior visto por un vidrio que refleja el cielo, sin salto a
- *  los 60 m (H2d: en alta, BBVA 72 → 56 y La Veneciana 41 → 35 de luma sRGB, a 59 y a 61 m). */
-const SHOP_GLASS: GlassStops = ['#a6b8c4', '#7d8f9b', '#62717b'];
+/** El vidrio de las vidrieras y puertas de los lotes (solo planta baja: las celdas de LOT_OPENINGS), más claro que el
+ *  de las ventanas: es la tapa de los huecos de los interiores (D6) y de lejos tiene que parecerse a un interior visto
+ *  por un vidrio que refleja el cielo, sin salto a los 60 m (H2d: en alta, BBVA 72 → 56 y La Veneciana 41 → 35 de luma
+ *  sRGB, a 59 y a 61 m). Los pisos de arriba, también el vidriado, siguen con el de las ventanas (N5). */
+export const SHOP_GLASS: GlassStops = ['#a6b8c4', '#7d8f9b', '#62717b'];
 
-/** Vidrio con parteluces verticales (`mullions` paños) y su marco. */
-function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullions: number, frameColor: string): void {
+/** Vidrio con parteluces verticales (`mullions` paños) y su marco; de vidriera salvo que se pida otro. */
+function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullions: number, frameColor: string, stops = SHOP_GLASS): void {
   const { c, u } = p;
-  glass(c, x, y, w, h, SHOP_GLASS);
+  glass(c, x, y, w, h, stops);
   c.strokeStyle = frameColor;
   c.lineWidth = 0.05 * u;
   for (let i = 1; i < mullions; i++) {
@@ -235,7 +236,7 @@ function drawUpperFloor(p: Pen, cell: string): void {
     bars(c, 0.2 * u, 2.1 * u, 2.6 * u, 0.9 * u, u);
     unpaint(p, 0.15 * u, 2.05 * u, 2.7 * u, 0.95 * u);
   } else if (kind === 'vidriado') {
-    drawGlazing(p, 0.1 * u, 0.5 * u, 2.8 * u, 2.4 * u, 4, '#d9d6cf');
+    drawGlazing(p, 0.1 * u, 0.5 * u, 2.8 * u, 2.4 * u, 4, '#d9d6cf', WINDOW_GLASS); // piso de arriba: el de las ventanas
   }
   // pared: lisa
 }

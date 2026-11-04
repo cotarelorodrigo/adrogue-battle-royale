@@ -14,6 +14,7 @@ import { WEAPONS } from '../../shared/combat.ts';
 import type { WeaponId } from '../../shared/combat.ts';
 import { MATCH } from '../../shared/match.ts';
 import { PLAYER } from '../../shared/player.ts';
+import { OUTDOOR_EXPOSURE } from '../render/exposure.ts';
 import { smooth } from './ease.ts';
 import { weaponModel } from './models.ts';
 import type { WeaponModel } from './models.ts';
@@ -22,7 +23,7 @@ import type { CombatView } from './types.ts';
 export const VIEW_FOV = 70;
 
 /** Lo que usa del WebGLRenderer (los tests le pasan uno de mentira). */
-export type ViewRenderer = Pick<THREE.WebGLRenderer, 'autoClear' | 'clearDepth' | 'getSize' | 'render'>;
+export type ViewRenderer = Pick<THREE.WebGLRenderer, 'autoClear' | 'clearDepth' | 'getSize' | 'render' | 'toneMappingExposure'>;
 
 const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
 /** Desde la cadera: la empuñadura abajo a la derecha, y la culata y los codos fuera de cuadro. Apenas girada hacia el
@@ -63,7 +64,8 @@ const BOB = 0.007;
 
 export interface ViewmodelView extends CombatView {
   /** Dibuja el arma encima de lo que ya está en pantalla. Va después de scene.render(), en el mismo cuadro. Sin arma
-   *  a la vista no hace ninguna pasada. */
+   *  a la vista no hace ninguna pasada. Siempre con la exposición de la calle (N1): sus luces son fijas y no las del
+   *  lugar, así que con la del ojo adaptado a un interior saldría lavada. */
   render(): void;
   /** Su escena (para los tests). */
   readonly scene: THREE.Scene;
@@ -227,11 +229,13 @@ export function createViewmodel(renderer: ViewRenderer): ViewmodelView {
         camera.aspect = aspect;
         camera.updateProjectionMatrix();
       }
-      const autoClear = renderer.autoClear;
+      const [autoClear, exposure] = [renderer.autoClear, renderer.toneMappingExposure];
       renderer.autoClear = false;
+      renderer.toneMappingExposure = OUTDOOR_EXPOSURE;
       renderer.clearDepth();
       renderer.render(scene, camera);
       renderer.autoClear = autoClear;
+      renderer.toneMappingExposure = exposure;
     },
     dispose() {
       for (const id of WEAPON_IDS) {

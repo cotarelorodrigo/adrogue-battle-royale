@@ -3,6 +3,7 @@ import { PARAPET_H, parapetEdges } from '../../shared/collision.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import { ensureCCW } from '../../shared/geo.ts';
 import type { Building, FacadeGround, Opening } from '../../shared/mapdata.ts';
+import { SUN_DIR } from '../render/sun.ts';
 import { frontGeometry } from './fronts.ts';
 import type { WorldMaterials } from './types.ts';
 import { BAY_W, cutRect, edgeHoles, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
@@ -36,28 +37,62 @@ function roofCap(b: Builder, fp: Vec2[], y: number, color: THREE.Color, down = f
   b.idx.push(...idx);
 }
 
-/** La cáscara de sombra se mete esto (m) adentro del techo y de las paredes. */
-const SHELL_IN = 0.05;
+/** La cáscara de sombra (H1) se mete esto (m) adentro: las paredes, SHELL_WALL_IN de su arista, y el techo, SHELL_ROOF_IN
+ *  abajo del techo (N2). A 5 cm de todo, con el sol rasante, el PCF de la sombra (unos 0,22 m de radio en alta) y el
+ *  bias (~0,2 m) no alcanzaban: una pared al sol se tapaba a sí misma con la cáscara de atrás (un serrucho) y, arriba,
+ *  con el borde del techo de la cáscara (una banda). Quedan detrás de lo que dibuja el interior: las paredes de afuera
+ *  del Kit miden WALL_OUT = 0,2 m y la losa del techo, 0,8 m. */
+const SHELL_WALL_IN = 0.15;
+const SHELL_ROOF_IN = 0.05;
+
+/** Dónde arranca la arista corrida `o` hacia adentro, contando desde su punta, para cortarse con la vecina corrida
+ *  `oOther`: `away` es la dirección de la arista que se aleja de la esquina, `m` su normal hacia adentro y `other`, la
+ *  de la vecina. Con las dos corridas lo mismo, en una esquina recta es lo corrido; en una aguda, más; en una casi
+ *  llana, casi nada. */
+function cornerAt(o: number, oOther: number, away: Vec2, m: Vec2, other: Vec2): number {
+  const den = away[0] * other[0] + away[1] * other[1];
+  return Math.abs(den) < 1e-9 ? 0 : (oOther - o * (m[0] * other[0] + m[1] * other[1])) / den;
+}
 
 /**
  * La cáscara de sombra de un edificio con aberturas (H1), en `b` (el techo del chunk, que ya proyecta: sin draw calls
  * nuevos). La pasada de sombras dibuja las caras de espaldas al sol, y por una abertura de ese lado un rayo de sol
  * entraba y salía por el techo o por una pared maciza del lado del sol, que miran al sol y no se dibujan: dejaba una
- * mancha de sol en la sombra. La cáscara es lo macizo mirando para adentro: el techo a `height − SHELL_IN` con normal
- * −y y las piezas macizas de cada pared (las mismas de cutRect con los mismos huecos), SHELL_IN m hacia adentro, dadas
- * vuelta y recortadas SHELL_IN en cada punta (en una esquina recta se tocan justo). Desde afuera son caras de atrás;
- * desde adentro quedan detrás de las paredes y la losa del interior. Un rayo que cruza dos aberturas sigue pasando.
+ * mancha de sol en la sombra. La cáscara es lo macizo mirando para adentro:
+ * - en cada arista que mira al sol (por donde sale un rayo), sus piezas macizas (las de cutRect con los mismos huecos),
+ *   SHELL_WALL_IN hacia adentro y dadas vuelta, recortadas hasta tocar justo a las vecinas. Las de espaldas al sol no
+ *   llevan: dadas vuelta mirarían al sol y la pasada de sombras no las dibujaría;
+ * - el techo, con normal −y a `height − SHELL_ROOF_IN`, del mismo polígono y con roofCap como el del chunk (un hueco que
+ *   se le abra a `fp` se abre en los dos), corrido hasta esas paredes. Del lado de la sombra llega al borde: un rayo que
+ *   entra rasante por una vidriera no sale por el techo entre la pared y la cáscara.
+ * Depende del sol (fijo). Desde afuera son caras de atrás; desde adentro quedan detrás de las paredes y la losa del
+ * interior. Un rayo que cruza dos aberturas sigue pasando.
  */
 function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, Rect[]>, color: THREE.Color): void {
-  roofCap(b, fp, height - SHELL_IN, color, true);
-  for (let i = 0; i < fp.length; i++) {
-    const a = fp[i], c = fp[(i + 1) % fp.length];
+  const n = fp.length;
+  // dirección y normal hacia adentro de cada arista: adentro es −n, con n = (−ez, ex) la normal de afuera
+  const dir = fp.map((a, i): Vec2 => {
+    const c = fp[(i + 1) % n], len = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
+    return [(c[0] - a[0]) / len, (c[1] - a[1]) / len];
+  });
+  const inward = dir.map(([ex, ez]): Vec2 => [ez, -ex]);
+  const sunny = inward.map(([mx, mz]) => -(mx * SUN_DIR.x + mz * SUN_DIR.z) > 1e-6);
+  const off = sunny.map((s) => (s ? SHELL_WALL_IN : 0));
+  const prev = (i: number): number => (i + n - 1) % n, next = (i: number): number => (i + 1) % n;
+  const start = (i: number): number => cornerAt(off[i], off[prev(i)], dir[i], inward[i], inward[prev(i)]);
+  // el contorno de la cáscara: en cada vértice de fp, donde se cortan las dos aristas corridas
+  const inner = fp.map((a, i): Vec2 => [a[0] + dir[i][0] * start(i) + inward[i][0] * off[i], a[1] + dir[i][1] * start(i) + inward[i][1] * off[i]]);
+  roofCap(b, inner, height - SHELL_ROOF_IN, color, true);
+  for (let i = 0; i < n; i++) {
+    if (!sunny[i]) continue;
+    const a = fp[i], c = fp[next(i)];
     const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
-    if (len <= 2 * SHELL_IN) continue;
-    const [ex, ez] = [(c[0] - a[0]) / len, (c[1] - a[1]) / len];
-    // adentro es −n, con n = (−ez, ex) la normal de afuera
-    const at = (s: number): Vec2 => [a[0] + ex * s + ez * SHELL_IN, a[1] + ez * s - ex * SHELL_IN];
-    for (const r of cutRect({ s0: SHELL_IN, s1: len - SHELL_IN, y0: 0, y1: height }, holes.get(i) ?? []).solid) {
+    const [ex, ez] = dir[i];
+    const s0 = start(i);
+    const s1 = len - cornerAt(off[i], off[next(i)], [-ex, -ez], inward[i], inward[next(i)]);
+    if (s1 - s0 < 1e-3) continue;
+    const at = (s: number): Vec2 => [a[0] + ex * s + ez * off[i], a[1] + ez * s - ex * off[i]];
+    for (const r of cutRect({ s0, s1, y0: 0, y1: height }, holes.get(i) ?? []).solid) {
       const [p, q] = [at(r.s0), at(r.s1)];
       const [u0, u1, v0, v1] = [r.s0 / PLANAR_UV, r.s1 / PLANAR_UV, r.y0 / PLANAR_UV, r.y1 / PLANAR_UV];
       quad(b, [[q[0], r.y0, q[1]], [p[0], r.y0, p[1]], [p[0], r.y1, p[1]], [q[0], r.y1, q[1]]], [[u1, v0], [u0, v0], [u0, v1], [u1, v1]], [ez, 0, -ex], color);

@@ -2,8 +2,8 @@
 // Usar con `// @vitest-environment jsdom` y `vi.restoreAllMocks()` en afterEach.
 
 /** `onSet` ve cada propiedad que se asigna en el contexto (fillStyle, font…) y `onCall`, cada método que se llama con sus
- *  argumentos (fillRect, translate…), en el orden en que pasan, de todos los contextos. El stub no dibuja: sirve para
- *  mirar las llamadas, no los píxeles. measureText: 0,55 × tamaño por carácter. */
+ *  argumentos (fillRect, translate…, y addColorStop de los degradados), en el orden en que pasan, de todos los
+ *  contextos. El stub no dibuja: sirve para mirar las llamadas, no los píxeles. measureText: 0,55 × tamaño por carácter. */
 export function stubCanvas(onSet?: (prop: string, value: unknown) => void, onCall?: (method: string, args: unknown[]) => void): void {
   const fake = (): CanvasRenderingContext2D => {
     const state: Record<string | symbol, unknown> = { font: '10px sans-serif' };
@@ -16,7 +16,8 @@ export function stubCanvas(onSet?: (prop: string, value: unknown) => void, onCal
       }
       if (prop === 'getImageData') return (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) });
       if (prop === 'createImageData') return (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h });
-      if (prop === 'createLinearGradient' || prop === 'createRadialGradient') return () => ({ addColorStop() {} });
+      // los degradados: sus paradas también pasan por onCall, como addColorStop(offset, color)
+      if (prop === 'createLinearGradient' || prop === 'createRadialGradient') return () => ({ addColorStop: (...a: unknown[]) => onCall?.('addColorStop', a) });
       return undefined;
     };
     return new Proxy(state, {

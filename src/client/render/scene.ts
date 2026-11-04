@@ -9,6 +9,9 @@ import type { WorldMaterials } from '../world/types.ts';
 import { OUTDOOR_EXPOSURE } from './exposure.ts';
 import { FAR_PAST_FOG, QUALITY } from './quality.ts';
 import type { Quality } from './quality.ts';
+import { SUN_DIR } from './sun.ts';
+
+export { SUN_DIR };
 
 /** Color de la niebla, parecido al horizonte del cielo. También es el de las siluetas de las afueras. */
 export const FOG_COLOR = 0xc6d3dc;
@@ -19,15 +22,6 @@ const HORIZON_BLEND = 0.1;
 export const FOV = 75;
 /** Cerca de la cámara (R15: con las capas del suelo a 2 cm no hay z-fighting a distancia). */
 const NEAR = 0.15;
-/** Sol de media mañana, del noreste (en Adrogué el sol va por el norte): ilumina la fachada de la estación, que mira
- *  al este. Azimut desde el norte (−z) hacia el este (+x). */
-const SUN_ELEVATION = THREE.MathUtils.degToRad(50);
-const SUN_AZIMUTH = THREE.MathUtils.degToRad(40);
-export const SUN_DIR = new THREE.Vector3(
-  Math.cos(SUN_ELEVATION) * Math.sin(SUN_AZIMUTH),
-  Math.sin(SUN_ELEVATION),
-  -Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH),
-);
 /** La luz se ubica a esta distancia del centro de la sombra, en la dirección del sol. */
 const SUN_DISTANCE = 250;
 /** El centro de la sombra salta de a 4 m: moverlo de a poco hace titilar los bordes. */

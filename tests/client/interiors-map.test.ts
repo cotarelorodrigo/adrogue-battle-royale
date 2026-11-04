@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Los 9 interiores del mapa real, armados para dibujar en cada calidad: a lo sumo 20 mallas (draw calls) cada uno
-// (§2.6) y no más que el tope de interiores de la calidad (H3). Imprime los triángulos de cada uno, para seguir el costo a medida que las tareas suman planes y muebles.
+// (§2.6) y no más que el tope de interiores de la calidad (H3). Imprime los triángulos y lo que tarda armarlo (con el
+// horneado) de cada uno, para seguir el costo a medida que las tareas suman planes y muebles.
 // Y sus edificios: los huecos de las aberturas con sus tapas (H4) y la sombra sin manchas de sol por las aberturas (H1).
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
@@ -37,13 +38,21 @@ test('el mapa tiene los 9 interiores', () => {
 for (const q of ['baja', 'media', 'alta'] as const) {
   test(`${q}: cada interior en ≤ ${MAX_MESHES} mallas y en interiors.calls`, () => {
     const rows: string[] = [];
+    let total = 0;
     for (const i of interiors) {
       const meshes: THREE.Mesh[] = [];
-      buildInterior3D(i, materials, q).group.traverse((o) => { if (o instanceof THREE.Mesh) meshes.push(o); });
+      const t0 = performance.now();
+      // una copia: el horneado prepara cada interior una vez (y la guarda), así se mide entero
+      buildInterior3D({ ...i }, materials, q).group.traverse((o) => { if (o instanceof THREE.Mesh) meshes.push(o); });
+      const ms = performance.now() - t0;
+      total += ms;
       const tris = meshes.reduce((s, m) => s + trianglesOf(m), 0);
-      rows.push(`${q.padEnd(5)} ${i.placeId.padEnd(20)} ${String(meshes.length).padStart(2)} mallas ${String(tris).padStart(7)} triángulos`);
+      rows.push(`${q.padEnd(5)} ${i.placeId.padEnd(20)} ${String(meshes.length).padStart(2)} mallas ${String(tris).padStart(7)} triángulos ${ms.toFixed(0).padStart(4)} ms`);
       expect(meshes.length, `${q}/${i.placeId}`).toBeLessThanOrEqual(Math.min(MAX_MESHES, QUALITY[q].interiors.calls));
     }
+    // el armado con el horneado (N4), para seguirlo a medida que las tareas suman lámparas y tabiques: sin tope, que
+    // con la máquina cargada varía
+    rows.push(`${q.padEnd(5)} los ${interiors.length}, armados con el horneado: ${total.toFixed(0)} ms`);
     console.log(rows.join('\n'));
   });
 }

@@ -9,6 +9,7 @@ import { createEffects, DECAL_MAX, DECAL_MS, TRACER_MS } from '../../src/client/
 import { dropGeometry, DROP_KINDS, dummyGeometry } from '../../src/client/combat/models.ts';
 import type { CombatFrame, CombatView } from '../../src/client/combat/types.ts';
 import { createViewmodel, VIEW_FOV } from '../../src/client/combat/viewmodel.ts';
+import { INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import type { ViewRenderer } from '../../src/client/combat/viewmodel.ts';
 import { createZoneWall, ZONE_WALL_H } from '../../src/client/combat/zone-wall.ts';
 import { BODY_RADIUS, newGun, WEAPONS } from '../../src/shared/combat.ts';
@@ -97,16 +98,22 @@ function memoryCounter() {
   };
 }
 
-/** Un renderer de mentira para el arma en mano: anota cada pasada y el estado de autoClear durante ella. */
+/** Un renderer de mentira para el arma en mano: anota cada pasada, el estado de autoClear durante ella y la exposición
+ *  del tone mapping con la que se dibujó. */
 function fakeRenderer() {
   const calls: string[] = [];
+  const exposures: number[] = [];
   const r = {
     autoClear: true,
+    toneMappingExposure: OUTDOOR_EXPOSURE,
     clearDepth: () => { calls.push('clearDepth'); },
     getSize: (v: THREE.Vector2) => v.set(1600, 900),
-    render: (_s: THREE.Object3D, c: THREE.Camera) => { calls.push(`render autoClear=${r.autoClear} fov=${(c as THREE.PerspectiveCamera).fov}`); },
+    render: (_s: THREE.Object3D, c: THREE.Camera) => {
+      calls.push(`render autoClear=${r.autoClear} fov=${(c as THREE.PerspectiveCamera).fov}`);
+      exposures.push(r.toneMappingExposure);
+    },
   };
-  return { renderer: r as unknown as ViewRenderer, calls };
+  return { renderer: r as unknown as ViewRenderer, calls, exposures };
 }
 
 const instancePos = (m: THREE.InstancedMesh, i: number): THREE.Vector3 => {
@@ -347,6 +354,18 @@ describe('arma en mano', () => {
     view.render();
     expect(calls).toEqual(['clearDepth', `render autoClear=false fov=${VIEW_FOV}`]);
     expect(renderer.autoClear).toBe(true);
+  });
+
+  test('el arma se dibuja con la exposición de la calle aunque el ojo esté adaptado a un interior (N1), y la deja como estaba', () => {
+    const { renderer, exposures } = fakeRenderer();
+    const view = createViewmodel(renderer);
+    view.update(frame(armed('rifle'), 0));
+    for (const e of [INDOOR_EXPOSURE, 1.3, OUTDOOR_EXPOSURE]) { // adentro, a mitad de camino y afuera
+      renderer.toneMappingExposure = e;
+      view.render();
+      expect(renderer.toneMappingExposure).toBe(e);
+    }
+    expect(exposures).toEqual([OUTDOOR_EXPOSURE, OUTDOOR_EXPOSURE, OUTDOOR_EXPOSURE]);
   });
 
   test('sin arma, muerto o con la mira del francotirador no hace ninguna pasada', () => {

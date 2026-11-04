@@ -2,11 +2,11 @@
 // El dibujo de los interiores (tarea 5): texturas, luz horneada, mallas, vistas, fachada con huecos y tapas, cambio de
 // calidad y liberación. Sobre el local de prueba de la tarea 4 (tests/shared/interiors/fixture.ts).
 import * as THREE from 'three';
-import { ADAPT_TIME, adapt, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
+import { ADAPT_TIME, adapt, createEye, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import { QUALITY } from '../../src/client/render/quality.ts';
 import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
-import { lightAt, OPENING_MAX } from '../../src/client/world/interiors/bake.ts';
+import { crosses, crossesConvex, hitsBox, lightAt, OPENING_MAX, prism } from '../../src/client/world/interiors/bake.ts';
 import { buildInterior3D, INTERIOR_EXPOSURE, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
 import { exteriorGeometry, exteriorSigns } from '../../src/client/world/interiors/exterior.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassMaterial } from '../../src/client/world/interiors/glass.ts';
@@ -310,6 +310,40 @@ describe('lightAt', () => {
     expect(lightAt(glassy, [5, 1, 0.4], [0, 0, -1])).toBeGreaterThan(0.05 + OPENING_MAX * 0.9);
   });
 
+  test('los atajos de la visibilidad (N4): con un prisma convexo, el recorte da lo mismo que el corte por tramos; la caja nunca descarta lo que el prisma tapa', () => {
+    const ring = (r: number, n: number, cw = false): Vec2[] => {
+      const v = Array.from({ length: n }, (_, k): Vec2 => [r * Math.cos((2 * Math.PI * k) / n), r * Math.sin((2 * Math.PI * k) / n)]);
+      return cw ? v.reverse() : v;
+    };
+    const wall: Vec2[] = [[0, 0], [3, 0], [3, 0.2], [0, 0.2]];
+    const prisms = [
+      prism(wall, 0, 2.7), prism([...wall].reverse(), 0, 2.7), // en los dos sentidos
+      prism([[0, 0], [3, 0], [2.4, 0.9], [0.4, 0.9]], 0.5, 1.5), // un trapecio
+      prism(ring(4, 24), 3, 3.8), prism(ring(4, 24, true), -0.2, 0), // la losa de una planta redonda
+    ];
+    expect(prisms.map((q) => q.turn !== 0)).toEqual([true, true, true, true, true]);
+    expect(prism([[0, 0], [4, 0], [4, 1], [1, 1], [1, 4], [0, 4]], 0, 3).turn).toBe(0); // una L no es convexa: va por el corte general
+    let seed = 7;
+    const rnd = (lo: number, hi: number): number => {
+      seed = (seed * 16807) % 2147483647;
+      return lo + ((hi - lo) * seed) / 2147483647;
+    };
+    let hit = 0;
+    for (const q of prisms) {
+      for (let k = 0; k < 3000; k++) {
+        const a: Vec3 = [rnd(-5, 5), rnd(-0.5, 4), rnd(-5, 5)];
+        const b: Vec3 = k % 10 === 0 ? [a[0], rnd(-0.5, 4), a[2]] : [rnd(-5, 5), rnd(-0.5, 4), rnd(-5, 5)]; // y algunos verticales
+        const want = crosses(q, a, b);
+        expect(crossesConvex(q, a, b), `${JSON.stringify(q.poly[0])} ${a.map((v) => v.toFixed(3))} → ${b.map((v) => v.toFixed(3))}`).toBe(want);
+        if (want) {
+          hit++;
+          expect(hitsBox(q, a, b)).toBe(true);
+        }
+      }
+    }
+    expect(hit).toBeGreaterThan(1000); // que haya de los dos casos
+  });
+
   test('oclusión de rincón: sin aberturas, el rincón da menos que el borde contra una pared, y este menos que el medio', () => {
     const closed: Interior = { ...interior, doors: [], blocks: interior.blocks.filter((b) => b.role !== 'vidrio') };
     const [corner, edge, middle] = ([[0.25, 0.02, 14.75], [5, 0.02, 14.75], [5, 0.02, 7.5]] as Vec3[]).map((p) => lightAt(closed, p, [0, 1, 0]));
@@ -422,6 +456,35 @@ describe('exposición, vidrio y adaptación del ojo (H2, H10)', () => {
     expect(adapt(OUTDOOR_EXPOSURE, INDOOR_EXPOSURE, 1e6)).toBe(INDOOR_EXPOSURE);
     expect(INDOOR_EXPOSURE).toBeGreaterThan(OUTDOOR_EXPOSURE);
     expect(OUTDOOR_EXPOSURE).toBe(0.7);
+  });
+
+  test('el ojo (N3): con la rampa al entrar y al salir caminando, pero en un salto de cámara va directo a la del lugar nuevo', () => {
+    const eye = createEye();
+    const frames = (inside: boolean, secs: number): number[] => Array.from({ length: Math.round(secs * 60) }, () => eye.step(inside, 1 / 60));
+    // el primer cuadro (la carga) ya es el del lugar: sin rampa
+    expect(eye.step(false, 1 / 60)).toBe(OUTDOOR_EXPOSURE);
+    // caminando hacia adentro: la rampa, de a poco y sin pasarse
+    const walkIn = frames(true, 0.5);
+    expect(walkIn[0]).toBeGreaterThan(OUTDOOR_EXPOSURE);
+    expect(walkIn[0]).toBeLessThan(OUTDOOR_EXPOSURE + 0.1);
+    expect(walkIn.at(-1)).toBeCloseTo(adapt(OUTDOOR_EXPOSURE, INDOOR_EXPOSURE, 0.5), 9);
+    frames(true, 20);
+    expect(eye.value).toBeCloseTo(INDOOR_EXPOSURE, 6);
+    // adaptado adentro, un salto afuera (partida nueva, aparición, teletransporte): el cuadro siguiente ya es el de afuera
+    eye.jump();
+    expect(eye.step(false, 1 / 60)).toBe(OUTDOOR_EXPOSURE);
+    // y después del salto vuelve la rampa
+    expect(eye.step(true, 1 / 60)).toBeLessThan(OUTDOOR_EXPOSURE + 0.1);
+    // al revés: afuera, un salto adentro (puntos bajo losa), directo a la de adentro
+    frames(false, 20);
+    eye.jump();
+    expect(eye.step(true, 1 / 60)).toBe(INDOOR_EXPOSURE);
+    // un salto sin cambiar de lugar no cambia nada
+    eye.jump();
+    expect(eye.step(true, 1 / 60)).toBe(INDOOR_EXPOSURE);
+    // con dt ≤ 0 (el primer cuadro después de un salto también) no se traba
+    eye.jump();
+    expect(eye.step(false, 0)).toBe(OUTDOOR_EXPOSURE);
   });
 
   test('las vistas dicen si la cámara está adentro de un interior (la misma regla de update)', () => {
@@ -623,7 +686,25 @@ describe('sombra entera (H1)', () => {
     }
   });
 
-  test('la cáscara: el techo del mismo polígono, 5 cm más abajo y mirando abajo; sin aberturas no hay cáscara', () => {
+  /** El contorno de la cáscara: cada arista de `fp` corrida `off(i)` hacia adentro, cortada con la de al lado. */
+  const contour = (fp: Vec2[], off: (i: number) => number): { inner: Vec2[]; lines: { p: Vec2; d: Vec2; m: Vec2; o: number }[] } => {
+    const inward = signedAreaFromAbove(fp) > 0 ? 1 : -1;
+    const lines = fp.map((a, k) => {
+      const c = fp[(k + 1) % fp.length], len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+      const d: Vec2 = [(c[0] - a[0]) / len, (c[1] - a[1]) / len], m: Vec2 = [d[1] * inward, -d[0] * inward];
+      return { p: [a[0] + m[0] * off(k), a[1] + m[1] * off(k)] as Vec2, d, m, o: off(k) };
+    });
+    const corner = (l: (typeof lines)[number], r: (typeof lines)[number]): Vec2 => {
+      const den = l.d[0] * r.d[1] - l.d[1] * r.d[0];
+      const t = ((r.p[0] - l.p[0]) * r.d[1] - (r.p[1] - l.p[1]) * r.d[0]) / den;
+      return [l.p[0] + l.d[0] * t, l.p[1] + l.d[1] * t];
+    };
+    return { inner: lines.map((l, k) => corner(lines[(k + fp.length - 1) % fp.length], l)), lines };
+  };
+  /** ¿La arista mira al sol (su normal de afuera)? Solo esas llevan pared de cáscara. */
+  const sunny = (l: { m: Vec2 }): boolean => -(l.m[0] * SUN_DIR.x + l.m[1] * SUN_DIR.z) > 1e-6;
+
+  test('la cáscara: paredes solo en las aristas al sol, 15 cm adentro; el techo, 5 cm abajo y mirando abajo, del mismo polígono corrido hasta ellas; sin aberturas no hay cáscara', () => {
     const roof = (os: Opening[]): THREE.Triangle[] => triangles(extrudeBuilding(bd, os).roof);
     const n = new THREE.Vector3();
     const up = roof([]);
@@ -631,10 +712,40 @@ describe('sombra entera (H1)', () => {
     const withShell = roof([A]);
     const down = withShell.filter((t) => t.getNormal(n).y < -0.999);
     expect(down.every((t) => Math.abs(t.a.y - 4.95) < 1e-6)).toBe(true);
-    expect(areaOf(down)).toBeCloseTo(areaOf(up), 6);
-    // y las paredes, 5 cm hacia adentro y dadas vuelta: todo el contorno sin la vidriera
+    // N2: hasta el borde de afuera de una pared al sol, a 5 cm del techo, el PCF de esa pared (rasante) agarraba la
+    // cáscara y le hacía una banda de sombra arriba: ahí el techo de la cáscara llega hasta su pared, a 15 cm. Del lado
+    // de la sombra sigue hasta el borde: si no, un rayo que entra rasante por una vidriera salía por el techo.
+    expect(areaOf(down)).toBeCloseTo((2 - 0.15) * 6, 4);
+    // y las paredes, 15 cm hacia adentro (N2: a 5 cm daban acné con el sol rasante) y dadas vuelta: solo el fondo (arista
+    // 1), que mira al sol; las de espaldas (o de canto) miran al sol desde adentro y la pasada de sombras no las dibuja
     const walls = withShell.filter((t) => Math.abs(t.getNormal(n).y) < 1e-6);
-    expect(areaOf(walls)).toBeCloseTo(2 * (2 - 0.1) * 5 + 2 * (6 - 0.1) * 5 - (4 - 2) * (2.8 - 0.3), 3);
+    expect(areaOf(walls)).toBeCloseTo(6 * 5, 3);
+    expect(walls.every((t) => t.getNormal(n).dot(SUN_DIR) < 0)).toBe(true);
+  });
+
+  test('en esquinas que no son rectas, las paredes de la cáscara y su techo se tocan justo (el contorno corrido, cerrado) y no salen de la planta (N2)', () => {
+    // un trapecio: esquinas de 90°, 72° y 108°; con este sol, al sol miran la arista 0 y la 1 (y la vidriera, en la 0)
+    const fp: Vec2[] = [[0, 0], [10, 0], [8, 6], [0, 6]];
+    const b: Building = { ...bd, id: 'b-trapecio', footprint: fp };
+    const open: Opening = { kind: 'vidrio', edge: 0, s0: 3, s1: 5, y0: 0.3, y1: 2.8 };
+    const n = new THREE.Vector3();
+    const tris = triangles(extrudeBuilding(b, [open]).roof);
+    const walls = tris.filter((t) => Math.abs(t.getNormal(n).y) < 1e-6);
+    const down = tris.filter((t) => t.getNormal(n).y < -0.999);
+    const probe = contour(fp, () => 0);
+    expect(probe.lines.map(sunny)).toEqual([true, true, false, false]);
+    const { inner, lines } = contour(fp, (k) => (sunny(probe.lines[k]) ? 0.15 : 0));
+    const side = (k: number): number => Math.hypot(inner[(k + 1) % 4][0] - inner[k][0], inner[(k + 1) % 4][1] - inner[k][1]);
+    expect(areaOf(walls)).toBeCloseTo((side(0) + side(1)) * 5 - (5 - 3) * (2.8 - 0.3), 3);
+    expect(areaOf(down)).toBeCloseTo(Math.abs(signedAreaFromAbove(inner)), 4);
+    // cada vértice de las paredes, a 0,15 m de la recta de una arista al sol y adentro de la planta
+    for (const t of walls) {
+      for (const v of [t.a, t.b, t.c]) {
+        const dist = lines.map((l) => (v.x - l.p[0]) * l.m[0] + (v.z - l.p[1]) * l.m[1] + l.o);
+        expect(Math.min(...dist), `${v.x.toFixed(3)}, ${v.z.toFixed(3)}`).toBeGreaterThan(-1e-6);
+        expect(dist.some((x, k) => sunny(lines[k]) && Math.abs(x - 0.15) < 1e-6)).toBe(true);
+      }
+    }
   });
 });
 

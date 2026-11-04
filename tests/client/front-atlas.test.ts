@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import * as THREE from 'three';
-import { ATLAS_COLS, FRONT_CELLS, GUTTER, cellRect, composeFrontAtlas, frontMaterial, groundCells, packAtlas, upperCell } from '../../src/client/world/front-atlas.ts';
+import { ATLAS_COLS, FRONT_CELLS, GUTTER, SHOP_GLASS, cellRect, composeFrontAtlas, frontMaterial, groundCells, packAtlas, upperCell } from '../../src/client/world/front-atlas.ts';
+import type { FrontCell } from '../../src/client/world/front-atlas.ts';
+import { WINDOW_GLASS } from '../../src/client/world/facades.ts';
 import { BAY_W, FLOOR_H } from '../../src/client/world/wall-kit.ts';
 import { BAY_W as OPENINGS_BAY_W, LOT_OPENINGS } from '../../src/shared/interiors/openings.ts';
 import type { LotCell } from '../../src/shared/interiors/openings.ts';
@@ -117,6 +119,28 @@ describe('aberturas de los lotes', () => {
   }
 
   test('las medidas de LOT_OPENINGS son las del atlas: bahías de BAY_W', () => expect(OPENINGS_BAY_W).toBe(BAY_W));
+
+  /** Los colores de cada vidrio pintado de la celda: las paradas de cada degradado (`glass`). */
+  function glassStops(cell: FrontCell): string[][] {
+    vi.restoreAllMocks();
+    const calls: { m: string; a: unknown[] }[] = [];
+    stubCanvas(undefined, (m, a) => calls.push({ m, a }));
+    composeFrontAtlas(img, size);
+    const starts = calls.flatMap((c, k) => (c.m === 'translate' ? [k] : []));
+    const i = FRONT_CELLS.indexOf(cell);
+    const seg = calls.slice(starts[2 * i + 1], starts[2 * i + 2] ?? calls.length);
+    return seg.flatMap((c, k) => (c.m === 'createLinearGradient' ? [seg.slice(k + 1, k + 4).map((d) => String(d.a[1]))] : []));
+  }
+
+  test.each([
+    ...(Object.keys(LOT_OPENINGS) as LotCell[]).map((c): [FrontCell, readonly string[]] => [c, SHOP_GLASS]),
+    // los pisos de arriba (también el vidriado, N5) y la planta baja que no es de lote, con el vidrio de siempre
+    ...(['vidriado', 'ventana', 'balcon', 'ventana-pb'] as const).map((c): [FrontCell, readonly string[]] => [c, WINDOW_GLASS]),
+  ])('%s: el vidrio claro de las vidrieras y puertas (la tapa de los interiores) va solo en las celdas de lote de planta baja', (cell, want) => {
+    const got = glassStops(cell);
+    expect(got.length, cell).toBeGreaterThan(0);
+    for (const stops of got) expect(stops).toEqual([...want]);
+  });
 
   test.each(Object.keys(LOT_OPENINGS) as LotCell[])('%s: el vidrio y la hoja de la puerta van exactamente en sus rectángulos', (cell) => {
     const u = (Math.round(size / ATLAS_COLS) - 2 * GUTTER) / BAY_W;

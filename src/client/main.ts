@@ -30,7 +30,7 @@ import { createZoneWall } from './combat/zone-wall.ts';
 import { debugEnabled, installDebug, matchParams } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
-import { adapt, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from './render/exposure.ts';
+import { createEye } from './render/exposure.ts';
 import { loadQuality, QUALITY, saveQuality } from './render/quality.ts';
 import type { Quality } from './render/quality.ts';
 import { createScene, FOV } from './render/scene.ts';
@@ -290,13 +290,18 @@ async function run(boot: Boot): Promise<void> {
     const dx = to[0] - from[0], dz = to[1] - from[2];
     return dx === 0 && dz === 0 ? input.look().yaw : Math.atan2(-dx, -dz);
   };
+  // la adaptación del ojo (H2e): de a poco hacia la exposición de adentro o la de la calle; en cada salto de cámara
+  // (aparición, teletransporte, partida nueva), directo a la del lugar nuevo (N3)
+  const eye = createEye();
   function spawnAt(spawn: Vec3, lookAt: Vec2): void {
     setPlayer(initialState(spawn));
     input.setLook(yawToward(spawn, lookAt), 0);
+    eye.jump();
   }
   function placeAt(pos: Vec3, yaw: number): void {
     setPlayer(initialState(pos));
     input.setLook(yaw, 0);
+    eye.jump();
   }
   function teleport(placeId: string): void {
     const place = map.places.find((p) => p.id === placeId);
@@ -320,6 +325,7 @@ async function run(boot: Boot): Promise<void> {
     overlay.setMode('partida');
     input.clearPulses(); // un toque de antes (o de la partida anterior) no se aplica en la nueva
     input.setLook(yawToward(match.me.player.pos, [0, 0]), 0);
+    eye.jump();
   }
   /** Modo paseo en un lugar (null = al azar): sin partida. */
   function startWalk(placeId: string | null): void {
@@ -355,11 +361,13 @@ async function run(boot: Boot): Promise<void> {
     }
     scene.setMaterials(next);
     interiorViews.setQuality(q); // vuelve a armar con los materiales nuevos, si cambia el detalle
-    warmInteriors(); // los materiales son otros: sus programas también
     disposeMaterials(materials);
     materials = next;
     quality = q;
     scene.applyQuality(q);
+    // los materiales son otros, y la clave de sus programas lleva las sombras de la calidad: se compilan después de
+    // applyQuality (N6)
+    warmInteriors();
     setTreeDensity(trees, QUALITY[q].treeDensity);
     setDumpsterShadows(climbProps, QUALITY[q].dumpsterShadows);
     applyCombatQuality(q);
@@ -391,7 +399,6 @@ async function run(boot: Boot): Promise<void> {
   const fixed = new FixedStep(); // la simulación avanza a 60 Hz sin importar los fps del cuadro
   let last = performance.now();
   let first = true;
-  let exposure = OUTDOOR_EXPOSURE; // la adaptación del ojo (H2e): va de a poco hacia la de adentro o la de la calle
   function frame(now: number): void {
     raf = requestAnimationFrame(frame);
     const dt = (now - last) / 1000; // FixedStep descarta dt ≤ 0 y limita los pasos por cuadro
@@ -434,11 +441,10 @@ async function run(boot: Boot): Promise<void> {
       reloadSound(events, match); // si la recarga se cancela (o se deja la partida), lo que faltaba de su sonido no suena
     }
     interiorViews.update(scene.camera);
-    exposure = adapt(exposure, interiorViews.inside() ? INDOOR_EXPOSURE : OUTDOOR_EXPOSURE, dt);
-    scene.renderer.toneMappingExposure = exposure;
+    scene.renderer.toneMappingExposure = eye.step(interiorViews.inside(), dt);
     scene.render();
     if (f) {
-      viewmodel.render(); // encima del mundo, en el mismo cuadro: renderer.info suma las dos pasadas
+      viewmodel.render(); // encima del mundo, en el mismo cuadro (con la exposición de la calle): renderer.info suma las dos pasadas
       hud.combat({ ...f, fov, scoped: scopeShown(f.state, fov, FOV), project: scene.project });
       const over = f.state.over;
       if (over && !overShown) {

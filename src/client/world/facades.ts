@@ -32,7 +32,8 @@ function fillRect(ctx: Ctx, img: CanvasImageSource | undefined, fallback: string
 
 /** El degradado de un vidrio pintado: de arriba a la izquierda a abajo a la derecha. */
 export type GlassStops = readonly [string, string, string];
-const WINDOW_GLASS: GlassStops = ['#5d7383', '#33434f', '#202b33'];
+/** El de las ventanas (y el de antes de los interiores). */
+export const WINDOW_GLASS: GlassStops = ['#5d7383', '#33434f', '#202b33'];
 
 export function glass(ctx: Ctx, x: number, y: number, w: number, h: number, stops: GlassStops = WINDOW_GLASS): void {
   const g = ctx.createLinearGradient(x, y, x + w, y + h);
