@@ -1,13 +1,16 @@
-// Carteles de los lugares: el nombre (sin logos) en una caja de ancho × 0,9 × 0,12 m apoyada en la fachada.
-// Un material por cartel (cada uno con su textura): son 28 carteles, a lo sumo 28 draw calls, y el frustum culling deja
-// afuera los que no se ven.
+// Carteles: el nombre (sin logos) en una caja de ancho × 0,9 × 0,12 m apoyada en la fachada.
+// Todos los carteles se dibujan en unas pocas páginas de atlas (una malla y un material por página), así los draw calls
+// no crecen con la cantidad de carteles.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SIGN_D, SIGN_H } from '../../shared/mapdata.ts';
-import type { Place, PlaceType } from '../../shared/mapdata.ts';
+import type { Fuente, Place, PlaceType, Sign, SignLook } from '../../shared/mapdata.ts';
 
 export { SIGN_H, SIGN_D };
-/** Píxeles por metro: un nombre de 0,3 m de alto ocupa ~48 px, de sobra para leerlo a 20 m. */
-const PX_PER_M = 160;
+/** Píxeles por metro: un nombre de 0,3 m de alto ocupa ~38 px, de sobra para leerlo a 20 m. */
+export const PX_PER_M = 128;
+/** Lado de una página del atlas, en px. */
+export const PAGE = 2048;
 /** Marco, en fracción del alto. Las caras de canto (y la de atrás) se pintan con este color. */
 const FRAME = 0.07;
 /** Aire entre el marco y el texto, en fracción del alto. */
@@ -16,36 +19,38 @@ const PAD = 0.08;
 const ONE_LINE = 0.62;
 const TWO_LINES = 0.42;
 
-interface Style { bg: string; fg: string; frame: string; family: string; weight: string; italic?: boolean }
+type Weight = 'normal' | 'bold' | '900';
+type Look = SignLook & { weight?: string };
 
 const SANS = '"Helvetica Neue", Helvetica, Arial, sans-serif';
 const SERIF = 'Georgia, "Times New Roman", Times, serif';
 const CONDENSED = '"Arial Narrow", "Helvetica Neue", Arial, sans-serif';
 const ROUNDED = '"Trebuchet MS", Verdana, sans-serif';
+const FAMILY: Record<Fuente, string> = { sans: SANS, serif: SERIF, condensada: CONDENSED, redondeada: ROUNDED };
 
-/** Por tipo de lugar, no por marca: los colores y las letras sugieren el rubro sin copiar ningún logo. */
-const STYLES: Record<PlaceType, Style> = {
-  bank: { bg: '#163d6e', fg: '#ffffff', frame: '#d6dbe2', family: SANS, weight: 'bold' },
-  bar: { bg: '#1d1410', fg: '#eab75c', frame: '#5c3b22', family: SERIF, weight: 'bold', italic: true },
-  restaurant: { bg: '#26472f', fg: '#f4ead0', frame: '#9c7b3f', family: SERIF, weight: 'bold' },
-  fastfood: { bg: '#2b2b2b', fg: '#f3e9d2', frame: '#8a8a8a', family: SANS, weight: '900' },
-  icecream: { bg: '#fbefd9', fg: '#6b3a22', frame: '#e58fa6', family: ROUNDED, weight: 'bold' },
-  cinema: { bg: '#121212', fg: '#f5d04c', frame: '#a51c1c', family: CONDENSED, weight: 'bold' },
-  club: { bg: '#0d47a1', fg: '#ffffff', frame: '#f4f4f4', family: SANS, weight: 'bold' },
-  clinic: { bg: '#ffffff', fg: '#00796b', frame: '#00796b', family: SANS, weight: 'bold' },
-  school: { bg: '#7a1f2b', fg: '#ffffff', frame: '#d8c9a3', family: SERIF, weight: 'bold' },
-  culture: { bg: '#efe6cf', fg: '#4a3423', frame: '#8a6d46', family: SERIF, weight: 'normal' },
-  station: { bg: '#1f3f73', fg: '#ffffff', frame: '#e6e6e6', family: SANS, weight: 'bold' },
-  monument: { bg: '#2f4a32', fg: '#f0f0e6', frame: '#c9c2a8', family: SERIF, weight: 'normal' },
-  plaza: { bg: '#2f4a32', fg: '#f0f0e6', frame: '#c9c2a8', family: SANS, weight: 'bold' },
+/** Por tipo de lugar, para los carteles que no vienen del relevamiento: los colores y las letras sugieren el rubro sin copiar ningún logo. */
+export const TYPE_LOOK: Record<PlaceType, SignLook & { weight: Weight }> = {
+  bank: { fondo: '#163d6e', letra: '#ffffff', marco: '#d6dbe2', fuente: 'sans', weight: 'bold' },
+  bar: { fondo: '#1d1410', letra: '#eab75c', marco: '#5c3b22', fuente: 'serif', weight: 'bold', cursiva: true },
+  restaurant: { fondo: '#26472f', letra: '#f4ead0', marco: '#9c7b3f', fuente: 'serif', weight: 'bold' },
+  fastfood: { fondo: '#2b2b2b', letra: '#f3e9d2', marco: '#8a8a8a', fuente: 'sans', weight: '900' },
+  icecream: { fondo: '#fbefd9', letra: '#6b3a22', marco: '#e58fa6', fuente: 'redondeada', weight: 'bold' },
+  cinema: { fondo: '#121212', letra: '#f5d04c', marco: '#a51c1c', fuente: 'condensada', weight: 'bold' },
+  club: { fondo: '#0d47a1', letra: '#ffffff', marco: '#f4f4f4', fuente: 'sans', weight: 'bold' },
+  clinic: { fondo: '#ffffff', letra: '#00796b', marco: '#00796b', fuente: 'sans', weight: 'bold' },
+  school: { fondo: '#7a1f2b', letra: '#ffffff', marco: '#d8c9a3', fuente: 'serif', weight: 'bold' },
+  culture: { fondo: '#efe6cf', letra: '#4a3423', marco: '#8a6d46', fuente: 'serif', weight: 'normal' },
+  station: { fondo: '#1f3f73', letra: '#ffffff', marco: '#e6e6e6', fuente: 'sans', weight: 'bold' },
+  monument: { fondo: '#2f4a32', letra: '#f0f0e6', marco: '#c9c2a8', fuente: 'serif', weight: 'normal' },
+  plaza: { fondo: '#2f4a32', letra: '#f0f0e6', marco: '#c9c2a8', fuente: 'sans', weight: 'bold' },
 };
 
-const fontOf = (s: Style, px: number): string => `${s.italic ? 'italic ' : ''}${s.weight} ${px.toFixed(1)}px ${s.family}`;
+const fontOf = (l: Look, px: number): string => `${l.cursiva ? 'italic ' : ''}${l.weight ?? 'bold'} ${px.toFixed(1)}px ${FAMILY[l.fuente]}`;
 
 /** Una o dos líneas (la que deje la letra más grande) y el tamaño en px que entra en maxW × maxH. */
-function layout(ctx: CanvasRenderingContext2D, text: string, s: Style, maxW: number, maxH: number): { lines: string[]; px: number } {
+function layout(ctx: CanvasRenderingContext2D, text: string, l: Look, maxW: number, maxH: number): { lines: string[]; px: number } {
   const REF = 100;
-  ctx.font = fontOf(s, REF);
+  ctx.font = fontOf(l, REF);
   const widthAt = (t: string): number => Math.max(1, ctx.measureText(t).width);
   const one = Math.min(maxH * ONE_LINE, (REF * maxW) / widthAt(text));
   const words = text.split(' ');
@@ -58,29 +63,54 @@ function layout(ctx: CanvasRenderingContext2D, text: string, s: Style, maxW: num
   return best;
 }
 
-/** Fondo, marco y nombre centrado. `width` (m) da la proporción del cartel: width × 0,9. */
-export function signTexture(text: string, style: PlaceType, width = 6): HTMLCanvasElement {
-  const s = STYLES[style];
-  const w = Math.max(64, Math.round(width * PX_PER_M));
-  const h = Math.round(SIGN_H * PX_PER_M);
+/** Margen entre carteles del atlas, en px: se rellena con el color del marco para que el filtrado no traiga el vecino. */
+const GUTTER = 4;
+
+/** Fondo, marco y nombre centrado. `width` (m) da la proporción del cartel: width × 0,9. Si no entra en una página
+ *  a PX_PER_M, se dibuja más chico (mismo ancho en el mundo). */
+export function signTexture(text: string, look: Look, width: number): HTMLCanvasElement {
+  const k = Math.min(1, (PAGE - 2 * GUTTER) / (width * PX_PER_M));
+  const w = Math.max(64, Math.round(width * PX_PER_M * k));
+  const h = Math.max(1, Math.round(SIGN_H * PX_PER_M * (w / Math.max(1, width * PX_PER_M))));
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   const ctx = c.getContext('2d')!;
   const f = Math.round(h * FRAME);
-  ctx.fillStyle = s.frame;
+  ctx.fillStyle = look.marco;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = s.bg;
+  ctx.fillStyle = look.fondo;
   ctx.fillRect(f, f, w - 2 * f, h - 2 * f);
   const pad = h * PAD;
-  const { lines, px } = layout(ctx, text, s, w - 2 * (f + pad), h - 2 * (f + pad));
-  ctx.font = fontOf(s, px);
-  ctx.fillStyle = s.fg;
+  const { lines, px } = layout(ctx, text, look, w - 2 * (f + pad), h - 2 * (f + pad));
+  ctx.font = fontOf(look, px);
+  ctx.fillStyle = look.letra;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const step = px * 1.1;
   lines.forEach((line, i) => ctx.fillText(line, w / 2, h / 2 + (i - (lines.length - 1) / 2) * step + px * 0.04));
   return c;
+}
+
+export interface AtlasRect { page: number; x: number; y: number; w: number; h: number }
+
+/** Acomoda rectángulos en páginas cuadradas por estantes, en el orden de entrada y sin rotar. Deja `gutter` px entre
+ *  rectángulos; abre una página nueva cuando la actual se llena y recorta la última al alto que usó. */
+export function packSigns(sizes: { w: number; h: number }[], page = PAGE, gutter = GUTTER): { rects: AtlasRect[]; pages: { w: number; h: number }[] } {
+  const rects: AtlasRect[] = [];
+  const used: number[] = [];
+  let p = 0, x = 0, y = 0, shelf = 0;
+  for (const { w, h } of sizes) {
+    if (w > page || h > page) throw new Error(`Cartel de ${w}×${h} px: no entra en una página de ${page} px`);
+    if (x > 0 && x + w > page) { y += shelf + gutter; x = 0; shelf = 0; }
+    if (y + h > page) { p++; x = 0; y = 0; shelf = 0; }
+    rects.push({ page: p, x, y, w, h });
+    x += w + gutter;
+    shelf = Math.max(shelf, h);
+    used[p] = Math.max(used[p] ?? 0, y + h);
+  }
+  const pages = used.map((h, i) => ({ w: page, h: i === used.length - 1 ? h : page }));
+  return { rects, pages };
 }
 
 /** Caja de width × 0,9 × 0,12 centrada en el origen, con el frente hacia +z. La textura va en el frente (y atrás si
@@ -107,22 +137,56 @@ export function signMaterial(canvas: HTMLCanvasElement): THREE.Material {
   return new THREE.MeshLambertMaterial({ map, emissive: 0xffffff, emissiveMap: map, emissiveIntensity: 0.3 });
 }
 
-export function buildSigns(places: Place[]): THREE.Group {
+const lookOf = (s: Sign, type?: PlaceType): Look => (s.look ? { ...s.look, weight: 'bold' } : TYPE_LOOK[type ?? 'plaza']);
+
+/** Todos los carteles (los de los lugares y los sueltos del relevamiento) en una malla por página de atlas. */
+export function buildSigns(places: Place[], signs: Sign[]): THREE.Group {
   const group = new THREE.Group();
   group.name = 'signs';
-  for (const p of places) {
-    if (!p.sign) continue;
-    const { text, anchor, normal, width, bottomY } = p.sign;
+  const all: { sign: Sign; look: Look }[] = [];
+  for (const p of places) if (p.sign) all.push({ sign: p.sign, look: lookOf(p.sign, p.type) });
+  for (const s of signs) all.push({ sign: s, look: lookOf(s) });
+  if (!all.length) return group;
+
+  const canvases = all.map(({ sign, look }) => signTexture(sign.text, look, sign.width));
+  const { rects, pages } = packSigns(canvases.map((c) => ({ w: c.width, h: c.height })));
+  const pageCanvases = pages.map((pg) => {
+    const c = document.createElement('canvas');
+    c.width = pg.w;
+    c.height = pg.h;
+    return c;
+  });
+  const geos: THREE.BufferGeometry[][] = pages.map(() => []);
+  all.forEach(({ sign, look }, i) => {
+    const r = rects[i], pg = pages[r.page];
+    const ctx = pageCanvases[r.page].getContext('2d')!;
+    ctx.fillStyle = look.marco;
+    ctx.fillRect(r.x - GUTTER, r.y - GUTTER, r.w + 2 * GUTTER, r.h + 2 * GUTTER);
+    ctx.drawImage(canvases[i], r.x, r.y);
+
+    const { anchor, normal, width, bottomY, blade } = sign;
     const len = Math.hypot(normal[0], normal[1]) || 1;
     const nx = normal[0] / len, nz = normal[1] / len;
-    const mesh = new THREE.Mesh(signGeometry(width), signMaterial(signTexture(text, p.type, width)));
-    mesh.name = `sign:${p.id}`;
-    mesh.position.set(anchor[0] + nx * (SIGN_D / 2), bottomY + SIGN_H / 2, anchor[1] + nz * (SIGN_D / 2));
-    mesh.rotation.y = Math.atan2(nx, nz); // +z local (el frente) → normal
+    const g = signGeometry(width, !!blade);
+    // UV del cartel (0..1) → su rectángulo de la página (v hacia arriba; el canvas cuenta y hacia abajo)
+    const uv = g.getAttribute('uv');
+    for (let k = 0; k < uv.count; k++) {
+      uv.setXY(k, (r.x + uv.getX(k) * r.w) / pg.w, (pg.h - r.y - r.h + uv.getY(k) * r.h) / pg.h);
+    }
+    g.applyMatrix4(new THREE.Matrix4().compose(
+      new THREE.Vector3(anchor[0] + nx * (SIGN_D / 2), bottomY + SIGN_H / 2, anchor[1] + nz * (SIGN_D / 2)),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(nx, nz)), // +z local (el frente) → normal
+      new THREE.Vector3(1, 1, 1),
+    ));
+    geos[r.page].push(g);
+  });
+  geos.forEach((list, i) => {
+    const mesh = new THREE.Mesh(mergeGeometries(list, false), signMaterial(pageCanvases[i]));
+    list.forEach((g) => g.dispose());
+    mesh.name = `signs:${i}`;
     mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
-    mesh.updateMatrix();
     group.add(mesh);
-  }
+  });
   return group;
 }

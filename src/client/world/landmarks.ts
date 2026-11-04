@@ -9,7 +9,7 @@ import type { MapData, Place, Prop } from '../../shared/mapdata.ts';
 import { splitByCell } from './cells.ts';
 import { clipSegment } from './chunks.ts';
 import { polygonGeometry, ribbon } from './geometry.ts';
-import { SIGN_H, signGeometry, signMaterial, signTexture } from './signs.ts';
+import { SIGN_H, TYPE_LOOK, signGeometry, signMaterial, signTexture } from './signs.ts';
 import type { WorldMaterials } from './types.ts';
 
 // Vía (trocha de 1,435 m: decisión de diseño; la del Roca es más ancha)
@@ -418,7 +418,7 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
     const roofMap = corrugatedTexture();
     group.add(mesh('canopy', roof.build(), new THREE.MeshLambertMaterial({ map: roofMap, color: '#9a5a44' }), true));
     group.add(mesh('steel', merge(steel, 'postes'), new THREE.MeshLambertMaterial({ color: '#2f4a3a' })));
-    group.add(mesh('stationSigns', merge(signs, 'carteles'), signMaterial(signTexture('ADROGUÉ', 'station', STATION_SIGN_W))));
+    group.add(mesh('stationSigns', merge(signs, 'carteles'), signMaterial(signTexture('ADROGUÉ', TYPE_LOOK.station, STATION_SIGN_W))));
   }
   for (const c of group.children) c.updateMatrix();
   return group;

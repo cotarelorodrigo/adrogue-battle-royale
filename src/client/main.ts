@@ -181,7 +181,7 @@ async function run(boot: Boot): Promise<void> {
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
-    buildSigns(map.places),
+    buildSigns(map.places, map.signs),
     ...trees,
     ...climbProps,
   ]);
