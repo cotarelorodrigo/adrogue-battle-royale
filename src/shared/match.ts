@@ -1,0 +1,342 @@
+// La partida de práctica (spec 2a §2–§6): estado puro y determinista. `stepMatch(estado, entrada, mundo, h)` devuelve un
+// estado nuevo sin tocar el anterior, sin reloj ni Math.random. Lo corre el cliente a 60 Hz y, en la etapa 3, el servidor.
+//
+// El estado es datos (se puede copiar con structuredClone). El azar de los disparos no vive en un objeto Rng: cada
+// disparo arma el suyo a partir de (seed, shotSeq), y shotSeq cuenta los disparos hechos.
+//
+// Tiempos: un paso cubre [t, t + h). Lo que se empieza en el paso (recarga, curación) arranca en t; lo que vence (fin de
+// la recarga o de la curación, el próximo disparo) pasa en el paso donde cae su hora, sin redondear al paso siguiente.
+// Así la cadencia es la de la tabla (9/s del rifle) y no la que da cuantizar a 60 Hz.
+import { AMMO_BOX, AMMO_MAX, WEAPONS, applyDamage, applyZoneDamage, finishReload, fire, hitscan, newGun, shotDamage, spreadDirs, spreadFor,
+  startReload } from './combat.ts';
+import type { AmmoId, Gun, HitPart, Hitbox, Vitals, WeaponId } from './combat.ts';
+import type { CollisionWorld } from './collision.ts';
+import type { Vec3 } from './geo.ts';
+import { rollLoot } from './loot.ts';
+import type { Drop, LootItem } from './loot.ts';
+import type { MapData } from './mapdata.ts';
+import { PLAYER, eyeHeight, initialState, stepPlayer } from './player.ts';
+import type { PlayerInput, PlayerState } from './player.ts';
+import { createRng } from './rng.ts';
+import type { Rng } from './rng.ts';
+import { planZone, zoneAt } from './zone.ts';
+import type { ZonePlan } from './zone.ts';
+
+/** Reglas de la partida (spec 2a §3 y §5). */
+export const MATCH = {
+  hpMax: 100, armorMax: 100,
+  /** lo que suma un chaleco */
+  armorPickup: 50,
+  medkitsMax: 3,
+  /** lo que cura un botiquín y cuánto tarda (s) */
+  heal: 50, healTime: 3,
+  /** factor de la velocidad de caminar mientras se cura */
+  healSlow: 0.5,
+  /** juntar: en planta a menos de pickReach m y mirándolo (coseno > pickCos desde el ojo), o a menos de pickNear m */
+  pickReach: 2.5, pickNear: 1, pickCos: 0.8,
+  /** el piso del objeto, a lo sumo a esta altura de los pies: ni el techo de arriba ni la calle de abajo */
+  pickDy: 1,
+  /** los objetos flotan a esta altura sobre su `pos`: ahí se los mira para juntarlos */
+  dropLift: 0.3,
+  /** más rápido que esto (m/s, en el plano) cuenta como moviéndose para la dispersión */
+  movingSpeed: 0.5,
+} as const;
+
+export interface Fighter { id: string; name: string; player: PlayerState; vitals: Vitals; alive: boolean; diedAt?: number }
+export interface Inventory { slots: [Gun | null, Gun | null]; active: 0 | 1; ammo: Record<AmmoId, number>; medkits: number; healingUntil: number | null }
+/** Un objeto en el piso. Un arma que se tiró guarda las balas de su cargador (`inMag`); la del botín viene llena. */
+export interface MatchDrop extends Drop { inMag?: number }
+
+export type MatchEvent =
+  | { type: 'shot'; weapon: WeaponId; from: Vec3; to: Vec3[] }
+  | { type: 'hit'; id: string; part: HitPart; dmg: number; point: Vec3 }
+  | { type: 'impact'; point: Vec3; normal: Vec3 }
+  | { type: 'kill'; id: string; name: string }
+  | { type: 'pickup'; item: LootItem }
+  | { type: 'reload'; weapon: WeaponId }
+  | { type: 'empty' }
+  | { type: 'zone-hurt'; dmg: number }
+  | { type: 'over'; won: boolean };
+
+export interface MatchState {
+  t: number; seed: number; me: Fighter; inv: Inventory; dummies: Fighter[]; drops: MatchDrop[]; zone: ZonePlan; aiming: boolean;
+  /** los del último paso: stepMatch los vacía al empezar */
+  events: MatchEvent[];
+  /** alive: cuántos quedaban vivos (en la victoria, 1: el jugador) */
+  over: null | { won: boolean; alive: number; at: number };
+  /** eliminaciones del jugador (las muertes por la zona no cuentan) */
+  kills: number;
+  nextDropId: number;
+  /** hacia dónde miró el jugador en el último paso: lo usa nearestDrop */
+  look: { yaw: number; pitch: number };
+  /** botones que venían apretados del paso anterior: las semiautomáticas disparan y E junta por flanco */
+  held: { fire: boolean; use: boolean };
+  /** disparos hechos: el azar de cada uno sale de (seed, shotSeq) */
+  shotSeq: number;
+}
+
+export interface MatchInput extends PlayerInput { fire: boolean; aim: boolean; reload: boolean; use: boolean; heal: boolean; slot: 0 | 1 | null }
+
+/** Un número de 32 bits sacado del rng, para sembrar otro sorteo. */
+const seedFrom = (rng: Rng): number => Math.floor(rng.next() * 4294967296) >>> 0;
+
+/** Semilla del disparo n de la partida (mezcla tipo murmur3: disparos vecinos dan secuencias sin relación). */
+function shotSeed(seed: number, n: number): number {
+  let h = (seed ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * Partida nueva. Con la semilla se sortean, en este orden: el botín, la zona, los puntos de aparición (distintos, entre
+ * los de `map.randomSpawns` donde el cuerpo no se mete en ningún sólido) y el chaleco de cada maniquí (0, 25 o 50).
+ * El botín sale antes que todo lo demás: la misma semilla da el mismo botín con cualquier cantidad de maniquíes.
+ */
+export function newMatch(map: MapData, world: CollisionWorld, opts: { seed: number; dummies: number }): MatchState {
+  const n = opts.dummies;
+  const free = map.randomSpawns.filter((p) => !world.overlaps(p[0], p[2], PLAYER.radius, p[1], p[1] + PLAYER.height));
+  if (!Number.isInteger(n) || n < 0 || n + 1 > free.length) {
+    throw new RangeError(`No entran ${n} maniquíes: hay ${free.length} puntos de aparición libres para ${n + 1} jugadores`);
+  }
+  const rng = createRng(opts.seed);
+  const drops: MatchDrop[] = rollLoot(map.lootSpots, seedFrom(rng));
+  const zone = planZone(map.bounds, n + 1, seedFrom(rng));
+  // Fisher–Yates parcial: los primeros n + 1 quedan sorteados y sin repetir.
+  const order = free.map((_, i) => i);
+  for (let i = 0; i <= n; i++) {
+    const j = i + Math.floor(rng.next() * (order.length - i));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const fighter = (id: string, name: string, spawn: Vec3, armor: number): Fighter =>
+    ({ id, name, player: initialState(spawn), vitals: { hp: MATCH.hpMax, armor }, alive: true });
+  const dummies: Fighter[] = [];
+  for (let i = 1; i <= n; i++) dummies.push(fighter(`m${i}`, `Maniquí ${i}`, free[order[i]], 25 * Math.floor(rng.next() * 3)));
+  return {
+    t: 0, seed: opts.seed,
+    me: fighter('yo', 'Vos', free[order[0]], 0),
+    inv: { slots: [null, null], active: 0, ammo: { liviana: 0, cartuchos: 0, pesada: 0 }, medkits: 0, healingUntil: null },
+    dummies, drops, zone, aiming: false, events: [], over: null, kills: 0,
+    nextDropId: drops.reduce((m, d) => Math.max(m, d.id), 0) + 1,
+    look: { yaw: 0, pitch: 0 }, held: { fire: false, use: false }, shotSeq: 0,
+  };
+}
+
+/** Los cuerpos a los que se puede pegar: los maniquíes vivos (el jugador nunca es blanco de sus propios tiros). */
+export function hitboxes(s: MatchState): Hitbox[] {
+  return bodies(s.dummies);
+}
+
+function bodies(fighters: readonly Fighter[]): Hitbox[] {
+  return fighters.filter((f) => f.alive).map((f) => ({ id: f.id, pos: f.player.pos, crouching: f.player.crouching }));
+}
+
+/** El objeto que juntaría `use` ahora (para el cartel "E: juntar…"), o null. */
+export function nearestDrop(s: MatchState): MatchDrop | null {
+  return s.over ? null : dropInReach(s.drops, s.me.player, s.me.vitals, s.inv, s.look);
+}
+
+/** ¿Sirve juntarlo? Un arma, siempre; la munición, el chaleco y los botiquines, si no se llegó al máximo. */
+function canTake(item: LootItem, vitals: Vitals, inv: Inventory): boolean {
+  switch (item.kind) {
+    case 'arma': return true;
+    case 'municion': return inv.ammo[item.ammo] < AMMO_MAX[item.ammo];
+    case 'chaleco': return vitals.armor < MATCH.armorMax;
+    case 'botiquin': return inv.medkits < MATCH.medkitsMax;
+  }
+}
+
+/** Mirada unitaria con la convención de la cámara (spreadDirs): yaw 0 mira a −z, pitch positivo mira arriba. */
+const gaze = (yaw: number, pitch: number): Vec3 => [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
+
+/** El más cercano en planta de los que sirve juntar, a menos de pickReach, con el piso a menos de pickDy de los pies y
+ *  mirándolo desde el ojo (coseno > pickCos), salvo que esté a menos de pickNear. */
+function dropInReach(drops: readonly MatchDrop[], p: PlayerState, vitals: Vitals, inv: Inventory, look: MatchState['look']): MatchDrop | null {
+  const eyeY = p.pos[1] + eyeHeight(p);
+  const g = gaze(look.yaw, look.pitch);
+  let best: MatchDrop | null = null;
+  let bestD: number = MATCH.pickReach;
+  for (const d of drops) {
+    const dx = d.pos[0] - p.pos[0], dz = d.pos[2] - p.pos[2];
+    const dh = Math.hypot(dx, dz);
+    if (dh >= bestD || Math.abs(d.pos[1] - p.pos[1]) > MATCH.pickDy || !canTake(d.item, vitals, inv)) continue;
+    if (dh >= MATCH.pickNear) {
+      const dy = d.pos[1] + MATCH.dropLift - eyeY;
+      if (!(dx * g[0] + dy * g[1] + dz * g[2] > MATCH.pickCos * Math.hypot(dx, dy, dz))) continue;
+    }
+    best = d;
+    bestD = dh;
+  }
+  return best;
+}
+
+/**
+ * Movimiento del jugador. Durante la curación se camina a healSlow de la velocidad sin tocar stepPlayer: en el piso el
+ * paso se corre en cámara lenta en el plano. stepPlayer avanza h·k con la velocidad del plano dividida por k y al final
+ * se la multiplica por k: el desplazamiento es v·h, la velocidad tiende a k·runSpeed (o k·crouchSpeed) y `vel` sigue
+ * siendo la real. En el aire, en la escalera o trepando, el paso es normal: la gravedad y los tiempos no cambian.
+ */
+function move(p: PlayerState, input: PlayerInput, world: CollisionWorld, h: number, healing: boolean): PlayerState {
+  if (!healing || p.mode !== 'walk' || !p.onGround) return stepPlayer(p, input, world, h);
+  const k = MATCH.healSlow;
+  const q = stepPlayer({ ...p, vel: [p.vel[0] / k, p.vel[1], p.vel[2] / k] }, input, world, h * k);
+  return { ...q, vel: [q.vel[0] * k, q.vel[1], q.vel[2] * k] };
+}
+
+const finite = (x: number): number => (Number.isFinite(x) ? x : 0);
+
+/**
+ * Un paso de la partida, en este orden: movimiento, cambio de ranura, juntar, recarga, disparo, curación, zona, y
+ * muertes y fin. Con `over` puesto solo avanza `t` (y los eventos quedan vacíos).
+ */
+export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorld, h: number): MatchState {
+  const dt = h > 0 && Number.isFinite(h) ? h : 0;
+  const t0 = s.t, t1 = s.t + dt;
+  if (s.over) return { ...s, t: t1, events: [] };
+
+  const events: MatchEvent[] = [];
+  const look = { yaw: finite(input.yaw), pitch: finite(input.pitch) };
+  const inv: Inventory = { ...s.inv, slots: [s.inv.slots[0], s.inv.slots[1]], ammo: { ...s.inv.ammo } };
+  const dummies = s.dummies.slice(); // los que cambian se reemplazan por copias
+  let vitals = s.me.vitals;
+  let drops = s.drops;
+  let nextDropId = s.nextDropId;
+  let shotSeq = s.shotSeq;
+  let kills = s.kills;
+  const usePressed = input.use === true && !s.held.use;
+  const firePressed = input.fire === true && !s.held.fire;
+
+  // 1. movimiento
+  const player = move(s.me.player, input, world, dt, inv.healingUntil !== null);
+
+  // 2. cambio de ranura: cancela la recarga del arma que se guarda y la curación
+  if ((input.slot === 0 || input.slot === 1) && input.slot !== inv.active) {
+    const old = inv.slots[inv.active];
+    if (old && old.reloadUntil !== null) inv.slots[inv.active] = { ...old, reloadUntil: null };
+    inv.active = input.slot;
+    inv.healingUntil = null;
+  }
+
+  // 3. juntar
+  const d = usePressed ? dropInReach(drops, player, vitals, inv, look) : null;
+  if (d) {
+    drops = drops.filter((x) => x !== d);
+    const it = d.item;
+    switch (it.kind) {
+      case 'arma': {
+        const gun: Gun = d.inMag === undefined ? newGun(it.weapon) : { ...newGun(it.weapon), inMag: d.inMag };
+        const a = inv.active, b = a === 0 ? 1 : 0;
+        const inHand = inv.slots[a];
+        if (inHand === null) inv.slots[a] = gun;
+        else if (inv.slots[b] === null) inv.slots[b] = gun;
+        else { // las dos llenas: la de la mano queda en el piso, donde estaba el objeto
+          drops = [...drops, { id: nextDropId++, pos: [d.pos[0], d.pos[1], d.pos[2]], item: { kind: 'arma', weapon: inHand.id }, inMag: inHand.inMag }];
+          inv.slots[a] = gun;
+        }
+        break;
+      }
+      case 'municion': inv.ammo[it.ammo] = Math.min(AMMO_MAX[it.ammo], inv.ammo[it.ammo] + AMMO_BOX[it.ammo]); break;
+      case 'chaleco': vitals = { ...vitals, armor: Math.min(MATCH.armorMax, vitals.armor + MATCH.armorPickup) }; break;
+      case 'botiquin': inv.medkits++; break;
+    }
+    events.push({ type: 'pickup', item: it });
+  }
+
+  let gun = inv.slots[inv.active];
+  const aiming = input.aim === true && gun !== null;
+
+  // 4. recarga
+  if (gun) {
+    const ammo = WEAPONS[gun.id].ammo;
+    if (gun.reloadUntil !== null && gun.reloadUntil < t1) {
+      const r = finishReload(gun, gun.reloadUntil, inv.ammo[ammo]);
+      inv.ammo[ammo] -= r.used;
+      gun = r.gun;
+    }
+    if (input.reload) {
+      const r = startReload(gun, t0, inv.ammo[ammo]);
+      if (r !== gun) events.push({ type: 'reload', weapon: gun.id });
+      gun = r;
+    }
+  }
+
+  // 5. disparo: las semiautomáticas por flanco, la automática mientras está apretado
+  if (gun && gun.reloadUntil === null && (WEAPONS[gun.id].auto ? input.fire === true : firePressed)) {
+    if (gun.inMag <= 0) {
+      if (firePressed) events.push({ type: 'empty' });
+    } else if (gun.nextShotAt < t1) {
+      const w = WEAPONS[gun.id];
+      const eye: Vec3 = [player.pos[0], player.pos[1] + eyeHeight(player), player.pos[2]];
+      const moving = Math.hypot(player.vel[0], player.vel[2]) > MATCH.movingSpeed;
+      const dirs = spreadDirs(createRng(shotSeed(s.seed, shotSeq++)), look.yaw, look.pitch, spreadFor(w, { aiming, moving }), w.pellets);
+      const targets = bodies(dummies);
+      const shot = { type: 'shot' as const, weapon: gun.id, from: eye, to: [] as Vec3[] };
+      events.push(shot);
+      for (const dir of dirs) {
+        const hit = hitscan(world, targets, eye, dir, w.range);
+        if (!hit) {
+          shot.to.push([eye[0] + dir[0] * w.range, eye[1] + dir[1] * w.range, eye[2] + dir[2] * w.range]);
+          continue;
+        }
+        shot.to.push(hit.point);
+        if (hit.kind === 'world') {
+          events.push({ type: 'impact', point: hit.point, normal: hit.normal });
+          continue;
+        }
+        const dmg = shotDamage(w, hit.part, hit.dist);
+        const i = dummies.findIndex((f) => f.id === hit.id);
+        dummies[i] = { ...dummies[i], vitals: applyDamage(dummies[i].vitals, dmg) };
+        events.push({ type: 'hit', id: hit.id, part: hit.part, dmg, point: hit.point });
+      }
+      gun = fire(gun, Math.max(t0, gun.nextShotAt)); // a su hora, aunque caiga a mitad del paso
+      inv.healingUntil = null; // disparar cancela la curación
+    }
+  }
+  if (gun) inv.slots[inv.active] = gun;
+  const shotDown = new Set(dummies.filter((f) => f.alive && f.vitals.hp <= 0).map((f) => f.id));
+
+  // 6. curación: con H y botiquines, healTime s y +heal hasta hpMax; el botiquín se gasta al terminar
+  if (inv.healingUntil !== null) {
+    if (inv.healingUntil < t1) {
+      vitals = { ...vitals, hp: Math.min(MATCH.hpMax, vitals.hp + MATCH.heal) };
+      inv.medkits--;
+      inv.healingUntil = null;
+    }
+  } else if (input.heal && inv.medkits > 0 && vitals.hp < MATCH.hpMax) {
+    inv.healingUntil = t0 + MATCH.healTime;
+  }
+
+  // 7. zona: daño a todos los vivos afuera, solo a la vida. Cerrada (radio 0), todos están afuera: la partida termina.
+  const z = zoneAt(s.zone, t0);
+  const zoneDmg = z.dps * dt;
+  const outside = (p: Vec3): boolean => z.r <= 0 || Math.hypot(p[0] - z.center[0], p[2] - z.center[1]) > z.r;
+  if (zoneDmg > 0) {
+    if (outside(player.pos)) {
+      vitals = applyZoneDamage(vitals, zoneDmg);
+      events.push({ type: 'zone-hurt', dmg: zoneDmg });
+    }
+    dummies.forEach((f, i) => {
+      if (f.alive && outside(f.player.pos)) dummies[i] = { ...f, vitals: applyZoneDamage(f.vitals, zoneDmg) };
+    });
+  }
+
+  // 8. muertes y fin. `kill` y kills, solo para los que voló el jugador en este paso.
+  dummies.forEach((f, i) => {
+    if (!f.alive || f.vitals.hp > 0) return;
+    dummies[i] = { ...f, alive: false, diedAt: t1 };
+    if (shotDown.has(f.id)) {
+      events.push({ type: 'kill', id: f.id, name: f.name });
+      kills++;
+    }
+  });
+  const meAlive = vitals.hp > 0;
+  const me: Fighter = meAlive ? { ...s.me, player, vitals } : { ...s.me, player, vitals, alive: false, diedAt: t1 };
+  const left = dummies.filter((f) => f.alive).length;
+  const over = !meAlive ? { won: false, alive: left, at: t1 } : left === 0 ? { won: true, alive: 1, at: t1 } : null;
+  if (over) events.push({ type: 'over', won: over.won });
+
+  return {
+    ...s, t: t1, me, inv, dummies, drops, aiming, events, over, kills, nextDropId, look,
+    held: { fire: input.fire === true, use: input.use === true }, shotSeq,
+  };
+}
