@@ -18,7 +18,7 @@ import type { PlayerState } from '../shared/player.ts';
 import { createRng } from '../shared/rng.ts';
 import photoFacadeData from '../../data/photo-facades.json';
 import { aimTarget, scoped as scopeShown } from './aim.ts';
-import { createSfx, playEvents } from './audio/sfx.ts';
+import { createSfx, playEvents, trackReload } from './audio/sfx.ts';
 import { benchSeconds, createBench } from './bench.ts';
 import { createDrops } from './combat/drops.ts';
 import { createDummies } from './combat/dummies.ts';
@@ -155,6 +155,7 @@ async function run(boot: Boot): Promise<void> {
   const hud = createHud(root);
   const input = createInput(window);
   const sfx = createSfx(); // el AudioContext recién nace con el primer gesto
+  const reloadSound = trackReload(sfx);
   let quality = loadQuality();
   let raf = 0;
 
@@ -409,6 +410,7 @@ async function run(boot: Boot): Promise<void> {
         scene.setFov(FOV);
         input.setZoom(1);
       }
+      reloadSound(events, match); // si la recarga se cancela (o se deja la partida), lo que faltaba de su sonido no suena
     }
     scene.render();
     if (f) {

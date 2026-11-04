@@ -3,13 +3,18 @@
 // para juntar, y un zumbido grave para la zona.
 //
 // El AudioContext se crea en el primer gesto del usuario (tecla o clic): creado antes, Chrome lo deja suspendido y
-// avisa en la consola. Hasta entonces, y donde no hay WebAudio (jsdom), los sonidos no hacen nada.
+// avisa en la consola. Hasta entonces, y donde no hay WebAudio (jsdom), los sonidos no hacen nada. Cada sonido
+// desconecta sus nodos al terminar.
+import { WEAPONS } from '../../shared/combat.ts';
 import type { WeaponId } from '../../shared/combat.ts';
-import type { MatchEvent } from '../../shared/match.ts';
+import type { Inventory, MatchEvent } from '../../shared/match.ts';
 
 export interface Sfx {
   shot(weapon: WeaponId): void;
-  reload(): void;
+  /** Sale el cargador ya y entra a RELOAD_IN de `duration` (s, la recarga del arma), como en el arma en mano. */
+  reload(duration: number): void;
+  /** La recarga se canceló: lo que faltaba de su sonido no suena. */
+  cancelReload(): void;
   /** Impacto en un maniquí; en la cabeza suena más agudo. */
   hit(head: boolean): void;
   pickup(): void;
@@ -23,6 +28,8 @@ export interface Sfx {
 
 /** Segundos entre dos zumbidos de la zona. */
 export const ZONE_HURT_EVERY = 0.7;
+/** En qué parte de la recarga (0…1) entra el cargador: en el arma en mano vuelve entre 0,55 y 0,82. */
+export const RELOAD_IN = 0.7;
 const VOLUME = 0.5;
 /** Eventos que cuentan como gesto del usuario para arrancar el audio. */
 const GESTURES = ['pointerdown', 'keydown', 'touchend'] as const;
@@ -35,7 +42,25 @@ const SHOT: Record<WeaponId, { dur: number; freq: number; gain: number; thump: n
   francotirador: { dur: 0.3, freq: 2400, gain: 0.95, thump: 75, tail: 0.9 },
 };
 
-const NO_SOUND: Sfx = { shot() {}, reload() {}, hit() {}, pickup() {}, zoneHurt() {}, empty() {}, dispose() {} };
+const NO_SOUND: Sfx = { shot() {}, reload() {}, cancelReload() {}, hit() {}, pickup() {}, zoneHurt() {}, empty() {}, dispose() {} };
+
+/** Un sonido programado: su fuente y los nodos de la fuente a la salida. */
+interface Voice { src: AudioScheduledSourceNode; nodes: AudioNode[] }
+
+/** Al terminar (o al pararlo), los nodos se sueltan del grafo. */
+function voice(src: AudioScheduledSourceNode, nodes: AudioNode[]): Voice {
+  src.onended = () => {
+    for (const n of nodes) n.disconnect();
+  };
+  return { src, nodes };
+}
+
+/** Lo corta ya: si todavía no arrancó, no suena. */
+function silence(v: Voice): void {
+  v.src.onended = null;
+  v.src.stop();
+  for (const n of v.nodes) n.disconnect();
+}
 
 /** `target` recibe los gestos (por defecto, window). */
 export function createSfx(target?: EventTarget): Sfx {
@@ -47,6 +72,8 @@ export function createSfx(target?: EventTarget): Sfx {
   let zoneAt = -Infinity;
   let disposed = false;
   let bursts = 0;
+  /** Lo que falta sonar de la última recarga (el cargador que entra). */
+  let reloadIn: Voice[] = [];
 
   const onGesture = (): void => {
     if (!ctx) {
@@ -63,7 +90,7 @@ export function createSfx(target?: EventTarget): Sfx {
   for (const g of GESTURES) gestures.addEventListener(g, onGesture, { capture: true, passive: true });
 
   /** Ruido de `dur` s desde `t0`: por un filtro (de f0 a f1 Hz) y con una envolvente que cae de `gain` a casi nada. */
-  function burst(t0: number, dur: number, type: BiquadFilterType, f0: number, f1: number, gain: number): void {
+  function burst(t0: number, dur: number, type: BiquadFilterType, f0: number, f1: number, gain: number): Voice {
     const c = ctx!;
     const src = c.createBufferSource();
     src.buffer = noise;
@@ -78,10 +105,11 @@ export function createSfx(target?: EventTarget): Sfx {
     src.connect(filter).connect(env).connect(out!);
     src.start(t0, ((bursts++ * 0.618034) % 1) * 0.5); // cada ruido arranca en otro lugar del buffer: no suenan todos iguales
     src.stop(t0 + dur);
+    return voice(src, [src, filter, env]);
   }
 
   /** Tono de `dur` s desde `t0` que va de f0 a f1 Hz, con ataque corto y caída hasta casi nada. */
-  function tone(t0: number, dur: number, type: OscillatorType, f0: number, f1: number, gain: number): void {
+  function tone(t0: number, dur: number, type: OscillatorType, f0: number, f1: number, gain: number): Voice {
     const c = ctx!;
     const osc = c.createOscillator();
     osc.type = type;
@@ -94,6 +122,12 @@ export function createSfx(target?: EventTarget): Sfx {
     osc.connect(env).connect(out!);
     osc.start(t0);
     osc.stop(t0 + dur);
+    return voice(osc, [osc, env]);
+  }
+
+  function cancelReload(): void {
+    for (const v of reloadIn) silence(v);
+    reloadIn = [];
   }
 
   /** El momento de ahora, o null si todavía no hay audio. */
@@ -108,12 +142,16 @@ export function createSfx(target?: EventTarget): Sfx {
       tone(t, s.dur * 0.8, 'sine', s.thump * 2, s.thump * 0.5, s.gain * 0.9);
       if (s.tail) burst(t + 0.06, s.tail, 'lowpass', 900, 200, s.gain * 0.25); // el eco del francotirador
     },
-    reload() {
+    reload(duration) {
       const t = now();
       if (t === null) return;
+      cancelReload(); // se recarga un arma a la vez: si quedaba algo de otra recarga, ya no va
       burst(t, 0.04, 'highpass', 2500, 1800, 0.35); // sale el cargador
-      burst(t + 0.32, 0.05, 'bandpass', 1800, 1200, 0.45); // entra
-      tone(t + 0.34, 0.03, 'square', 900, 700, 0.08);
+      const tIn = t + RELOAD_IN * Math.max(0, duration);
+      reloadIn = [burst(tIn, 0.05, 'bandpass', 1800, 1200, 0.45), tone(tIn + 0.02, 0.03, 'square', 900, 700, 0.08)]; // entra
+    },
+    cancelReload() {
+      if (!disposed) cancelReload();
     },
     hit(head) {
       const t = now();
@@ -146,6 +184,7 @@ export function createSfx(target?: EventTarget): Sfx {
     },
     dispose() {
       disposed = true;
+      reloadIn = [];
       for (const g of GESTURES) gestures.removeEventListener(g, onGesture, { capture: true });
       void ctx?.close().catch(() => {});
     },
@@ -174,7 +213,7 @@ export function playEvents(sfx: Sfx, events: readonly MatchEvent[]): void {
   for (const e of events) {
     switch (e.type) {
       case 'shot': sfx.shot(e.weapon); break;
-      case 'reload': sfx.reload(); break;
+      case 'reload': sfx.reload(WEAPONS[e.weapon].reload); break;
       case 'pickup': sfx.pickup(); break;
       case 'empty': sfx.empty(); break;
       case 'hit': hit = hit === true || e.part === 'cabeza'; break;
@@ -184,4 +223,30 @@ export function playEvents(sfx: Sfx, events: readonly MatchEvent[]): void {
   }
   if (hit !== null) sfx.hit(hit);
   if (zone) sfx.zoneHurt();
+}
+
+/** Lo que mira trackReload de la partida (MatchState lo cumple). */
+export interface ReloadView { me: { alive: boolean }; over: unknown; inv: Pick<Inventory, 'slots' | 'active'> }
+
+/**
+ * Corta el sonido de la recarga cuando la recarga se cancela: la que suena es la del arma en mano, desde su evento
+ * `reload` mientras sigue su reloadUntil. Si cambia de arma, muere, termina la partida o se sale de ella (`state` null),
+ * lo que faltaba no suena. Si termina bien también se avisa, pero para entonces ya sonó todo. Va una vez por cuadro,
+ * después de playEvents, con los eventos de todos los pasos del cuadro.
+ */
+export function trackReload(sfx: Sfx): (events: readonly MatchEvent[], state: ReloadView | null) => void {
+  let pending = false;
+  let until: number | null = null;
+  return (events, state) => {
+    const gun = state && state.me.alive && !state.over ? state.inv.slots[state.inv.active] : null;
+    const now = gun ? gun.reloadUntil : null;
+    if (events.some((e) => e.type === 'reload')) {
+      pending = true;
+      until = now; // null: empezó y se canceló en el mismo cuadro
+    }
+    if (pending && (now === null || now !== until)) {
+      sfx.cancelReload();
+      pending = false;
+    }
+  };
 }
