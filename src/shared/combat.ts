@@ -133,7 +133,11 @@ const STAND_H = 1.8, CROUCH_H = 1.2;
 const LEGS_TOP = 0.8, BODY_TOP = 1.45;
 const EPS = 1e-6;
 
-/** Distancia a la que el rayo (dir unitaria) entra en el cilindro vertical del cuerpo, o null. */
+/** Alto del cilindro de un cuerpo (pies en `pos`, radio BODY_RADIUS): el del hitscan y el que frena al jugador. */
+export const bodyHeight = (crouching: boolean): number => (crouching ? CROUCH_H : STAND_H);
+
+/** Distancia a la que el rayo (dir unitaria) entra en el cilindro vertical del cuerpo, o null. Si el rayo nace adentro
+ *  del cilindro no lo cuenta: desde adentro de un cuerpo no se le pega (si no, cualquier tiro sería a la cabeza). */
 function rayCylinder(o: Vec3, d: Vec3, pos: Vec3, h: number, maxDist: number): number | null {
   const ox = o[0] - pos[0], oz = o[2] - pos[2];
   const a = d[0] * d[0] + d[2] * d[2];
@@ -156,9 +160,8 @@ function rayCylinder(o: Vec3, d: Vec3, pos: Vec3, h: number, maxDist: number): n
     const t0 = (pos[1] - o[1]) / d[1], t1 = (pos[1] + h - o[1]) / d[1];
     tIn = Math.max(tIn, Math.min(t0, t1)); tOut = Math.min(tOut, Math.max(t0, t1));
   }
-  if (tIn > tOut || tOut < 0) return null;
-  const t = Math.max(tIn, 0);
-  return t <= maxDist ? t : null;
+  if (tIn > tOut || tIn < 0) return null; // tIn < 0: el cuerpo queda atrás (tOut < 0) o el rayo nace adentro
+  return tIn <= maxDist ? tIn : null;
 }
 
 function partAt(yFromFeet: number, crouching: boolean): HitPart {
@@ -167,7 +170,8 @@ function partAt(yFromFeet: number, crouching: boolean): HitPart {
 }
 
 /** Primer impacto del rayo en `range` metros: cuerpos (cilindros de radio 0,35), prismas del mundo o el piso (y = 0).
- *  Un rayo que nace adentro de un prisma pega ahí mismo (dist 0), no lo atraviesa. */
+ *  Un rayo que nace adentro de un prisma pega ahí mismo (dist 0), no lo atraviesa. Uno que nace adentro de un cuerpo
+ *  no le pega a ese cuerpo: sigue hasta lo que haya después. */
 export function hitscan(world: CollisionWorld, targets: readonly Hitbox[], origin: Vec3, dir: Vec3, range: number): ShotHit | null {
   const len = Math.hypot(dir[0], dir[1], dir[2]);
   if (!(len > 0)) return null;
@@ -191,13 +195,13 @@ export function hitscan(world: CollisionWorld, targets: readonly Hitbox[], origi
   // cuerpos
   let best: { id: string; dist: number; crouching: boolean; pos: Vec3 } | null = null;
   for (const tg of targets) {
-    const h = tg.crouching ? CROUCH_H : STAND_H;
+    const h = bodyHeight(tg.crouching);
     const t = rayCylinder(origin, d, tg.pos, h, worldHit ? Math.min(range, worldHit.dist) : range);
     if (t !== null && (best === null || t < best.dist)) best = { id: tg.id, dist: t, crouching: tg.crouching, pos: tg.pos };
   }
   if (best && (worldHit === null || best.dist < worldHit.dist)) {
     const point = at(best.dist);
-    const part = partAt(Math.min(Math.max(point[1] - best.pos[1], 0), best.crouching ? CROUCH_H : STAND_H), best.crouching);
+    const part = partAt(Math.min(Math.max(point[1] - best.pos[1], 0), bodyHeight(best.crouching)), best.crouching);
     return { kind: 'target', id: best.id, part, dist: best.dist, point };
   }
   return worldHit ? { kind: 'world', ...worldHit } : null;

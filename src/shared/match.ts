@@ -7,8 +7,8 @@
 // Tiempos: un paso cubre [t, t + h). Lo que se empieza en el paso (recarga, curación) arranca en t; lo que vence (fin de
 // la recarga o de la curación, el próximo disparo) pasa en el paso donde cae su hora, sin redondear al paso siguiente.
 // Así la cadencia es la de la tabla (9/s del rifle) y no la que da cuantizar a 60 Hz.
-import { AMMO_BOX, AMMO_MAX, WEAPONS, applyDamage, applyZoneDamage, finishReload, fire, hitscan, newGun, shotDamage, spreadDirs, spreadFor,
-  startReload } from './combat.ts';
+import { AMMO_BOX, AMMO_MAX, BODY_RADIUS, WEAPONS, applyDamage, applyZoneDamage, bodyHeight, finishReload, fire, hitscan, newGun, shotDamage,
+  spreadDirs, spreadFor, startReload } from './combat.ts';
 import type { AmmoId, Gun, HitPart, Hitbox, Vitals, WeaponId } from './combat.ts';
 import type { CollisionWorld } from './collision.ts';
 import type { Vec3 } from './geo.ts';
@@ -206,6 +206,53 @@ function move(p: PlayerState, input: PlayerInput, world: CollisionWorld, h: numb
   return { ...q, vel: [q.vel[0] * k, q.vel[1], q.vel[2] * k] };
 }
 
+/** Holgura para "ya está en el borde de un cuerpo" (el empuje lo deja justo en PLAYER.radius + BODY_RADIUS). */
+const TOUCH_EPS = 1e-6;
+
+/**
+ * Los maniquíes vivos son sólidos para el jugador, pero no son apoyo: encima de uno no se para. Si el paso dejó al
+ * jugador metido en uno (en planta, a menos de PLAYER.radius + BODY_RADIUS de su eje, y con las alturas superpuestas:
+ * con los pies arriba de su cabeza no lo toca), se lo saca en planta hasta ese borde y pierde la velocidad que llevaba
+ * hacia adentro (así se resbala por el costado). Si así queda metido en el mundo, fuera del mapa o en otro maniquí,
+ * vuelve en planta adonde estaba antes del paso; y si ni ahí entra, el mundo gana y queda como lo dejó el paso.
+ */
+function keepOutOfBodies(p: PlayerState, before: PlayerState, dummies: readonly Fighter[], world: CollisionWorld): PlayerState {
+  const reach = PLAYER.radius + BODY_RADIUS;
+  const y = p.pos[1], top = y + (p.crouching ? PLAYER.crouchHeight : PLAYER.height);
+  const solid = dummies.filter((f) => f.alive && y < f.player.pos[1] + bodyHeight(f.player.crouching) && f.player.pos[1] < top);
+  let x = p.pos[0], z = p.pos[2], vx = p.vel[0], vz = p.vel[2];
+  let pushed = false;
+  for (const f of solid) {
+    const c = f.player.pos;
+    let nx = x - c[0], nz = z - c[2];
+    const dist = Math.hypot(nx, nz);
+    if (dist >= reach - TOUCH_EPS) continue;
+    if (dist > 1e-9) {
+      nx /= dist; nz /= dist;
+    } else { // justo en el eje: hacia donde estaba antes del paso (o hacia +x)
+      nx = before.pos[0] - c[0]; nz = before.pos[2] - c[2];
+      const l = Math.hypot(nx, nz);
+      [nx, nz] = l > 1e-9 ? [nx / l, nz / l] : [1, 0];
+    }
+    x = c[0] + nx * reach; z = c[2] + nz * reach;
+    const vn = vx * nx + vz * nz;
+    if (vn < 0) {
+      vx -= vn * nx; vz -= vn * nz;
+    }
+    pushed = true;
+  }
+  if (!pushed) return p;
+  // donde el cuerpo entra: adentro del mapa, sin pared (en el piso, arriba de la franja de los escalones, como
+  // stepPlayer) y sin otro maniquí
+  const lo = p.onGround ? y + PLAYER.stepUp : y, b = world.bounds, R = PLAYER.radius;
+  const fits = (px: number, pz: number, others: boolean): boolean =>
+    px >= b.minX + R && px <= b.maxX - R && pz >= b.minZ + R && pz <= b.maxZ - R && !world.overlaps(px, pz, R, lo, top)
+    && !(others && solid.some((f) => Math.hypot(px - f.player.pos[0], pz - f.player.pos[2]) < reach - TOUCH_EPS));
+  if (fits(x, z, true)) return { ...p, pos: [x, y, z], vel: [vx, p.vel[1], vz] };
+  if (fits(before.pos[0], before.pos[2], false)) return { ...p, pos: [before.pos[0], y, before.pos[2]], vel: [0, p.vel[1], 0] };
+  return p;
+}
+
 const finite = (x: number): number => (Number.isFinite(x) ? x : 0);
 
 /** Juntar `d` (que está en `drops`): el inventario, el chaleco y el piso que quedan. No modifica lo que recibe. */
@@ -288,8 +335,8 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   const usePressed = input.use === true && !s.held.use;
   const firePressed = input.fire === true && !s.held.fire;
 
-  // 1. movimiento
-  const player = move(s.me.player, input, world, dt, inv.healingUntil !== null);
+  // 1. movimiento: contra el mundo (stepPlayer) y después contra los maniquíes
+  const player = keepOutOfBodies(move(s.me.player, input, world, dt, inv.healingUntil !== null), s.me.player, dummies, world);
 
   // 2. cambio de ranura: cancela la recarga del arma que se guarda y la curación
   if ((input.slot === 0 || input.slot === 1) && input.slot !== inv.active) {

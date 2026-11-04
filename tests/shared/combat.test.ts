@@ -201,6 +201,15 @@ describe('hitscan', () => {
     const r = hitscan(mk([box(-1, -1, 1, 1)]), [dummy], [0, 1, 0], N, 100);
     expect(r).toMatchObject({ kind: 'world', dist: 0 });
   });
+  it('un tiro desde adentro de un cuerpo no le pega: sigue hasta lo que haya después', () => {
+    const inside: Vec3 = [0.1, 1.65, -10.1]; // un ojo adentro del cilindro del maniquí, a la altura de la cabeza
+    // casi vertical y hacia atrás (pitch 1,4), como el exploit medido; también horizontal, hacia arriba y al piso
+    const dirs: Vec3[] = [[0, Math.sin(1.4), Math.cos(1.4)], [0, 0, 1], N, [1, 0, 0], [0, 1, 0], [0, -1, 0], [0.3, -0.2, -0.9]];
+    for (const d of dirs) expect(hitscan(mk(), [dummy], inside, d, 100)?.kind ?? 'nada', `dir ${d}`).not.toBe('target');
+    const behind: Hitbox = { id: 'atrás', pos: [0, 0, -20], crouching: false };
+    expect(hitscan(mk(), [dummy, behind], inside, N, 100)).toMatchObject({ kind: 'target', id: 'atrás', part: 'cabeza' });
+    expect(hitscan(mk(), [dummy], inside, [0, -1, 0], 100)).toMatchObject({ kind: 'world', normal: [0, 1, 0] }); // el piso
+  });
 });
 
 describe('shotDamage', () => {

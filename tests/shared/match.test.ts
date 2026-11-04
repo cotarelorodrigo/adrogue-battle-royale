@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { CollisionWorld, buildCollisionWorld } from '../../src/shared/collision.ts';
-import { AMMO_BOX, AMMO_MAX, WEAPONS, newGun } from '../../src/shared/combat.ts';
+import { AMMO_BOX, AMMO_MAX, BODY_RADIUS, WEAPONS, newGun } from '../../src/shared/combat.ts';
 import type { WeaponId } from '../../src/shared/combat.ts';
 import { SIM_HZ } from '../../src/shared/fixed-step.ts';
 import type { Vec3 } from '../../src/shared/geo.ts';
@@ -414,6 +414,72 @@ describe('disparar', () => {
     expect(of(s.events, 'hit')).toEqual([]);
     expect(of(s.events, 'impact')).toHaveLength(WEAPONS.escopeta.pellets);
     expect(s.me.vitals.hp).toBe(100);
+  });
+});
+
+describe('maniquíes sólidos', () => {
+  const REACH = PLAYER.radius + BODY_RADIUS;
+  const plan = (p: Vec3, d: Vec3) => Math.hypot(p[0] - d[0], p[2] - d[2]);
+
+  test('no se atraviesa un maniquí: queda pegado adelante, sin velocidad hacia él', () => {
+    const d: Vec3 = [0, 0, -3];
+    const s = run(setup([d]), { forward: 1 }, 1); // mirando a −z, hacia el maniquí
+    expect(s.me.player.pos[2]).toBeGreaterThan(d[2]);
+    expect(plan(s.me.player.pos, d)).toBeCloseTo(REACH, 6);
+    expect(s.me.player.pos[0]).toBeCloseTo(0, 6);
+    expect(Math.hypot(s.me.player.vel[0], s.me.player.vel[2])).toBeLessThan(MATCH.movingSpeed); // para la dispersión, quieto
+    expect(s.dummies[0].player.pos).toEqual(d); // el maniquí no se mueve
+  });
+
+  test('en diagonal se resbala por el costado y sigue', () => {
+    const d: Vec3 = [0.3, 0, -3];
+    let s = setup([d]);
+    for (let i = 0; i < 90; i++) {
+      s = step(s, { forward: 1 });
+      expect(plan(s.me.player.pos, d)).toBeGreaterThan(REACH - 1e-6);
+    }
+    expect(s.me.player.pos[2]).toBeLessThan(d[2] - REACH); // ya lo pasó
+  });
+
+  test('uno muerto no frena', () => {
+    const s0 = mod(setup([[0, 0, -3], [-40, 0, 0]]), (c) => { c.dummies[0].alive = false; c.dummies[0].vitals.hp = 0; });
+    const s = run(s0, { forward: 1 }, 1);
+    expect(s.me.player.pos[2]).toBeLessThan(-5);
+  });
+
+  test('con los pies arriba de su cabeza no lo empuja de costado; al bajar, sí (encima no se para)', () => {
+    const d: Vec3 = [0, 0, -3];
+    let s = mod(setup([d]), (c) => { c.me.player = { ...initialState([0.2, 2.5, -3]), onGround: false }; });
+    s = run(s, {}, 0.2); // los pies todavía arriba de 1,8 m
+    expect(s.me.player.pos[1]).toBeGreaterThan(1.8);
+    expect(s.me.player.pos[0]).toBeCloseTo(0.2, 9);
+    s = run(s, {}, 1);
+    expect(s.me.player.onGround).toBe(true);
+    expect(s.me.player.pos[1]).toBe(0);
+    expect(plan(s.me.player.pos, d)).toBeCloseTo(REACH, 6);
+  });
+
+  test('entre un maniquí y una pared sin lugar no pasa, y tampoco se mete en la pared', () => {
+    // el edificio arranca en x = 20; el maniquí, a 0,9 m de la pared: entre los dos quedan 0,55 m y el cuerpo mide 0,7
+    const d: Vec3 = [19.1, 0, 0];
+    const s0 = mod(setup([d]), (c) => { c.me.player = initialState([20 - PLAYER.radius - 0.01, 0, -3]); });
+    let s = s0;
+    for (let i = 0; i < 90; i++) {
+      s = step(s, { forward: 1, yaw: Math.PI }); // hacia +z, a lo largo de la pared
+      const p = s.me.player.pos;
+      expect(world.overlaps(p[0], p[2], PLAYER.radius, p[1] + PLAYER.stepUp, p[1] + PLAYER.height)).toBe(false);
+      expect(plan(p, d)).toBeGreaterThan(REACH - 1e-6);
+    }
+    expect(s.me.player.pos[2]).toBeLessThan(d[2]);
+  });
+
+  test('parado adentro de uno (lo pusieron ahí), el paso siguiente lo saca; y desde ahí un tiro a la espalda no le pega', () => {
+    const d: Vec3 = [0, 0, -10];
+    const s0 = withGun(mod(setup([d]), (c) => { c.me.player = initialState([0.1, 0, -10.1]); }), 0, 'pistola');
+    const s = step(s0, { fire: true, yaw: 0, pitch: 1.4 }); // casi vertical y hacia atrás (+z)
+    expect(plan(s.me.player.pos, d)).toBeCloseTo(REACH, 6);
+    expect(of(s.events, 'hit')).toEqual([]);
+    expect(s.dummies[0].vitals.hp).toBe(100);
   });
 });
 
