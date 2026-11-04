@@ -3,7 +3,9 @@
     "edificio-gris": {"pisos": 3, "color": "#c5c9ce", "colorPB": "#6e3b2d", "pb": "vidriera", "arriba": "ventanas"},
     "galeria-blanca": {"pisos": 2, "color": "#e7e6e2", "colorPB": "#e9e8e4", "pb": "vidriera", "arriba": "ventanas"},
     "edificio-galicia": {"pisos": 3, "color": "#d5d1ca", "colorPB": "#d9d6d0", "arriba": "vidriado"},
-    "galeria-ea": {"pisos": 2, "color": "#e4e1da", "material": "ladrillo", "pb": "vidriera", "arriba": "ventanas", "toldo": {"color": "#1f6b4f"}}
+    "galeria-ea": {"pisos": 2, "color": "#e4e1da", "material": "ladrillo", "pb": "vidriera", "arriba": "ventanas", "toldo": {"color": "#1f6b4f"}},
+    "camara-comercial": {"pisos": 4, "color": "#a9bdd3", "colorPB": "#2a2a2a", "pb": "vidriera", "arriba": "ventanas"},
+    "chalet-ladrillo": {"pisos": 2, "color": "#8a5040", "material": "ladrillo", "pb": "vidriera", "arriba": "balcones"}
   },
   "calles": [
     {
@@ -105,6 +107,28 @@
             {"ancho": 4.5, "usa": "galeria-ea", "colorPB": "#ededeb", "cartel": {"texto": "PRÉSTAMOS PERSONALES", "fondo": "#f4f4f4", "letra": "#2f7a3e"}},
             {"ancho": 4.5, "usa": "galeria-ea", "colorPB": "#e5e5e3", "cartel": {"texto": "LÓPEZ LIBREROS", "fondo": "#1f3f8f", "letra": "#ffffff"}, "nota": "kiosco de diarios; el cartel dice «López y Ve… Libreros», el resto queda tapado"},
             {"ancho": 12.3, "pisos": 2, "color": "#eeeeec", "colorPB": "#f4f4f2", "pb": "vidriera", "arriba": "ventanas", "puerta": "medio", "toldo": {"color": "#dcdcd9"}, "nota": "café de la esquina con Macías, con un logo «B» y dibujos de comida en la marquesina; en OSM figura Riviera Café, que no se ve"}
+          ]
+        },
+        {
+          "id": "ea-pellerano-macias-n",
+          "desde": "Pellerano",
+          "hasta": "Benigno Macías",
+          "vereda": "norte",
+          "fecha": "2025-08",
+          "osmAusentes": [],
+          "lotes": [
+            {"ancho": 7.6, "pisos": 1, "color": "#e9e7e2", "colorPB": "#1f2a4a", "pb": "vidriera", "arriba": "ciego", "puerta": "medio", "toldo": {"color": "#ecebe6"}, "cartel": {"texto": "mistral", "fondo": "#1f2a4a", "letra": "#ffffff"}, "nota": "esquina con Pellerano; complejo bajo con marquesina de lona blanca"},
+            {"ancho": 6.1, "pisos": 1, "color": "#e9e7e2", "pb": "acceso", "arriba": "ciego", "toldo": {"color": "#ecebe6"}, "nota": "pasaje del complejo, con un árbol"},
+            {"ancho": 7.4, "pisos": 1, "color": "#e9e7e2", "colorPB": "#1b1b1b", "pb": "vidriera", "arriba": "ciego", "toldo": {"color": "#ecebe6"}, "cartel": {"texto": "BROOKSFIELD", "fondo": "#1b1b1b", "letra": "#f2f2f2", "fuente": "serif"}, "nota": "también Wrangler y Lee"},
+            {"ancho": 12.5, "pisos": 3, "color": "#3d6b5c", "colorPB": "#b9bbbd", "pb": "persiana", "arriba": "vidriado", "nota": "local grande cerrado con tres persianas; arriba, azulejos verdes y un piso vidriado"},
+            {"ancho": 4.1, "usa": "camara-comercial", "colorPB": "#2556a8", "cartel": {"texto": "adrolent", "fondo": "#f4f4f4", "letra": "#1f5fae"}},
+            {"ancho": 4.1, "usa": "camara-comercial", "colorPB": "#d9d9d9", "cartel": {"texto": "LUARCA", "fondo": "#e6b3c1", "letra": "#9b2a4a", "fuente": "serif"}},
+            {"ancho": 2.2, "usa": "camara-comercial", "pb": "puerta", "nota": "entrada de la Cámara Comercial Industrial Almirante Brown; una franja negra con letras doradas cruza el frente"},
+            {"ancho": 3.9, "usa": "chalet-ladrillo", "colorPB": "#2b3f7a", "cartel": {"texto": "EXCHANGE", "fondo": "#f07a28", "letra": "#ffffff"}, "nota": "casa de cambio; chalet de ladrillo con techo de tejas"},
+            {"ancho": 3.1, "usa": "chalet-ladrillo", "colorPB": "#d8d6d2", "cartel": {"texto": "JUGUETERÍA", "fondo": "#1e1e1e", "letra": "#f2f2f2"}},
+            {"ancho": 1.8, "usa": "chalet-ladrillo", "colorPB": "#9a9a96", "pb": "puerta"},
+            {"ancho": 5.2, "pisos": 2, "color": "#cdb994", "colorPB": "#ece9e3", "pb": "vidriera", "arriba": "ciego", "cartel": {"texto": "LANAS & HILOS", "fondo": "#efefed", "letra": "#8a8a8a"}},
+            {"ancho": 6.1, "pisos": 2, "color": "#cdb994", "colorPB": "#2a2a2a", "pb": "vidriera", "arriba": "vidriado", "puerta": "fin", "cartel": {"texto": "el FARO", "fondo": "#262626", "letra": "#ffffff"}, "lugar": "el-faro", "nota": "resto bar en la esquina con Macías, con terraza y baranda arriba"}
           ]
         }
       ]
