@@ -11,6 +11,8 @@ import { MATCH, newMatch } from '../src/shared/match.ts';
 import { PLAYER } from '../src/shared/player.ts';
 import { zoneAt } from '../src/shared/zone.ts';
 import type { DebugStats } from '../src/client/debug.ts'; // también tipa window.__adrogue
+import { QUALITY } from '../src/client/render/quality.ts';
+import type { Quality } from '../src/client/render/quality.ts';
 
 export const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 
@@ -108,29 +110,30 @@ export interface CombatStop {
   yaw: number;
   /** los 11 maniquíes, de pie en dos filas adelante */
   dummies: Vec3[];
-  /** objetos a menos de 120 m (el radio del botín en alta; baja y media lo achican: QUALITY.dropRadius) */
-  drops: number;
+  /** objetos que se dibujan desde ahí en cada calidad: a menos de QUALITY[q].dropRadius (80, 100 y 120 m) */
+  drops: Record<Quality, number>;
   /** metros hasta el borde de la zona */
   zoneEdge: number;
 }
 
-/** El peor caso del combate a la vista: el punto de botín de la calle (adentro de la zona) con más objetos a menos de
- *  120 m, mirando hacia donde la vista llega más lejos (a lo largo de la calle: también lo más caro del mundo); los
- *  maniquíes en dos filas adelante, desde los 8 m, a 1,5 m a cada lado del medio y donde el cuerpo no se mete en ningún
- *  sólido. */
+/** El peor caso del combate a la vista: el punto de botín de la calle (adentro de la zona) con más objetos a la vista en
+ *  alta (a menos de 120 m), mirando hacia donde la vista llega más lejos (a lo largo de la calle: también lo más caro
+ *  del mundo); los maniquíes en dos filas adelante, desde los 8 m, a 1,5 m a cada lado del medio y donde el cuerpo no se
+ *  mete en ningún sólido. */
 export function combatStop(): CombatStop {
   const world = buildCollisionWorld(map);
   const m = newMatch(map, world, { seed: PERF_SEED, dummies: 11 });
   const t = 520;
   const z = zoneAt(m.zone, t);
   const fromCenter = (p: Vec3): number => Math.hypot(p[0] - z.center[0], p[2] - z.center[1]);
-  const dropsNear = (p: Vec3): number =>
-    m.drops.filter((d) => Math.hypot(d.pos[0] - p[0], d.pos[1] + MATCH.dropLift - p[1] - PLAYER.eye, d.pos[2] - p[2]) <= 120).length;
-  let pos: Vec3 | null = null, drops = -1;
+  /** objetos a menos de r de los ojos (al centro del objeto, como combat/drops.ts) */
+  const dropsNear = (p: Vec3, r: number): number =>
+    m.drops.filter((d) => Math.hypot(d.pos[0] - p[0], d.pos[1] + MATCH.dropLift - p[1] - PLAYER.eye, d.pos[2] - p[2]) <= r).length;
+  let pos: Vec3 | null = null, most = -1;
   for (const s of map.lootSpots) {
     if (s.tier !== 'calle' || fromCenter(s.pos) > z.r - 10) continue;
-    const n = dropsNear(s.pos);
-    if (n > drops) [pos, drops] = [s.pos, n];
+    const n = dropsNear(s.pos, QUALITY.alta.dropRadius);
+    if (n > most) [pos, most] = [s.pos, n];
   }
   if (!pos) throw new Error('combate: ningún punto de botín de la calle adentro de la zona');
   const eye: Vec3 = [pos[0], pos[1] + PLAYER.eye, pos[2]];
@@ -150,6 +153,8 @@ export function combatStop(): CombatStop {
     }
   }
   if (dummies.length < 11) throw new Error(`combate: entran ${dummies.length} maniquíes en la fila (vista despejada: ${clear.toFixed(0)} m)`);
+  const drops = { baja: 0, media: 0, alta: 0 };
+  for (const q of ['baja', 'media', 'alta'] as const) drops[q] = dropsNear(pos, QUALITY[q].dropRadius);
   return { seed: PERF_SEED, t, pos, yaw, dummies, drops, zoneEdge: z.r - fromCenter(pos) };
 }
 

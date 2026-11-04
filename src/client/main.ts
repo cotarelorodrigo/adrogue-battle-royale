@@ -17,6 +17,7 @@ import { eyeHeight, initialState, PLAYER, stepPlayer } from '../shared/player.ts
 import type { PlayerState } from '../shared/player.ts';
 import { createRng } from '../shared/rng.ts';
 import photoFacadeData from '../../data/photo-facades.json';
+import { aimTarget, scoped as scopeShown } from './aim.ts';
 import { createSfx, playEvents } from './audio/sfx.ts';
 import { benchSeconds, createBench } from './bench.ts';
 import { createDrops } from './combat/drops.ts';
@@ -153,6 +154,7 @@ async function run(boot: Boot): Promise<void> {
   root.append(canvas);
   const hud = createHud(root);
   const input = createInput(window);
+  const sfx = createSfx(); // el AudioContext recién nace con el primer gesto
   let quality = loadQuality();
   let raf = 0;
 
@@ -167,7 +169,10 @@ async function run(boot: Boot): Promise<void> {
   boot.overlay = overlay;
   document.addEventListener('pointerlockchange', () => {
     const locked = document.pointerLockElement === canvas;
-    if (!locked) input.reset(); // con el menú abierto no llegan los keyup ni los mouseup, y lo que se toque no cuenta
+    // Con el menú abierto no llegan los keyup ni los mouseup, y lo que se toque no cuenta: al soltar el puntero se suelta
+    // todo, y al capturarlo de nuevo no queda ningún pulso de antes (las teclas de movimiento apretadas sí siguen).
+    if (locked) input.clearPulses();
+    else input.reset();
     overlay.pointerLocked(locked);
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // el clic derecho apunta
@@ -190,6 +195,7 @@ async function run(boot: Boot): Promise<void> {
     boot.lost = true;
     cancelAnimationFrame(raf);
     input.dispose();
+    sfx.dispose();
     if (document.pointerLockElement) document.exitPointerLock();
     overlay.fatal(MSG_CONTEXT_LOST);
   });
@@ -241,7 +247,6 @@ async function run(boot: Boot): Promise<void> {
   applyCombatQuality(quality);
   const viewmodel = createViewmodel(scene.renderer);
   scene.addStatic([combat]);
-  const sfx = createSfx();
 
   /** El jugador del modo paseo. */
   let walker: PlayerState = initialState([0, 0, 0]);
@@ -294,6 +299,7 @@ async function run(boot: Boot): Promise<void> {
     hud.clear();
     combat.visible = true;
     overlay.setMode('partida');
+    input.clearPulses(); // un toque de antes (o de la partida anterior) no se aplica en la nueva
     input.setLook(yawToward(match.me.player.pos, [0, 0]), 0);
   }
   /** Modo paseo en un lugar (null = al azar): sin partida. */
@@ -302,6 +308,7 @@ async function run(boot: Boot): Promise<void> {
     combat.visible = false;
     hud.clear();
     overlay.setMode('paseo');
+    input.clearPulses();
     if (placeId === null) spawnRandom();
     else teleport(placeId);
   }
@@ -351,8 +358,7 @@ async function run(boot: Boot): Promise<void> {
 
   /** El fov va de a poco hacia el de la mira del arma (o al normal) y el mouse gira más despacio cuanto más se cierra. */
   function aimFov(m: MatchState, dt: number): void {
-    const gun = m.inv.slots[m.inv.active];
-    const target = gun && m.aiming && m.me.alive ? WEAPONS[gun.id].aimFov : FOV;
+    const target = aimTarget(m, FOV);
     fov += (target - fov) * (1 - Math.exp(-AIM_RATE * Math.min(0.1, Math.max(0, dt))));
     if (Math.abs(target - fov) < 0.05) fov = target;
     scene.setFov(fov);
@@ -392,7 +398,9 @@ async function run(boot: Boot): Promise<void> {
       scene.update(p.pos, eye, look.yaw, look.pitch);
       if (match) {
         aimFov(match, dt);
-        f = { state: match, cam: { pos: [p.pos[0], p.pos[1] + eye, p.pos[2]], yaw: look.yaw, pitch: look.pitch }, now, events };
+        // terminada, stepMatch deja `aiming` como estaba: el arma en mano y la mira del HUD dejan de apuntar, como el fov
+        const state = match.over && match.aiming ? { ...match, aiming: false } : match;
+        f = { state, cam: { pos: [p.pos[0], p.pos[1] + eye, p.pos[2]], yaw: look.yaw, pitch: look.pitch }, now, events };
         for (const v of views) v.update(f);
         viewmodel.update(f);
         playEvents(sfx, events);
@@ -405,9 +413,7 @@ async function run(boot: Boot): Promise<void> {
     scene.render();
     if (f) {
       viewmodel.render(); // encima del mundo, en el mismo cuadro: renderer.info suma las dos pasadas
-      const gun = f.state.inv.slots[f.state.inv.active];
-      const scoped = !!gun && WEAPONS[gun.id].scope === true && f.state.aiming && fov < (FOV + WEAPONS[gun.id].aimFov) / 2;
-      hud.combat({ ...f, fov, scoped, project: scene.project });
+      hud.combat({ ...f, fov, scoped: scopeShown(f.state, fov, FOV), project: scene.project });
       const over = f.state.over;
       if (over && !overShown) {
         overShown = true;

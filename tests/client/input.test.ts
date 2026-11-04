@@ -181,6 +181,7 @@ test('sin el puntero capturado los botones no disparan ni apuntan, pero soltarlo
 });
 
 test('use es true un solo read por toque de E (aunque se mantenga apretada)', () => {
+  setLocked(true);
   press('KeyE');
   expect(input.read().use).toBe(true);
   expect(input.read().use).toBe(false);
@@ -194,6 +195,7 @@ test('use es true un solo read por toque de E (aunque se mantenga apretada)', ()
 });
 
 test('R recarga y H usa el botiquín, un read por toque', () => {
+  setLocked(true);
   press('KeyR');
   press('KeyH');
   expect(input.read()).toMatchObject({ reload: true, heal: true });
@@ -201,6 +203,7 @@ test('R recarga y H usa el botiquín, un read por toque', () => {
 });
 
 test('1 y 2 eligen la ranura, un read por toque', () => {
+  setLocked(true);
   press('Digit2');
   expect(input.read().slot).toBe(1);
   expect(input.read().slot).toBeNull();
@@ -221,6 +224,7 @@ test('la rueda: arriba la ranura 1, abajo la 2 (solo con el puntero capturado)',
 });
 
 test('look() da la vista sin consumir los pulsos', () => {
+  setLocked(true);
   input.setLook(0.5, 0.2);
   press('KeyE');
   expect(input.look()).toEqual({ yaw: 0.5, pitch: 0.2 });
@@ -235,6 +239,50 @@ test('reset() descarta los pulsos y suelta los botones', () => {
   press('Digit2');
   input.reset();
   expect(input.read()).toMatchObject({ fire: false, aim: false, use: false, slot: null });
+});
+
+test('E, R, H, 1 y 2 con el puntero libre (menús, pantalla de fin) no cuentan, tampoco después de capturarlo', () => {
+  press('KeyE');
+  press('KeyR');
+  press('KeyH');
+  press('Digit2');
+  const none = { use: false, reload: false, heal: false, slot: null };
+  expect(input.read()).toMatchObject(none);
+  press('KeyE');
+  press('KeyH');
+  setLocked(true); // "Seguir" o "Jugar de nuevo"
+  expect(input.read()).toMatchObject(none);
+});
+
+test('WASD, Espacio y C apretadas con el puntero libre siguen contando al capturarlo (como antes)', () => {
+  press('KeyW');
+  press('Space');
+  setLocked(true);
+  expect(input.read()).toMatchObject({ forward: 1, jump: true });
+});
+
+test('reset() descarta un pulso guardado', () => {
+  setLocked(true);
+  press('KeyH');
+  input.reset();
+  expect(input.read().heal).toBe(false);
+});
+
+test('clearPulses() descarta los pulsos guardados pero no suelta lo que sigue apretado', () => {
+  setLocked(true);
+  press('KeyW');
+  mouse('mousedown', 2);
+  mouse('mousedown', 0);
+  mouse('mouseup', 0); // un clic guardado
+  press('KeyE');
+  press('KeyR');
+  press('KeyH');
+  press('Digit2');
+  input.clearPulses();
+  expect(input.read()).toMatchObject({ forward: 1, aim: true, fire: false, use: false, reload: false, heal: false, slot: null });
+  mouse('mousedown', 0);
+  input.clearPulses();
+  expect(input.read().fire).toBe(true); // el botón sigue apretado: es un estado, no un pulso
 });
 
 test('setZoom achica lo que gira el mouse', () => {

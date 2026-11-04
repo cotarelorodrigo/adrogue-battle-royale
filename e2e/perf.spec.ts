@@ -9,6 +9,7 @@
 import { mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { QUALITY } from '../src/client/render/quality.ts';
 import type { Quality } from '../src/client/render/quality.ts';
 import { collectErrors, combatStop, frames, goTo, goToCombat, maxStats, open, PERF_SEED, play, TOUR } from './helpers.ts';
 import type { DebugStats } from '../src/client/debug.ts';
@@ -16,9 +17,13 @@ import type { DebugStats } from '../src/client/debug.ts';
 const DIR = 'test-results/perf';
 
 // Presupuestos del spec (el techo): baja 150 draw calls / 800.000 triángulos, media 300 / 1.500.000, alta 450 / 3.000.000.
-// Los de acá son ~1,2 × el máximo medido en los 6 puntos (SwiftShader, 2026-11-03: baja 107 / 108.238, media 204 / 190.633,
-// alta 320 / 252.971), para que una regresión salte mucho antes de llegar al techo. Si un cambio los supera con razón,
-// se vuelve a medir y se suben, sin pasar los del spec.
+// Los de acá se fijaron en ~1,2 × el máximo medido en los 6 puntos del recorrido, con el mundo solo (SwiftShader,
+// 2026-11-03: baja 107 / 108.238, media 204 / 190.633, alta 320 / 252.971), para que una regresión salte mucho antes de
+// llegar al techo. No se suben: si un cambio los pasa, se recorta (como el botín y la sombra de los maniquíes según la
+// calidad, en QUALITY).
+// Desde la etapa 2a cada punto se mide dentro de una partida con semilla fija (PERF_SEED, 42), con el botín, los
+// maniquíes y la zona que haya a la vista, más la parada "combate": el peor caso del combate. Máximos medidos el
+// 2026-11-04: baja 116 / 123.590, media 226 / 228.955 (los dos en "combate"), alta 338 / 271.045 (Esteban Adrogué).
 const BUDGET: Record<Quality, { drawCalls: number; triangles: number }> = {
   baja: { drawCalls: 130, triangles: 130_000 },
   media: { drawCalls: 245, triangles: 230_000 },
@@ -43,9 +48,11 @@ function check(q: Quality, id: string, s: DebugStats): void {
 
 const COMBAT = combatStop();
 
-test('la parada "combate" tiene botín cerca y la zona a la vista hasta en baja', () => {
-  console.log(`combate: ${COMBAT.drops} objetos a menos de 120 m, borde de la zona a ${COMBAT.zoneEdge.toFixed(0)} m`);
-  expect(COMBAT.drops).toBeGreaterThanOrEqual(30);
+test('la parada "combate" tiene botín a la vista en cada calidad y la zona cerca hasta en baja', () => {
+  const qs = ['baja', 'media', 'alta'] as const;
+  console.log(`combate: ${qs.map((q) => `${COMBAT.drops[q]} objetos en ${q} (a ${QUALITY[q].dropRadius} m)`).join(', ')}; ` +
+    `borde de la zona a ${COMBAT.zoneEdge.toFixed(0)} m`);
+  for (const q of qs) expect(COMBAT.drops[q], `objetos que se dibujan en ${q}`).toBeGreaterThanOrEqual(15);
   expect(COMBAT.zoneEdge).toBeLessThan(200); // la niebla de baja tapa la pared a los 250 m
 });
 

@@ -1,5 +1,6 @@
 // Teclado y mouse → MatchInput. Las teclas se identifican por KeyboardEvent.code: la posición física, sin importar la
-// distribución del teclado. El mouse (mirar, disparar, apuntar y la rueda) solo cuenta con el puntero capturado.
+// distribución del teclado. El mouse (mirar, disparar, apuntar y la rueda) y las teclas de pulso (E, R, H, 1 y 2) solo
+// cuentan con el puntero capturado: lo que se toque en un menú o en la pantalla de fin no se aplica después.
 //
 // Estados y pulsos (el contrato de stepMatch):
 // - WASD, Espacio, C, el clic izquierdo (`fire`) y el derecho (`aim`) son estados: read() dice si están apretados ahora
@@ -27,6 +28,9 @@ export interface Input {
   /** Suelta todas las teclas y botones y descarta los pulsos (al perder el foco, esconder la pestaña o soltar el
    *  puntero: no llegan los keyup ni los mouseup). */
   reset(): void;
+  /** Descarta los pulsos guardados (y el clic guardado) sin soltar lo que sigue apretado: al arrancar una partida o el
+   *  modo paseo y al capturar el puntero, para que nada de antes se aplique. */
+  clearPulses(): void;
   /** Fija la vista (al teletransportarse); el pitch se limita igual que con el mouse. */
   setLook(yaw: number, pitch: number): void;
   /** Factor de la sensibilidad del mouse: al apuntar, el fov se cierra y la vista tiene que girar más despacio. */
@@ -49,15 +53,18 @@ export function createInput(target: Window): Input {
   let slot: 0 | 1 | null = null;
 
   const locked = (): boolean => doc.pointerLockElement !== null;
-  const reset = (): void => {
-    held.clear();
-    fireHeld = aimHeld = false;
+  const clearPulses = (): void => {
     firePress = use = reload = heal = false;
     slot = null;
   };
+  const reset = (): void => {
+    held.clear();
+    fireHeld = aimHeld = false;
+    clearPulses();
+  };
   const onKeyDown = (e: KeyboardEvent): void => {
-    if (HELD_KEYS.has(e.code)) held.add(e.code);
-    if (e.repeat) return; // mantener E, R o H apretada no repite la acción
+    if (HELD_KEYS.has(e.code)) held.add(e.code); // como siempre: una tecla de movimiento apretada en el menú cuenta al volver
+    if (e.repeat || !locked()) return; // mantener E, R o H apretada no repite la acción; en un menú no cuentan
     switch (e.code) {
       case 'KeyE': use = true; break;
       case 'KeyR': reload = true; break;
@@ -120,12 +127,12 @@ export function createInput(target: Window): Input {
         heal,
         slot,
       };
-      firePress = use = reload = heal = false;
-      slot = null;
+      clearPulses();
       return r;
     },
     look: () => ({ yaw, pitch }),
     reset,
+    clearPulses,
     setLook(y, p) {
       yaw = y;
       pitch = clampPitch(p);
