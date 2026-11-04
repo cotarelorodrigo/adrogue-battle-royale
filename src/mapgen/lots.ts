@@ -1,5 +1,5 @@
 import polygonClipping from 'polygon-clipping';
-import { distPointSegment, ensureCCW, pointInPolygon, polygonArea } from '../shared/geo.ts';
+import { distPointSegment, ensureCCW, pointInPolygon, polygonArea, toWorld } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import { SIGN_H } from '../shared/mapdata.ts';
 import type { Building, Puerta, Road, Sign } from '../shared/mapdata.ts';
@@ -343,13 +343,11 @@ const DOOR_ON_FRONT = 0.05;
 /** Lo que ocupa sobre la fachada (m desde la punta de `desde`) cada puerta de una planta que da a la fachada. */
 function plantaDoorSpans(s: PlantaShape): [number, number][] {
   const pl = s.planta.planta;
-  const { origin, u, v } = s.frame;
   const cum = cumulative(s.front);
   return s.planta.puertas.flatMap((p): [number, number][] => {
     const [a, c] = [pl[p.arista], pl[(p.arista + 1) % pl.length]];
     const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
-    const [lu, lv] = [a[0] + ((c[0] - a[0]) * p.centro) / len, a[1] + ((c[1] - a[1]) * p.centro) / len];
-    const w: Vec2 = [origin[0] + lu * u[0] + lv * v[0], origin[1] + lu * u[1] + lv * v[1]];
+    const w = toWorld(s.frame, [a[0] + ((c[0] - a[0]) * p.centro) / len, a[1] + ((c[1] - a[1]) * p.centro) / len]);
     if (s.front.slice(1).every((q, i) => distPointSegment(w, s.front[i], q) > DOOR_ON_FRONT)) return [];
     const at = alongLine(w, s.front, cum);
     return [[at - p.ancho / 2, at + p.ancho / 2]];

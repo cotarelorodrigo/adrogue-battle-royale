@@ -1,16 +1,21 @@
 // Mundo de colisiones 2,5D: prismas verticales (planta poligonal × [minY, maxY]) y volúmenes de escalera,
 // indexados en una grilla uniforme. Lo usan el cliente y, más adelante, el servidor: solo depende de src/shared.
-import { ensureCCW, signedAreaFromAbove } from './geo.ts';
+import { ensureCCW, insetRing, signedAreaFromAbove } from './geo.ts';
 import type { Vec2, Vec3 } from './geo.ts';
-import type { Bounds, Building, MapData, Place, Tree } from './mapdata.ts';
+import { buildInterior } from './interiors/index.ts';
+import type { Interior } from './interiors/types.ts';
+import type { Bounds, Building, InteriorInput, MapData, Place, Tree } from './mapdata.ts';
 import { PLATFORM_H, stationPosts } from './station.ts';
 
+/** Un prisma con tag `glass:…` es vidrio (§2.2): frena a los jugadores y no a las balas (`throughGlass`). */
 export interface Prism { polygon: Vec2[]; minY: number; maxY: number; tag?: string }
 /** Volumen de una escalera de mano: 0,8 m de ancho a lo largo de la pared y 0,6 m de profundidad desde `base`
  *  hacia `normal` (normal exterior de la pared), con y ∈ [0, topY]. No colisiona: solo lo consulta `ladderAt`. */
 export interface LadderVolume { base: Vec2; normal: Vec2; topY: number }
 export interface RayHit { dist: number; point: Vec3; normal: Vec3; tag?: string }
 
+/** El tag de los prismas de vidrio empieza así. */
+export const GLASS_TAG = 'glass:';
 /** Tolerancia vertical: un intervalo que solo toca la tapa (pies = maxY ± EPS) no se superpone y sí apoya. */
 const EPS = 1e-6;
 /** Holgura que agrega `pushOut` para que el resultado quede estrictamente afuera. */
@@ -32,6 +37,8 @@ interface Solid extends Box {
   minY: number;
   maxY: number;
   tag: string | undefined;
+  /** vidrio: lo saltean `overlaps` y `raycast` con throughGlass */
+  glass: boolean;
 }
 
 interface Ladder extends Box {
@@ -140,7 +147,7 @@ function toSolid(p: Prism): Solid {
     minX = Math.min(minX, x); maxX = Math.max(maxX, x);
     minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
   });
-  return { v, minX, minZ, maxX, maxZ, minY: p.minY, maxY: p.maxY, tag: p.tag };
+  return { v, minX, minZ, maxX, maxZ, minY: p.minY, maxY: p.maxY, tag: p.tag, glass: p.tag?.startsWith(GLASS_TAG) === true };
 }
 
 function toLadder(l: LadderVolume): Ladder {
@@ -231,18 +238,21 @@ export class CollisionWorld {
 
   /** ¿El cilindro (disco de radio r en (x, z), y ∈ [minY, maxY]) se mete en algún prisma? El disco toca la planta si
    *  el centro está adentro o a distancia < r de un borde (tocar a exactamente r no cuenta), y las alturas tienen que
-   *  superponerse con largo > 0: con los pies en la tapa (minY = maxY del prisma) no hay superposición. */
-  overlaps(x: number, z: number, r: number, minY: number, maxY: number): boolean {
+   *  superponerse con largo > 0: con los pies en la tapa (minY = maxY del prisma) no hay superposición. Con
+   *  `throughGlass` el vidrio no cuenta (el hitscan). */
+  overlaps(x: number, z: number, r: number, minY: number, maxY: number, throughGlass = false): boolean {
     const g = this.grid;
     const n = g.query(x - r, z - r, x + r, z + r);
     for (let k = 0; k < n; k++) {
       const s = this.solids[g.found[k]];
+      if (throughGlass && s.glass) continue;
       if (overlapsY(s, minY, maxY) && discHits(s, x, z, r)) return true;
     }
     return false;
   }
 
-  /** Techo más alto ≤ maxY (± EPS) de los prismas cuya planta toca el disco (mismo criterio que `overlaps`); 0 = suelo. */
+  /** Techo más alto ≤ maxY (± EPS) de los prismas cuya planta toca el disco (mismo criterio que `overlaps`); 0 = suelo.
+   *  El vidrio cuenta: se apoya como cualquier sólido. */
   supportHeight(x: number, z: number, r: number, maxY: number): number {
     const g = this.grid;
     const n = g.query(x - r, z - r, x + r, z + r);
@@ -254,7 +264,8 @@ export class CollisionWorld {
     return best;
   }
 
-  /** Posición corregida para que el disco no toque ningún prisma que se superpone en altura, moviéndolo lo mínimo.
+  /** Posición corregida para que el disco no toque ningún prisma que se superpone en altura, moviéndolo lo mínimo
+   *  (el vidrio cuenta: frena a los jugadores).
    *  - Si el centro está adentro de un prisma, sale por el borde más cercano de ese prisma (solo esa proyección, una
    *    sola vez por llamada: si cae adentro de otro, devuelve esa salida).
    *  - Si no, junta los contactos (cada arista a < r + CONTACT_MARGIN), los convierte en restricciones del lado seguro
@@ -460,8 +471,8 @@ export class CollisionWorld {
 
   /** Primer impacto contra un prisma (paredes, tapas o bases) a ≤ maxDist. Solo cuentan las caras por las que el
    *  rayo entra: un rayo que nace adentro de un prisma, o justo sobre su tapa o su base (tA = 0), no golpea ese
-   *  prisma. El suelo no es un prisma. */
-  raycast(origin: Vec3, dir: Vec3, maxDist: number): RayHit | null {
+   *  prisma. El suelo no es un prisma. Con `throughGlass` el vidrio no cuenta (las balas lo atraviesan). */
+  raycast(origin: Vec3, dir: Vec3, maxDist: number, throughGlass = false): RayHit | null {
     const len = Math.hypot(dir[0], dir[1], dir[2]);
     if (!(len > 0) || !(maxDist >= 0)) return null;
     const ox = origin[0], oy = origin[1], oz = origin[2];
@@ -495,6 +506,7 @@ export class CollisionWorld {
       const n = g.collect(iz * g.nx + ix, 0);
       for (let k = 0; k < n; k++) {
         const si = g.found[k];
+        if (throughGlass && this.solids[si].glass) continue;
         const t = rayPrism(this.solids[si], ox, oy, oz, dx, dy, dz, Math.min(maxDist, bestT), nrm);
         if (t < bestT || (t === bestT && t !== Infinity && si < bestI)) {
           bestT = t; bestI = si; bnx = nrm[0]; bny = nrm[1]; bnz = nrm[2];
@@ -588,21 +600,8 @@ export interface ParapetEdge { i: number; a: Vec2; c: Vec2; ai: Vec2; ci: Vec2 }
 /** Las aristas del pretil de una planta antihoraria (salvo las de largo ~0). La arista de adentro sale de correr cada
  *  vértice por su bisectriz, con inglete limitado. La usan la colisión y el dibujo (client/world/geometry.ts). */
 export function parapetEdges(fp: Vec2[]): ParapetEdge[] {
-  const n = fp.length, t = PARAPET_T;
-  const normals = fp.map((a, i) => {
-    const c = fp[(i + 1) % n];
-    const dx = c[0] - a[0], dz = c[1] - a[1];
-    const len = Math.hypot(dx, dz) || 1;
-    return [-dz / len, dx / len] as Vec2; // hacia afuera
-  });
-  const inner = fp.map((p, i) => {
-    const n1 = normals[(i + n - 1) % n], n2 = normals[i];
-    const mx = n1[0] + n2[0], mz = n1[1] + n2[1];
-    const ml = Math.hypot(mx, mz);
-    if (ml < 1e-6) return [p[0] - n2[0] * t, p[1] - n2[1] * t] as Vec2;
-    const scale = Math.min((2 * t) / ml, PARAPET_MITER * t);
-    return [p[0] - (mx / ml) * scale, p[1] - (mz / ml) * scale] as Vec2;
-  });
+  const n = fp.length;
+  const inner = insetRing(fp, PARAPET_T, PARAPET_MITER);
   const out: ParapetEdge[] = [];
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
@@ -629,18 +628,30 @@ function orientedBox([cx, cz]: Vec2, rotation: number, length: number, depth: nu
   return [[cx - ux + vx, cz - uz + vz], [cx + ux + vx, cz + uz + vz], [cx + ux - vx, cz + uz - vz], [cx - ux - vx, cz - uz - vz]];
 }
 
-/** Lo que hace falta del mapa para armar sus sólidos (las vías, los bordes y dónde está la estación ubican los postes). */
+/** Lo que hace falta del mapa para armar sus sólidos (las vías, los bordes y dónde está la estación ubican los postes).
+ *  Con `interiors`, esos edificios son huecos (src/shared/interiors). */
 export type CollisionMap = Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props' | 'railways' | 'bounds'> & {
   places: Pick<Place, 'type' | 'position'>[];
+  interiors?: InteriorInput[];
 };
 
-/** Los sólidos y las escaleras del mapa. Tags: el id del edificio, `parapet:<id>` en su pretil, `station-post` en los
- *  postes de la estación, o el tipo de prop. */
+/** Los sólidos de un interior: los bloques que colisionan, con el tag de su edificio o, los de vidrio, `glass:<id>`. */
+export function interiorPrisms(i: Interior): Prism[] {
+  return i.blocks.filter((b) => b.collide !== 'none').map((b): Prism => ({
+    polygon: b.polygon, minY: b.y0, maxY: b.y1, tag: b.collide === 'glass' ? `${GLASS_TAG}${i.buildingId}` : i.buildingId,
+  }));
+}
+
+/** Los sólidos y las escaleras del mapa. Tags: el id del edificio (y de lo macizo de su interior), `glass:<id>` en sus
+ *  vidrios y barandas, `parapet:<id>` en su pretil, `station-post` en los postes de la estación, o el tipo de prop. */
 export function collisionPrisms(map: CollisionMap): { prisms: Prism[]; ladders: LadderVolume[] } {
   const prisms: Prism[] = [];
   const ladders: LadderVolume[] = [];
+  const inside = new Map((map.interiors ?? []).map((i) => [i.buildingId, i]));
   for (const b of map.buildings) {
-    prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
+    const input = inside.get(b.id);
+    if (input) prisms.push(...interiorPrisms(buildInterior(b, input)));
+    else prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
     if (b.fill) continue; // un relleno de hueco es un parche entre vecinos: sin pretil
     for (const e of parapetEdges(ensureCCW(b.footprint))) {
       prisms.push({ polygon: [e.a, e.c, e.ci, e.ai], minY: b.height, maxY: b.height + PARAPET_H, tag: `parapet:${b.id}` });

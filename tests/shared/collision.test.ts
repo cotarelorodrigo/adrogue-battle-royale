@@ -1,9 +1,11 @@
-import { CollisionWorld, DUMPSTER, PARAPET_H, PARAPET_T, PLATFORM_H, TREE_TRUNK_H, buildCollisionWorld, collisionPrisms, trunkHeight,
+import { CollisionWorld, DUMPSTER, PARAPET_H, PARAPET_T, PLATFORM_H, TREE_TRUNK_H, buildCollisionWorld, collisionPrisms, interiorPrisms, trunkHeight,
 } from '../../src/shared/collision.ts';
 import type { LadderVolume, Prism } from '../../src/shared/collision.ts';
 import { distPointSegment, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
-import type { Bounds, Building, MapData } from '../../src/shared/mapdata.ts';
+import { hitscan } from '../../src/shared/combat.ts';
+import { buildInterior } from '../../src/shared/interiors/index.ts';
+import type { Bounds, Building, InteriorInput, MapData } from '../../src/shared/mapdata.ts';
 import { PLAYER, initialState, stepPlayer } from '../../src/shared/player.ts';
 import type { PlayerState } from '../../src/shared/player.ts';
 import { stationPosts } from '../../src/shared/station.ts';
@@ -542,6 +544,75 @@ describe('pretiles', () => {
     const fill = mapWith({ buildings: [{ ...roof6, fill: true }] });
     expect(collisionPrisms(fill).prisms.map((p) => p.tag)).toEqual(['p6']);
     expect(buildCollisionWorld(fill).raycast([-10, 6.3, -5], [1, 0, 0], 100)).toBeNull();
+  });
+});
+
+describe('vidrio (tag glass:)', () => {
+  // una vidriera de 0,04 m en x ∈ [0, 0,04], de z = −10 a 0, de 0,3 a 2,3 m; atrás, la pared en x ∈ [5, 5,2]
+  const pane: Prism = { polygon: [[0, 0], [0.04, 0], [0.04, -10], [0, -10]], minY: 0.3, maxY: 2.3, tag: 'glass:v1' };
+  const wall: Prism = { polygon: [[5, 0], [5.2, 0], [5.2, -10], [5, -10]], minY: 0, maxY: 3, tag: 'v1' };
+  const gw = new CollisionWorld([pane, wall], [], bounds);
+
+  test('overlaps cuenta el vidrio salvo con throughGlass', () => {
+    expect(gw.overlaps(0.02, -5, 0.1, 1, 1.5)).toBe(true);
+    expect(gw.overlaps(0.02, -5, 0.1, 1, 1.5, true)).toBe(false);
+    expect(gw.overlaps(5.1, -5, 0.1, 1, 1.5, true)).toBe(true); // lo sólido sigue contando
+  });
+
+  test('raycast pega en el vidrio por defecto y con throughGlass sigue hasta la pared', () => {
+    const glass = gw.raycast([-2, 1.5, -5], [1, 0, 0], 100)!;
+    expect(glass.dist).toBeCloseTo(2, 9);
+    expect(glass.tag).toBe('glass:v1');
+    const through = gw.raycast([-2, 1.5, -5], [1, 0, 0], 100, true)!;
+    expect(through.dist).toBeCloseTo(7, 9);
+    expect(through.tag).toBe('v1');
+  });
+
+  test('supportHeight y pushOut cuentan el vidrio: frena a los jugadores', () => {
+    expect(gw.supportHeight(0.02, -5, 0.35, 3)).toBeCloseTo(2.3, 9);
+    const [x] = gw.pushOut(-0.2, -5, 0.35, 0.5, 1.8);
+    expect(x).toBeLessThanOrEqual(-0.35 + 1e-6);
+    const s = hold(gw, initialState([-2, 0, -5]), 2, false, -Math.PI / 2); // mirando a +x, contra el vidrio
+    expect(s.pos[0]).toBeLessThan(0);
+  });
+});
+
+describe('interiores', () => {
+  // el cuadrado de 10 × 10 (x ∈ [0, 10], z ∈ [−10, 0]), con una puerta en la arista z = 0 y un vidrio en la de x = 10
+  const input: InteriorInput = {
+    placeId: 'local', buildingId: 'p6', frame: { origin: [0, 0], u: [1, 0], v: [0, -1] },
+    openings: [{ kind: 'puerta', edge: 0, s0: 4, s1: 5.6, y0: 0, y1: 2.3 }, { kind: 'vidrio', edge: 1, s0: 2, s1: 8, y0: 0.3, y1: 2.3 }],
+    patios: [],
+  };
+  const hollow = mapWith({ buildings: [roof6, { ...roof6, id: 'vecino', footprint: [[20, 0], [30, 0], [30, -10], [20, -10]] }], interiors: [input] });
+
+  test('interiorPrisms: los bloques que colisionan, con el tag del edificio o glass:<id>', () => {
+    const i = buildInterior(roof6, input);
+    const prisms = interiorPrisms(i);
+    expect(prisms).toHaveLength(i.blocks.filter((b) => b.collide !== 'none').length);
+    expect(prisms.filter((p) => p.tag === 'glass:p6')).toHaveLength(i.blocks.filter((b) => b.collide === 'glass').length);
+    expect(prisms.every((p) => p.tag === 'p6' || p.tag === 'glass:p6')).toBe(true);
+  });
+
+  test('collisionPrisms: el edificio con interior deja de ser un prisma lleno; el pretil y los otros edificios siguen igual', () => {
+    const { prisms } = collisionPrisms(hollow);
+    expect(prisms.some((p) => p.tag === 'p6' && p.minY === 0 && p.maxY === 6 && p.polygon === roof6.footprint)).toBe(false);
+    expect(prisms.filter((p) => p.tag === 'parapet:p6')).toHaveLength(4);
+    expect(prisms.filter((p) => p.tag === 'vecino')).toEqual([{ polygon: [[20, 0], [30, 0], [30, -10], [20, -10]], minY: 0, maxY: 6, tag: 'vecino' }]);
+    const w = buildCollisionWorld(hollow);
+    expect(w.overlaps(5, -5, 0.35, 0.05, 1.8)).toBe(false); // adentro hay lugar
+    expect(w.supportHeight(5, -5, 0.35, 10)).toBeCloseTo(6, 9); // el techo sigue a 6 m
+    expect(w.overlaps(25, -5, 0.35, 0.05, 1.8)).toBe(true);
+    // sin interiors (o con la lista vacía) todo sigue como antes
+    expect(collisionPrisms({ ...hollow, interiors: undefined }).prisms.filter((p) => p.tag === 'p6')).toHaveLength(1);
+  });
+
+  test('desde la calle se entra por la puerta y se dispara a través del vidrio', () => {
+    const w = buildCollisionWorld(hollow);
+    expect(hitscan(w, [{ id: 'adentro', pos: [5, 0, -5], crouching: false }], [15, 1.5, -5], [-1, 0, 0], 100)).toMatchObject({ kind: 'target', id: 'adentro' });
+    const s = hold(w, initialState([4.8, 0, 2]), 1.5, false, 0); // mirando a −z, por la puerta
+    expect(pointInPolygon([s.pos[0], s.pos[2]], roof6.footprint)).toBe(true);
+    expect(s.pos[1]).toBe(0);
   });
 });
 

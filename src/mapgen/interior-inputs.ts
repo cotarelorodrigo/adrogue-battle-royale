@@ -1,12 +1,11 @@
 // Entradas de los interiores en el mapa (MapData.interiors): por cada lugar entrable con lote o planta relevada, su marco
 // local, sus aberturas sobre la planta guardada (ya redondeada) y sus patios. Es lo único que guarda el mapa: el interior
 // se arma en src/shared/interiors a partir de esto y del edificio.
-import { distPointSegment, pointInPolygon, signedAreaFromAbove } from '../shared/geo.ts';
+import { distPointSegment, pointInPolygon, signedAreaFromAbove, toWorld } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import { BAY_W, DOOR_MIN_W, GROUND_CELLS, LEVEL_H, LOT_OPENINGS, isLotCell } from '../shared/interiors/openings.ts';
 import type { Building, Frame, InteriorInput, Opening, Place } from '../shared/mapdata.ts';
 import { doorBay } from './lots.ts';
-import { toWorld } from './plantas.ts';
 import type { PlantaShape } from './plantas.ts';
 import { ring, rn, v2 } from './round.ts';
 

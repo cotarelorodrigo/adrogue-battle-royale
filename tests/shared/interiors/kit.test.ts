@@ -1,0 +1,512 @@
+import { exitPockets } from '../../../src/mapgen/pockets.ts';
+import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
+import { CollisionWorld, interiorPrisms } from '../../../src/shared/collision.ts';
+import type { Prism } from '../../../src/shared/collision.ts';
+import { hitscan } from '../../../src/shared/combat.ts';
+import { SIM_HZ } from '../../../src/shared/fixed-step.ts';
+import { ensureCCW, polygonArea, signedAreaFromAbove, toWorld } from '../../../src/shared/geo.ts';
+import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
+import { publicFloorArea, validateInterior } from '../../../src/shared/interiors/index.ts';
+import { GROUND_Y, Kit, MODEL_BOX, RAIL_H, SOLID_MIN_H, TREAD, WALL_OUT } from '../../../src/shared/interiors/kit.ts';
+import type { Interior, ItemModel } from '../../../src/shared/interiors/types.ts';
+import type { Building, InteriorInput, MapData } from '../../../src/shared/mapdata.ts';
+import { PLAYER, initialState, stepPlayer } from '../../../src/shared/player.ts';
+import type { PlayerInput, PlayerState } from '../../../src/shared/player.ts';
+import { FIXTURE_BOUNDS, LOOKS, testInterior } from './fixture.ts';
+import { climbStair, doorDepth, enterDoor, insideOf, walkTo } from './walk.ts';
+
+const H = 1 / SIM_HZ;
+const within = (v: number, want: number, tol = 0.05): void => expect(Math.abs(v - want), `${v} vs ${want}`).toBeLessThanOrEqual(tol);
+const where = (s: PlayerState): string => `${s.pos.map((v) => v.toFixed(2)).join(', ')} (${s.mode}${s.onGround ? ', apoyado' : ''})`;
+const input = (o: Partial<PlayerInput>): PlayerInput => ({ forward: 0, right: 0, jump: false, crouch: false, yaw: 0, pitch: 0, ...o });
+/** yaw π: adelante es +z (hacia el fondo del local). */
+const TO_BACK = Math.PI;
+
+describe('entrar', () => {
+  const { b, interior, world } = testInterior();
+  const [door] = interior.doors;
+
+  test('la puerta del frente: en x = 5, normal hacia la calle, de 1,6 m y en la planta baja', () => {
+    expect(interior.doors).toHaveLength(1);
+    expect(door.at[0]).toBeCloseTo(5, 9);
+    expect(door.at[1]).toBeCloseTo(0, 9);
+    expect(door.normal[1]).toBeCloseTo(-1, 9);
+    expect(door.width).toBeCloseTo(1.6, 9);
+    expect(door.level).toBe(0);
+  });
+
+  test('derecho: termina adentro, apoyado, a y = 0, en ≤ 3 s', () => {
+    const s = enterDoor(world, door, { seconds: 3 });
+    expect(insideOf(b, s.pos), where(s)).toBe(true);
+    expect(doorDepth(door, s.pos), where(s)).toBeGreaterThanOrEqual(2);
+    expect(s.onGround, where(s)).toBe(true);
+    within(s.pos[1], 0);
+  });
+
+  // Review Focus 1: en diagonal no se traba en el marco, ni corriendo ni agachado
+  test.each([
+    { angleDeg: 35, sprint: true }, { angleDeg: -35, sprint: true },
+    { angleDeg: 35, crouch: true }, { angleDeg: -35, crouch: true },
+    { angleDeg: 35, sprint: true, crouch: true },
+  ])('a %o: termina adentro, apoyado, a y = 0, en ≤ 3 s', (o) => {
+    const s = enterDoor(world, door, { ...o, seconds: 3 });
+    expect(insideOf(b, s.pos), where(s)).toBe(true);
+    expect(doorDepth(door, s.pos), where(s)).toBeGreaterThanOrEqual(2);
+    expect(s.onGround, where(s)).toBe(true);
+    within(s.pos[1], 0);
+  });
+});
+
+describe('vidrio', () => {
+  const { b, world } = testInterior();
+
+  test('caminar contra un vidrio no lo cruza: a los 3 s sigue afuera', () => {
+    const s = walkTo(world, [2, 0, -2], [2, 5], 3);
+    expect(insideOf(b, s.pos), where(s)).toBe(false);
+    expect(s.pos[2]).toBeLessThan(0);
+  });
+
+  test('un tiro a y = 1,5 desde 2 m afuera, perpendicular al vidrio, pega en la cara de adentro de la pared del fondo', () => {
+    const hit = hitscan(world, [], [2, 1.5, -2], [0, 0, 1], 100);
+    expect(hit?.kind).toBe('world');
+    within(hit!.dist, 2 + 15 - WALL_OUT);
+  });
+
+  test('con un blanco adentro detrás del vidrio da target', () => {
+    const hit = hitscan(world, [{ id: 'adentro', pos: [2, 0, 3], crouching: false }], [2, 1.5, -2], [0, 0, 1], 100);
+    expect(hit).toMatchObject({ kind: 'target', id: 'adentro' });
+  });
+});
+
+describe('pared', () => {
+  const { world } = testInterior();
+
+  test('desde adentro, un blanco afuera detrás de la pared: el tiro da en la pared', () => {
+    const hit = hitscan(world, [{ id: 'afuera', pos: [-2, 0, 7], crouching: false }], [3, 1.5, 7], [-1, 0, 0], 100);
+    expect(hit?.kind).toBe('world');
+    within(hit!.point[0], WALL_OUT, 1e-6);
+  });
+
+  test('por el hueco de la puerta da target', () => {
+    const hit = hitscan(world, [{ id: 'vereda', pos: [5, 0, -2], crouching: false }], [5, 1.5, 5], [0, 0, -1], 100);
+    expect(hit).toMatchObject({ kind: 'target', id: 'vereda' });
+  });
+
+  test('en una esquina saliente aguda la pared no se sale de la planta; un vidrio pegado a ella deja un relleno', () => {
+    // triángulo con esquinas de 56° en (10, 0) y de 34° en (0, 15); el vidrio arranca a 0,1 m de la de 56°
+    const b: Building = { id: 'b-punta', footprint: [[10, 0], [0, 0], [0, 15]], height: 4, floors: 1, kind: 'shop', wall: 'plaster', tint: '#d8d0c0' };
+    const input: InteriorInput = {
+      placeId: 'punta', buildingId: b.id, frame: { origin: [0, 0], u: [1, 0], v: [0, 1] },
+      openings: [{ kind: 'vidrio', edge: 0, s0: 0.1, s1: 3, y0: 0.3, y1: 2.3 }], patios: [],
+    };
+    const k = new Kit(b, input);
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    const interior = k.done(0.8);
+    expect(validateInterior(interior)).toEqual([]);
+    const near = (x: Interior['blocks'][number]): boolean => x.polygon.every((q) => Math.hypot(q[0] - 10, q[1]) < 0.4);
+    expect(interior.blocks.filter((x) => near(x) && x.role === 'otro' && x.y0 === 0)).toHaveLength(1);
+    // la pared sobre el vidrio arranca en su marco (x = 9,9) y, recortada, sigue siendo de 0,2 (una pared)
+    const over = interior.blocks.filter((x) => x.role === 'pared' && x.y0 === 2.3 && x.polygon.some((q) => Math.hypot(q[0] - 9.9, q[1]) < 1e-9));
+    expect(over).toHaveLength(1);
+    expect(over[0].polygon.length).toBeGreaterThan(4);
+  });
+});
+
+describe('losa y pisos cerrados', () => {
+  test('adentro, isFreeSpot da true aunque la losa esté arriba', () => {
+    const { world } = testInterior();
+    expect(isFreeSpot(world, 5, 7)).toBe(true);
+  });
+
+  test('sin escalera (1 piso público), el piso de arriba es el bloque cerrado', () => {
+    const { world } = testInterior();
+    expect(world.overlaps(5, 7.5, 0.35, 3.25, 5.0)).toBe(true);
+  });
+
+  test('con 2 pisos públicos, arriba hay lugar y el piso 1 es libre', () => {
+    const { world } = testInterior({ publicFloors: 2 });
+    expect(world.overlaps(5, 7.5, 0.35, 3.25, 5.0)).toBe(false);
+    expect(isFreeSpot(world, 5, 7.5, 3.2)).toBe(true);
+  });
+});
+
+describe('alturas', () => {
+  const r6 = (n: number): number => Number(n.toFixed(6));
+  const solids = (i: Interior, role: string) => i.blocks.filter((x) => x.role === role && x.collide !== 'none').map((x) => [r6(x.y0), r6(x.y1)]);
+
+  test('1 piso público de 2: la planta baja a GROUND_Y sin sólido y un solo bloque cerrado de 3,0 a 7,0', () => {
+    const { interior } = testInterior();
+    expect(solids(interior, 'losa')).toEqual([[3.0, 7.0]]);
+    const ground = interior.blocks.filter((x) => x.role === 'losa' && x.collide === 'none');
+    expect(ground).toHaveLength(1);
+    expect(ground[0].y1).toBe(GROUND_Y);
+    expect(ground[0].top).toEqual(LOOKS.piso);
+  });
+
+  test('2 pisos públicos: la losa del piso 1 de 3,0 a 3,2 y el techo de 6,2 a 7,0', () => {
+    const { interior } = testInterior({ publicFloors: 2 });
+    expect(solids(interior, 'losa')).toEqual([[3.0, 3.2], [6.2, 7.0]]);
+    expect(interior.floors.map((f) => [f.level, f.y])).toEqual([[0, 0], [1, 3.2]]);
+  });
+
+  test('las paredes de afuera van de 0 a height y se cortan en las aberturas, con dintel arriba de la puerta', () => {
+    const { interior } = testInterior();
+    const outer = interior.blocks.filter((x) => (x.role === 'pared' || x.role === 'dintel') && x.hide?.includes(0));
+    expect(Math.min(...outer.map((x) => x.y0))).toBe(0);
+    expect(Math.max(...outer.map((x) => x.y1))).toBe(7);
+    const lintel = interior.blocks.filter((x) => x.role === 'dintel');
+    expect(lintel).toHaveLength(1);
+    expect([lintel[0].y0, lintel[0].y1]).toEqual([2.3, 7]);
+    const panes = interior.blocks.filter((x) => x.role === 'vidrio');
+    expect(panes.map((x) => x.collide)).toEqual(['glass', 'glass']);
+    expect(panes.map((x) => [x.y0, x.y1])).toEqual([[0.3, 2.3], [0.3, 2.3]]);
+  });
+
+  test('un piso de 8 m (D9): el techo va de 7,2 a 8,0 y abajo queda todo el alto', () => {
+    const b: Building = { id: 'alto', footprint: [[10, 0], [0, 0], [0, 15], [10, 15]], height: 8, floors: 1, kind: 'shop', wall: 'plaster', tint: '#ccc' };
+    const k = new Kit(b, { placeId: 'alto', buildingId: 'alto', frame: { origin: [0, 0], u: [1, 0], v: [0, 1] }, openings: [], patios: [] });
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    const i = k.done(0.8);
+    expect(solids(i, 'losa')).toEqual([[7.2, 8.0]]);
+    const world = new CollisionWorld(interiorPrisms(i), [], FIXTURE_BOUNDS);
+    expect(world.overlaps(5, 7.5, 0.35, 0.05, 7.1)).toBe(false);
+  });
+
+  test('con terraza: el techo es un piso público más, a height, y la escalera llega hasta ahí', () => {
+    const b: Building = { id: 'terraza', footprint: [[10, 0], [0, 0], [0, 15], [10, 15]], height: 3.8, floors: 1, kind: 'shop', wall: 'plaster', tint: '#ccc' };
+    const k = new Kit(b, { placeId: 'terraza', buildingId: 'terraza', frame: { origin: [0, 0], u: [1, 0], v: [0, 1] }, openings: [], patios: [] });
+    k.shell({ publicFloors: 1, terrace: true, wall: LOOKS.pared, floor: [LOOKS.piso, { mat: 'baldosa', color: '#b05a3a' }], ceiling: LOOKS.techo });
+    k.stair({ from: 0, to: 1, foot: [9.2, 4], dir: [0, 1], width: 1.2, look: LOOKS.escalera });
+    const i = k.done(0.8);
+    expect(i.terrace).toBe(true);
+    expect(i.floors.map((f) => [f.level, f.y])).toEqual([[0, 0], [1, 3.8]]);
+    expect(validateInterior(i)).toEqual([]);
+    const world = new CollisionWorld(interiorPrisms(i), [], FIXTURE_BOUNDS);
+    const s = climbStair(world, i.stairs[0]);
+    within(s.pos[1], 3.8);
+    expect(s.onGround, where(s)).toBe(true);
+    // la terraza tiene la baldosa y su baranda alrededor del hueco
+    expect(i.blocks.some((x) => x.y1 === 3.8 && x.top?.mat === 'baldosa')).toBe(true);
+    expect(i.blocks.some((x) => x.role === 'baranda' && x.y0 === 3.8)).toBe(true);
+  });
+
+  test('los huecos de la losa (D13): el piso 1 se parte en polígonos simples sin el hueco', () => {
+    const hole: Vec2[] = [[2, 5], [6, 5], [6, 10], [2, 10]];
+    const { b, input } = testInterior();
+    const k = new Kit(b, input);
+    k.shell({ publicFloors: 2, holes: [{ level: 1, polygon: hole }], wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    const interior = k.done(0.8);
+    const world = new CollisionWorld(interiorPrisms(interior), [], FIXTURE_BOUNDS);
+    expect(validateInterior(interior)).toEqual([]);
+    const slab = interior.blocks.filter((x) => x.role === 'losa' && x.y1 === 3.2);
+    expect(slab.length).toBeGreaterThan(1);
+    expect(world.supportHeight(4, 7.5, 0.35, 4)).toBe(0);
+    expect(world.supportHeight(4, 12, 0.35, 4)).toBeCloseTo(3.2, 9);
+    const inset = (10 - 2 * WALL_OUT) * (15 - 2 * WALL_OUT);
+    expect(slab.reduce((a, x) => a + polygonArea(x.polygon), 0)).toBeCloseTo(inset - 20, 6);
+    expect(interior.floors.find((f) => f.level === 1)!.area).toBeCloseTo(inset - 20, 6);
+    // la cara del costado se dibuja solo en el borde del hueco
+    for (const x of slab) expect(x.hide!.length, 'aristas sin cara').toBeLessThan(x.polygon.length);
+  });
+});
+
+describe('escalera', () => {
+  const { b, interior, world } = testInterior({ publicFloors: 2, stair: true });
+  const [s] = interior.stairs;
+
+  test('16 contrahuellas de 0,2 m: 15 escalones sólidos de 0,3 m hasta el piso, y el StairRun 0,6 m afuera de cada punta', () => {
+    const steps = interior.blocks.filter((x) => x.role === 'escalon');
+    expect(steps).toHaveLength(15);
+    for (const x of steps) expect(x.y0).toBe(0);
+    expect(s.from).toBe(0);
+    expect(s.to).toBe(1);
+    expect(s.foot[0]).toBeCloseTo(9.2, 9);
+    expect(s.foot[1]).toBe(0);
+    expect(s.foot[2]).toBeCloseTo(4 - 0.6, 9);
+    expect(s.top[1]).toBeCloseTo(3.2, 9);
+    expect(s.top[2]).toBeCloseTo(4 + 15 * TREAD + 0.6, 9);
+    expect(Math.abs(Math.sin(s.yaw))).toBeLessThan(1e-9); // sube hacia +z
+    expect(Math.cos(s.yaw)).toBeCloseTo(-1, 9);
+  });
+
+  test('climbStair sube a y = 3,2, apoyado y caminando; bajando vuelve a y = 0', () => {
+    const up = climbStair(world, s);
+    within(up.pos[1], 3.2);
+    expect(up.onGround, where(up)).toBe(true);
+    expect(up.mode).toBe('walk');
+    const down = climbStair(world, s, true);
+    within(down.pos[1], 0);
+    expect(down.onGround, where(down)).toBe(true);
+    expect(down.mode).toBe('walk');
+  });
+
+  // Review Focus 1: corriendo no se traba en los escalones
+  test('con Shift sube y baja igual', () => {
+    const up = climbStair(world, s, false, { sprint: true });
+    within(up.pos[1], 3.2);
+    expect(up.onGround && up.mode === 'walk', where(up)).toBe(true);
+    const down = climbStair(world, s, true, { sprint: true });
+    within(down.pos[1], 0);
+    expect(down.onGround && down.mode === 'walk', where(down)).toBe(true);
+  });
+
+  test('en el piso 1, el hueco tiene baranda de RAIL_H por el costado y el pie; por la llegada se baja', () => {
+    const rails = interior.blocks.filter((x) => x.role === 'baranda');
+    expect(rails.length).toBeGreaterThanOrEqual(2);
+    for (const x of rails) {
+      expect(x.collide).toBe('glass');
+      expect(x.y1 - x.y0).toBeCloseTo(RAIL_H, 9);
+    }
+    const side = walkTo(world, [7, 3.2, 6], [9.2, 6], 3);
+    within(side.pos[1], 3.2);
+    expect(side.pos[0]).toBeLessThan(8.6 - 0.3);
+    const foot = walkTo(world, [9.2, 3.2, 2.5], [9.2, 6], 3);
+    within(foot.pos[1], 3.2);
+    expect(foot.pos[2]).toBeLessThan(4 - 0.3);
+    const arrival = walkTo(world, [9.2, 3.2, 10], [9.2, 6], 3);
+    expect(arrival.pos[1]).toBeLessThan(2.5);
+    expect(insideOf(b, arrival.pos)).toBe(true);
+  });
+
+  test('el piso 1 cuenta sin el hueco de la escalera, y publicFloorArea suma los pisos (D11)', () => {
+    const inset = (10 - 2 * WALL_OUT) * (15 - 2 * WALL_OUT);
+    expect(interior.floors.map((f) => f.level)).toEqual([0, 1]);
+    expect(interior.floors[0].area).toBeCloseTo(inset, 6);
+    expect(interior.floors[1].area).toBeCloseTo(inset - 1.2 * 15 * TREAD, 6);
+    expect(interior.floors[1].holes).toHaveLength(1);
+    expect(publicFloorArea(interior)).toBeCloseTo(2 * inset - 1.2 * 15 * TREAD, 6);
+  });
+});
+
+describe('validateInterior', () => {
+  const msgs = (i: Interior): string => validateInterior(i).join('\n');
+
+  test('el de prueba da [], con y sin escalera', () => {
+    expect(validateInterior(testInterior().interior)).toEqual([]);
+    expect(validateInterior(testInterior({ publicFloors: 2, stair: true }).interior)).toEqual([]);
+  });
+
+  test('una contrahuella de 0,25: "contrahuella", con el lugar y dónde', () => {
+    const { interior } = testInterior({ publicFloors: 2, stair: true });
+    const steps = interior.blocks.filter((x) => x.role === 'escalon').sort((p, q) => p.y1 - q.y1);
+    steps[4].y1 = steps[3].y1 + 0.25;
+    const m = validateInterior(interior);
+    expect(m.join('\n')).toMatch(/contrahuella/);
+    expect(m.every((x) => x.startsWith('prueba: '))).toBe(true);
+    expect(m.join('\n')).toMatch(/escalón 5/);
+  });
+
+  test('un dintel de 2,0: "dintel"', () => {
+    const { interior } = testInterior({ extra: (k) => k.wall([0.2, 10], [6, 10], { gaps: [{ at: 3, width: 1, height: 2.0 }], look: LOOKS.pared }) });
+    expect(msgs(interior)).toMatch(/dintel/);
+  });
+
+  test('una baranda de 0,9: "baranda"', () => {
+    const { interior } = testInterior({ extra: (k) => k.block([[2, 10], [6, 10], [6, 10.05], [2, 10.05]], 0, 0.9, 'glass', 'baranda', {}) });
+    expect(msgs(interior)).toMatch(/baranda/);
+  });
+
+  test('una escalera de 1,0 de ancho: "ancho"', () => {
+    const { interior } = testInterior({ publicFloors: 2, extra: (k) => k.stair({ from: 0, to: 1, foot: [2, 4], dir: [0, 1], width: 1.0, look: LOOKS.escalera }) });
+    expect(msgs(interior)).toMatch(/ancho/);
+  });
+
+  test('una huella que no es de 0,3: "huella"', () => {
+    const { interior } = testInterior({ publicFloors: 2, stair: true });
+    const step = interior.blocks.filter((x) => x.role === 'escalon').sort((p, q) => p.y1 - q.y1)[2];
+    const zMax = Math.max(...step.polygon.map((q) => q[1]));
+    step.polygon = step.polygon.map(([x, z]) => [x, z === zMax ? z + 0.05 : z]); // 0,35 de huella
+    expect(msgs(interior)).toMatch(/huella/);
+  });
+
+  test('un tabique de 0,15: "tabique"; una pared de 0,2 pasa', () => {
+    expect(msgs(testInterior({ extra: (k) => k.wall([0.2, 10], [6, 10], { t: 0.15, look: LOOKS.pared }) }).interior)).toMatch(/tabique/);
+    expect(validateInterior(testInterior({ extra: (k) => k.wall([0.2, 10], [6, 10], { t: WALL_OUT, look: LOOKS.pared }) }).interior)).toEqual([]);
+  });
+
+  test('un mueble de MODEL_BOX sin su caja: "caja"', () => {
+    const { interior } = testInterior({ extra: (k) => k.furniture('mesa', [5, 8], 0, 0) });
+    expect(validateInterior(interior)).toEqual([]);
+    interior.blocks = interior.blocks.filter((x) => x.role !== 'mueble');
+    expect(msgs(interior)).toMatch(/caja/);
+  });
+
+  test('un bloque fuera de la planta: "sale de la planta"; uno `out`, no', () => {
+    const outside: Vec2[] = [[2, -3], [4, -3], [4, -2], [2, -2]];
+    expect(msgs(testInterior({ extra: (k) => k.block(outside, 0, 1, 'solid', 'mueble', {}) }).interior)).toMatch(/sale de la planta/);
+    expect(validateInterior(testInterior({ extra: (k) => k.block(outside, 0, 1, 'solid', 'otro', {}, true) }).interior)).toEqual([]);
+  });
+});
+
+describe('muebles', () => {
+  test('MODEL_BOX: las mesas y lo sólido de ≥ SOLID_MIN_H; sillas, banquetas, lámparas y la hoja de vidrio no tienen caja', () => {
+    expect(MODEL_BOX.mesa).toBeDefined();
+    expect(MODEL_BOX.sillon).toBeDefined();
+    for (const m of ['silla', 'banqueta', 'lampara', 'hoja-vidrio'] as ItemModel[]) expect(MODEL_BOX[m], m).toBeUndefined();
+    for (const [m, box] of Object.entries(MODEL_BOX)) expect(box!.h, m).toBeGreaterThanOrEqual(SOLID_MIN_H);
+  });
+
+  test('una mesa frena a un jugador que camina contra ella; una silla se cruza', () => {
+    const table = testInterior({ extra: (k) => k.furniture('mesa', [5, 8], 0, 0) });
+    expect(table.interior.items).toEqual([{ model: 'mesa', at: [5, 0, 8], yaw: expect.any(Number) }]);
+    const s = walkTo(table.world, [5, 0, 5], [5, 11], 3);
+    expect(s.pos[2], where(s)).toBeLessThan(8 - MODEL_BOX.mesa!.d / 2 - 0.3);
+    const chair = testInterior({ extra: (k) => k.furniture('silla', [5, 8], 0, 0) });
+    expect(chair.interior.blocks.some((x) => x.role === 'mueble')).toBe(false);
+    const c = walkTo(chair.world, [5, 0, 5], [5, 11], 3);
+    expect(Math.hypot(c.pos[0] - 5, c.pos[2] - 11), where(c)).toBeLessThan(0.5);
+  });
+
+  test('un blanco agachado detrás de una mesa, a 10 m, con un tiro desde 1,65 m al centro del cuerpo: da en la mesa', () => {
+    const { world } = testInterior({ extra: (k) => k.furniture('mesa', [5, 12.6], 0, 0) });
+    const shoot = (crouching: boolean) => {
+      const pos: Vec3 = [5, 0, 13.4];
+      const center = crouching ? PLAYER.crouchHeight / 2 : PLAYER.height / 2;
+      return hitscan(world, [{ id: 'detras', pos, crouching }], [5, 1.65, 3.4], [0, center - 1.65, 10], 100);
+    };
+    expect(shoot(true)?.kind).toBe('world');
+    expect(shoot(false)).toMatchObject({ kind: 'target', id: 'detras' }); // parado, la mesa no lo tapa
+  });
+});
+
+describe('bajo techo (Review Focus 2)', () => {
+  test('saltar bajo la losa: la cabeza frena en la losa y vuelve al piso en ≤ 1,5 s', () => {
+    const { world } = testInterior();
+    let s = stepPlayer(initialState([5, 0, 7]), input({ jump: true }), world, H);
+    let t = H, top = 0;
+    while (t < 1.5 && !s.onGround) {
+      s = stepPlayer(s, input({}), world, H);
+      t += H;
+      top = Math.max(top, s.pos[1]);
+    }
+    expect(s.onGround, where(s)).toBe(true);
+    expect(s.pos[1]).toBe(0);
+    expect(top + PLAYER.height).toBeLessThanOrEqual(3.0 + 1e-6);
+    expect(top).toBeGreaterThan(1.0);
+  });
+
+  /** W + salto hacia el fondo desde z = 5,5 (pegado al mueble: así no lo pasa de un salto) hasta que termina un mantle
+   *  (o 3 s). */
+  const climbAt = (world: CollisionWorld): { s: PlayerState; mantled: boolean } => {
+    let s = initialState([5, 0, 5.5]);
+    let mantled = false;
+    for (let t = 0; t < 3 * SIM_HZ; t++) {
+      s = stepPlayer(s, input({ forward: 1, jump: true, yaw: TO_BACK }), world, H);
+      if (s.mode === 'mantle') mantled = true;
+      else if (mantled) break;
+    }
+    for (let t = 0; t < SIM_HZ && !s.onGround; t++) s = stepPlayer(s, input({}), world, H);
+    return { s, mantled };
+  };
+  const box = (h: number) => (k: Kit) => k.block([[3, 6], [7, 6], [7, 6.6], [3, 6.6]], 0, h, 'solid', 'mueble', {});
+
+  test('trepar a un mostrador de 1,1 m funciona', () => {
+    const { s, mantled } = climbAt(testInterior({ extra: box(1.1) }).world);
+    expect(mantled).toBe(true);
+    expect(s.onGround, where(s)).toBe(true);
+    within(s.pos[1], 1.1, 1e-6);
+  });
+
+  test('frente a un estante de 2,2 m bajo la losa el mantle ni arranca (al aire libre, sí)', () => {
+    expect(climbAt(testInterior({ extra: box(2.2) }).world).mantled).toBe(false);
+    const shelf: Prism = { polygon: [[3, 6], [7, 6], [7, 6.6], [3, 6.6]], minY: 0, maxY: 2.2 };
+    expect(climbAt(new CollisionWorld([shelf], [], FIXTURE_BOUNDS)).mantled).toBe(true);
+  });
+});
+
+describe('colisión', () => {
+  const mapOf = (b: Building, input: InteriorInput): MapData => ({
+    version: 1, origin: { lat: 0, lon: 0 }, bounds: FIXTURE_BOUNDS, buildings: [b], outskirts: [], roads: [], railways: [], platforms: [],
+    parks: [], places: [], signs: [], props: [], trees: [], randomSpawns: [], lootSpots: [], interiors: [input],
+  });
+
+  test('exitPockets: el piso de adentro se une con la calle por la puerta (sin la puerta sería un hueco)', () => {
+    const { b, input } = testInterior();
+    expect(exitPockets(mapOf(b, input)).stats.pockets).toBe(0);
+    const closed = { ...input, openings: input.openings.filter((o) => o.kind !== 'puerta') };
+    expect(exitPockets(mapOf(b, closed)).stats.pockets).toBe(1);
+  });
+
+  test('raycast contra el vidrio: pega por defecto (tag glass:<id>) y lo atraviesa con throughGlass', () => {
+    const { world } = testInterior();
+    const glass = world.raycast([2, 1.5, -2], [0, 0, 1], 100);
+    expect(glass?.tag).toBe('glass:b-prueba');
+    expect(glass!.dist).toBeLessThan(2 + WALL_OUT);
+    const through = world.raycast([2, 1.5, -2], [0, 0, 1], 100, true);
+    expect(through?.tag).toBe('b-prueba');
+    within(through!.dist, 2 + 15 - WALL_OUT, 1e-6);
+  });
+
+  test('interiorPrisms: los bloques que colisionan, con el tag del edificio (o glass:) y sus alturas', () => {
+    const { interior } = testInterior();
+    const prisms = interiorPrisms(interior);
+    expect(prisms).toHaveLength(interior.blocks.filter((x) => x.collide !== 'none').length);
+    expect(new Set(prisms.map((p) => p.tag))).toEqual(new Set(['b-prueba', 'glass:b-prueba']));
+  });
+});
+
+describe('marco local', () => {
+  // un local de 8 × 6 girado 30° y con el marco espejado (V a la derecha de U)
+  const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6);
+  const frame = { origin: [20, -10] as Vec2, u: [c, s] as Vec2, v: [s, -c] as Vec2 };
+  const local: Vec2[] = [[0, 0], [8, 0], [8, 6], [0, 6]];
+  const fp = ensureCCW(local.map((p) => toWorld(frame, p)));
+  const b: Building = { id: 'girado', footprint: fp, height: 3.8, floors: 1, kind: 'shop', wall: 'plaster', tint: '#ccc' };
+  const front = fp.findIndex((p, i) => {
+    const q = fp[(i + 1) % fp.length];
+    const mid = toWorld(frame, [4, 0]);
+    return Math.abs((p[0] + q[0]) / 2 - mid[0]) < 1e-9 && Math.abs((p[1] + q[1]) / 2 - mid[1]) < 1e-9;
+  });
+  const input: InteriorInput = { placeId: 'girado', buildingId: 'girado', frame, openings: [{ kind: 'puerta', edge: front, s0: 3, s1: 4.6, y0: 0, y1: 2.3 }], patios: [] };
+  /** adelante de un yaw (convención de la cámara) */
+  const fwd = (yaw: number): Vec2 => [-Math.sin(yaw), -Math.cos(yaw)];
+
+  test('box, at y las aberturas en el marco local', () => {
+    const k = new Kit(b, input);
+    expect(k.box.u0).toBeCloseTo(0, 9);
+    expect(k.box.u1).toBeCloseTo(8, 9);
+    expect(k.box.v0).toBeCloseTo(0, 9);
+    expect(k.box.v1).toBeCloseTo(6, 9);
+    expect(k.at([1, 2])).toBeCloseTo2D(toWorld(frame, [1, 2]), 9);
+    const [o] = k.openings;
+    expect(o.a[1]).toBeCloseTo(0, 9);
+    expect(o.c[1]).toBeCloseTo(0, 9);
+    expect(Math.abs(o.c[0] - o.a[0])).toBeCloseTo(1.6, 9);
+  });
+
+  test('los ángulos: 0 mira a +V y π/2 a +U, en vistas, muebles, carteles y escaleras', () => {
+    const k = new Kit(b, input);
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    k.view('adentro', [4, 3], 0, 0);
+    k.view('costado', [4, 3], 0, Math.PI / 2);
+    k.furniture('mesa', [4, 3], 0, Math.PI / 2);
+    k.label('CARTEL', [4, 5.8], 2, [0, -1], 1, 0.4, { fondo: '#000', letra: '#fff', marco: '#000', fuente: 'sans' });
+    k.mark('centro', [4, 3], 0);
+    const i = k.done(0.8);
+    expect(fwd(i.views[0].yaw)).toBeCloseTo2D(frame.v, 9);
+    expect(fwd(i.views[1].yaw)).toBeCloseTo2D(frame.u, 9);
+    expect(fwd(i.items[0].yaw)).toBeCloseTo2D(frame.u, 9);
+    expect(i.labels[0].normal).toBeCloseTo2D([-frame.v[0], -frame.v[1]], 9);
+    expect(i.labels[0].at[1]).toBe(2);
+    const at = toWorld(frame, [4, 3]);
+    expect(i.marks.centro).toEqual([at[0], 0, at[1]]);
+    expect(i.views[0].pos).toEqual([at[0], 0, at[1]]);
+    // la caja de la mesa: el largo (w) sobre el +x del modelo, que con yaw π/2 local corre a lo largo de V
+    const box = i.blocks.find((x) => x.role === 'mueble')!;
+    const along = (d: Vec2) => Math.max(...box.polygon.map((p) => p[0] * d[0] + p[1] * d[1])) - Math.min(...box.polygon.map((p) => p[0] * d[0] + p[1] * d[1]));
+    expect(along(frame.v)).toBeCloseTo(MODEL_BOX.mesa!.w, 9);
+    expect(along(frame.u)).toBeCloseTo(MODEL_BOX.mesa!.d, 9);
+    expect(validateInterior(i)).toEqual([]);
+  });
+
+  test('con el marco espejado, todos los bloques quedan antihorarios y la puerta se entra', () => {
+    const k = new Kit(b, input);
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    const i = k.done(0.8);
+    for (const x of i.blocks) expect(signedAreaFromAbove(x.polygon), x.role).toBeGreaterThan(0);
+    const world = new CollisionWorld(interiorPrisms(i), [], { minX: -50, maxX: 80, minZ: -60, maxZ: 60 });
+    const st = enterDoor(world, i.doors[0]);
+    expect(insideOf(b, st.pos), where(st)).toBe(true);
+    expect(doorDepth(i.doors[0], st.pos)).toBeGreaterThanOrEqual(2);
+  });
+});

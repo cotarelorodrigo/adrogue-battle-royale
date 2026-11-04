@@ -2,7 +2,7 @@
 // siguen el camino de los lotes de data/frentes.json (recorte de Microsoft, cartel, frente con el atlas y ayudas de
 // ascenso) y suman sus propios avisos (la calle, las puertas).
 import polygonClipping from 'polygon-clipping';
-import { ensureCCW, pointInPolygon, polygonArea, project } from '../shared/geo.ts';
+import { ensureCCW, pointInPolygon, polygonArea, project, toWorld } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Frame, Road } from '../shared/mapdata.ts';
 import { FLOOR_H } from './buildings.ts';
@@ -31,9 +31,6 @@ const bbox = (r: Vec2[]): [number, number, number, number] =>
 const overlaps = (a: [number, number, number, number], b: [number, number, number, number]): boolean =>
   a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
 const fmt = (n: number): string => n.toFixed(1).replace('.', ',');
-
-/** El punto local (u, v) del marco `f`, en el mundo. */
-export const toWorld = (f: Frame, [u, v]: Vec2): Vec2 => [f.origin[0] + u * f.u[0] + v * f.v[0], f.origin[1] + u * f.u[1] + v * f.v[1]];
 
 /** El marco de una planta y, si es de frente, el frente sobre el que se apoya. */
 function frameOf(p: PlantaInput, roads: Road[]): { frame: Frame; fr?: Frontage } {

@@ -2,6 +2,7 @@ import { ORIGIN, areaRect, pointInPolygon } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
 import type { CollisionWorld } from '../shared/collision.ts';
+import { buildInteriors, validateInterior } from '../shared/interiors/index.ts';
 import { doorsOf } from '../shared/interiors/openings.ts';
 import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
@@ -148,6 +149,8 @@ export function assembleMap(
   const interiors = interiorInputs(map.buildings, bare, fr.plantas, new Map([...fr.fronts].map(([id, f]) => [id, f.front])));
   warnings.push(...interiors.warnings);
   map.interiors = interiors.inputs;
+  // cada interior armado cumple §2.1 y §2.3 (escalones, dinteles, barandas, espesores, muebles y planta)
+  for (const i of buildInteriors(map)) warnings.push(...validateInterior(i));
   const byId = new Map(map.buildings.map((b) => [b.id, b]));
   const claims = map.interiors.flatMap((i) => [byId.get(i.buildingId)!.footprint, ...i.patios]);
   // las apariciones quedan afuera: ni en la planta ni en un patio de un interior

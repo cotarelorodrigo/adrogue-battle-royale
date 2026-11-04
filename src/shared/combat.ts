@@ -170,8 +170,9 @@ function partAt(yFromFeet: number, crouching: boolean): HitPart {
 }
 
 /** Primer impacto del rayo en `range` metros: cuerpos (cilindros de radio 0,35), prismas del mundo o el piso (y = 0).
- *  Un rayo que nace adentro de un prisma pega ahí mismo (dist 0), no lo atraviesa. Uno que nace adentro de un cuerpo
- *  no le pega a ese cuerpo: sigue hasta lo que haya después. */
+ *  El vidrio no frena las balas (§2.2): el rayo lo atraviesa. Un rayo que nace adentro de un prisma pega ahí mismo
+ *  (dist 0), no lo atraviesa. Uno que nace adentro de un cuerpo no le pega a ese cuerpo: sigue hasta lo que haya
+ *  después. */
 export function hitscan(world: CollisionWorld, targets: readonly Hitbox[], origin: Vec3, dir: Vec3, range: number): ShotHit | null {
   const len = Math.hypot(dir[0], dir[1], dir[2]);
   if (!(len > 0)) return null;
@@ -180,11 +181,11 @@ export function hitscan(world: CollisionWorld, targets: readonly Hitbox[], origi
 
   // mundo
   let worldHit: { dist: number; point: Vec3; normal: Vec3 } | null = null;
-  if (world.overlaps(origin[0], origin[2], 0, origin[1] - EPS, origin[1] + EPS)) {
+  if (world.overlaps(origin[0], origin[2], 0, origin[1] - EPS, origin[1] + EPS, true)) {
     // `+ 0` convierte −0 en 0 (toEqual distingue ambos)
     worldHit = { dist: 0, point: [origin[0], origin[1], origin[2]], normal: [-d[0] + 0, -d[1] + 0, -d[2] + 0] };
   } else {
-    const r = world.raycast(origin, d, range);
+    const r = world.raycast(origin, d, range, true);
     if (r) worldHit = { dist: r.dist, point: r.point, normal: r.normal };
     if (d[1] < 0 && origin[1] > 0) {
       const tg = -origin[1] / d[1];

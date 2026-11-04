@@ -1,4 +1,6 @@
 // Coordenadas de juego en metros: x = este, z = sur (norte = −z), y arriba.
+import type { Frame } from './mapdata.ts';
+
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
 
@@ -43,6 +45,36 @@ export function ensureCCW(poly: Vec2[]): Vec2[] {
 
 export function polygonArea(poly: Vec2[]): number {
   return Math.abs(signedAreaFromAbove(poly));
+}
+
+/** El punto local (u, v) del marco `f`, en el mundo: origin + u·U + v·V. */
+export const toWorld = (f: Frame, [u, v]: Vec2): Vec2 => [f.origin[0] + u * f.u[0] + v * f.v[0], f.origin[1] + u * f.u[1] + v * f.v[1]];
+
+/** El punto del mundo en el marco `f` (U y V unitarios y perpendiculares): la inversa de toWorld. */
+export function toLocal(f: Frame, [x, z]: Vec2): Vec2 {
+  const dx = x - f.origin[0], dz = z - f.origin[1];
+  return [dx * f.u[0] + dz * f.u[1], dx * f.v[0] + dz * f.v[1]];
+}
+
+/** Los vértices de una planta antihoraria corridos `t` hacia adentro por la bisectriz de cada esquina, con el inglete
+ *  limitado a `miter`·t (en una punta aguda no se va lejos). Con eso arman su arista de adentro el pretil
+ *  (collision.ts) y las losas de los interiores: así las dos coinciden con la cara de adentro de las paredes. */
+export function insetRing(fp: Vec2[], t: number, miter: number): Vec2[] {
+  const n = fp.length;
+  const normals = fp.map((a, i) => {
+    const c = fp[(i + 1) % n];
+    const dx = c[0] - a[0], dz = c[1] - a[1];
+    const len = Math.hypot(dx, dz) || 1;
+    return [-dz / len, dx / len] as Vec2; // hacia afuera
+  });
+  return fp.map((p, i) => {
+    const n1 = normals[(i + n - 1) % n], n2 = normals[i];
+    const mx = n1[0] + n2[0], mz = n1[1] + n2[1];
+    const ml = Math.hypot(mx, mz);
+    if (ml < 1e-6) return [p[0] - n2[0] * t, p[1] - n2[1] * t] as Vec2;
+    const scale = Math.min((2 * t) / ml, miter * t);
+    return [p[0] - (mx / ml) * scale, p[1] - (mz / ml) * scale] as Vec2;
+  });
 }
 
 export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
