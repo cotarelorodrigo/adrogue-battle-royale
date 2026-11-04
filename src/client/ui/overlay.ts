@@ -1,7 +1,7 @@
 // Pantallas sobre el juego: título, menú de Esc, lugares, créditos, victoria, derrota y errores. Decide qué se ve según
 // el pointer lock: con el puntero capturado se juega; al soltarlo (Esc del navegador, cambio de ventana) aparece el menú.
 // "Hacé click para jugar", "Jugar de nuevo" y "Jugar una partida" arrancan una partida; elegir un lugar arranca el modo
-// paseo (sin partida, como en la etapa 1).
+// paseo (sin partida, como en la etapa 1): con una partida en curso, el menú de lugares lo avisa.
 import type { Place } from '../../shared/mapdata.ts';
 import { QUALITY_LABEL } from '../render/quality.ts';
 import type { Quality } from '../render/quality.ts';
@@ -10,6 +10,8 @@ import { createPlacesMenu } from './places-menu.ts';
 
 export const HELP = 'WASD moverse · Espacio saltar · C agacharse · Mouse mirar · M lugares · Esc menú';
 export const COMBAT_HELP = 'Clic disparar · Clic derecho apuntar · R recargar · E juntar · 1, 2 o rueda cambiar de arma · H botiquín';
+/** En el menú de lugares, con una partida en curso (en la etapa 1 solo teletransportaba). */
+export const LEAVES_MATCH = 'Elegir un lugar deja la partida y pasa al modo paseo';
 const QUALITIES = Object.entries(QUALITY_LABEL) as [Quality, string][];
 
 export type Screen = 'loading' | 'title' | 'playing' | 'menu' | 'places' | 'credits' | 'victoria' | 'derrota' | 'error' | 'bench';
@@ -17,8 +19,10 @@ export type Screen = 'loading' | 'title' | 'playing' | 'menu' | 'places' | 'cred
 /** Cómo terminó la partida, para la pantalla de fin. */
 export interface MatchResult {
   won: boolean;
-  /** cuántos quedaban vivos (en la derrota, sin contar al jugador) */
+  /** cuántos quedaban vivos (en la derrota, sin contar al jugador: 0 si el último maniquí murió en el mismo paso) */
   alive: number;
+  /** cuántos maniquíes tuvo la partida (0: práctica libre, donde solo mata la zona) */
+  dummies: number;
   /** segundos jugados */
   time: number;
   kills: number;
@@ -81,6 +85,13 @@ export function showFatal(root: HTMLElement, message: string): void {
   root.replaceChildren(wrap);
 }
 
+/** "Te eliminaron — quedaban N"; si el último maniquí murió en el mismo paso, empate; sin maniquíes, la zona. */
+function defeatTitle(r: MatchResult): string {
+  if (r.dummies === 0) return 'Te eliminó la zona';
+  if (r.alive === 0) return 'Te eliminaron — empate con la zona';
+  return `Te eliminaron — ${r.alive === 1 ? 'quedaba 1' : `quedaban ${r.alive}`}`;
+}
+
 export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
   const wrap = el('div', 'overlay');
 
@@ -116,6 +127,8 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
     quality,
     button('Lugares', () => show('places')),
     button('Créditos', () => show('credits')),
+    el('p', 'help', HELP),
+    el('p', 'help', COMBAT_HELP),
   );
 
   const end = el('div', 'panel end');
@@ -125,6 +138,7 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
 
   const credits = createCredits(() => show(home()));
   let places: HTMLElement | null = null;
+  const leavesMatch = el('p', 'help', LEAVES_MATCH);
   wrap.append(title, menu, end, credits);
   root.append(wrap);
 
@@ -132,6 +146,7 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
   let started = false; // ya se jugó: la pantalla de base pasa a ser el menú en vez del título
   let ended: 'victoria' | 'derrota' | null = null; // la partida terminó: la pantalla de base es la de fin
   let afterUnlock: Screen | null = null;
+  let mode: 'partida' | 'paseo' | null = null; // null: todavía no se jugó (el fondo del título es un paseo)
   const home = (): Screen => ended ?? (started ? 'menu' : 'title');
 
   function show(s: Screen): void {
@@ -142,8 +157,14 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
     end.hidden = s !== 'victoria' && s !== 'derrota';
     credits.hidden = s !== 'credits';
     if (places) places.hidden = s !== 'places';
+    showLeavesMatch();
     // Que Espacio no "apriete" el último botón con foco mientras se juega.
     if (s === 'playing' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  }
+
+  /** El aviso de lugares, solo con una partida en curso (ni antes de la primera, ni en el paseo, ni terminada). */
+  function showLeavesMatch(): void {
+    leavesMatch.hidden = !(mode === 'partida' && ended === null);
   }
 
   function setQuality(q: Quality): void {
@@ -167,6 +188,7 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
           o.requestLock();
         },
         () => show(home()),
+        leavesMatch,
       );
       wrap.append(places);
       status.hidden = true;
@@ -200,13 +222,15 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
       if (screen === 'places' || screen === 'credits') show(home());
     },
     setQuality,
-    setMode(mode) {
-      playFromWalk.hidden = mode !== 'paseo';
+    setMode(m) {
+      mode = m;
+      playFromWalk.hidden = m !== 'paseo';
+      showLeavesMatch();
     },
     matchOver(r) {
       if (screen === 'loading' || screen === 'error' || screen === 'bench') return;
       ended = r.won ? 'victoria' : 'derrota';
-      endTitle.textContent = r.won ? '¡Ganaste!' : `Te eliminaron — ${r.alive === 1 ? 'quedaba 1' : `quedaban ${r.alive}`}`;
+      endTitle.textContent = r.won ? '¡Ganaste!' : defeatTitle(r);
       const secs = Math.max(0, Math.floor(r.time)); // el tiempo jugado, para abajo
       endStats.textContent = `Tiempo: ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} · Eliminaciones: ${r.kills}`;
       if (screen === 'playing') {

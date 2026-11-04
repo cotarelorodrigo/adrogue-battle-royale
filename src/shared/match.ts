@@ -156,13 +156,19 @@ function bodies(fighters: readonly Fighter[]): Hitbox[] {
   return fighters.filter((f) => f.alive).map((f) => ({ id: f.id, pos: f.player.pos, crouching: f.player.crouching }));
 }
 
-/** El objeto que juntaría `use` ahora (para el cartel "E: juntar…"), o null. */
-export function nearestDrop(s: MatchState): MatchDrop | null {
-  return s.over ? null : dropInReach(s.drops, s.me.player, s.me.vitals, s.inv, s.look);
+/** El objeto que juntaría `use` ahora (para el cartel "E: juntar…"), o null. Con `all`, el más cercano al alcance
+ *  aunque no sirva juntarlo (para el cartel que dice que ya se tiene el máximo: ver canTake). */
+export function nearestDrop(s: MatchState, opts: { all?: boolean } = {}): MatchDrop | null {
+  if (s.over) return null;
+  return dropInReach(s.drops, s.me.player, s.look, opts.all ? null : (item) => worthTaking(item, s.me.vitals, s.inv));
 }
 
-/** ¿Sirve juntarlo? Un arma, siempre; la munición, el chaleco y los botiquines, si no se llegó al máximo. */
-function canTake(item: LootItem, vitals: Vitals, inv: Inventory): boolean {
+/** ¿Sirve juntar `d` ahora? Un arma, siempre; la munición, el chaleco y los botiquines, si no se llegó al máximo. */
+export function canTake(s: MatchState, d: MatchDrop): boolean {
+  return worthTaking(d.item, s.me.vitals, s.inv);
+}
+
+function worthTaking(item: LootItem, vitals: Vitals, inv: Inventory): boolean {
   switch (item.kind) {
     case 'arma': return true;
     case 'municion': return inv.ammo[item.ammo] < AMMO_MAX[item.ammo];
@@ -174,9 +180,10 @@ function canTake(item: LootItem, vitals: Vitals, inv: Inventory): boolean {
 /** Mirada unitaria con la convención de la cámara (spreadDirs): yaw 0 mira a −z, pitch positivo mira arriba. */
 const gaze = (yaw: number, pitch: number): Vec3 => [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
 
-/** El más cercano en planta de los que sirve juntar, a menos de pickReach, con el piso a menos de pickDy de los pies y
- *  mirándolo desde el ojo (coseno > pickCos), salvo que esté a menos de pickNear. */
-function dropInReach(drops: readonly MatchDrop[], p: PlayerState, vitals: Vitals, inv: Inventory, look: MatchState['look']): MatchDrop | null {
+/** El más cercano en planta de los que pasan `take` (null: todos), a menos de pickReach, con el piso a menos de pickDy de
+ *  los pies y mirándolo desde el ojo (coseno > pickCos), salvo que esté a menos de pickNear. */
+function dropInReach(drops: readonly MatchDrop[], p: PlayerState, look: MatchState['look'], take: ((item: LootItem) => boolean) | null):
+  MatchDrop | null {
   const eyeY = p.pos[1] + eyeHeight(p);
   const g = gaze(look.yaw, look.pitch);
   let best: MatchDrop | null = null;
@@ -184,7 +191,7 @@ function dropInReach(drops: readonly MatchDrop[], p: PlayerState, vitals: Vitals
   for (const d of drops) {
     const dx = d.pos[0] - p.pos[0], dz = d.pos[2] - p.pos[2];
     const dh = Math.hypot(dx, dz);
-    if (dh >= bestD || Math.abs(d.pos[1] - p.pos[1]) > MATCH.pickDy || !canTake(d.item, vitals, inv)) continue;
+    if (dh >= bestD || Math.abs(d.pos[1] - p.pos[1]) > MATCH.pickDy || (take && !take(d.item))) continue;
     if (dh >= MATCH.pickNear) {
       const dy = d.pos[1] + MATCH.dropLift - eyeY;
       if (!(dx * g[0] + dy * g[1] + dz * g[2] > MATCH.pickCos * Math.hypot(dx, dy, dz))) continue;
@@ -352,7 +359,7 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   }
 
   // 3. juntar
-  const d = usePressed ? dropInReach(drops, player, vitals, inv, look) : null;
+  const d = usePressed ? dropInReach(drops, player, look, (item) => worthTaking(item, vitals, inv)) : null;
   if (d) {
     ({ inv, vitals, drops, nextDropId } = takeDrop(d, inv, vitals, drops, nextDropId));
     events.push({ type: 'pickup', item: d.item });

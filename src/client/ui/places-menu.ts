@@ -3,8 +3,8 @@ import type { Place } from '../../shared/mapdata.ts';
 
 const RANDOM_LABEL = 'Aparecer en un lugar al azar';
 
-/** `onPick(null)` = al azar. */
-export function createPlacesMenu(places: Place[], onPick: (placeId: string | null) => void, onBack: () => void): HTMLElement {
+/** `onPick(null)` = al azar. `note`, si viene, va debajo del título (quien lo pasa decide cuándo se ve). */
+export function createPlacesMenu(places: Place[], onPick: (placeId: string | null) => void, onBack: () => void, note?: HTMLElement): HTMLElement {
   const panel = document.createElement('div');
   panel.className = 'panel';
   const h = document.createElement('h2');
@@ -29,6 +29,6 @@ export function createPlacesMenu(places: Place[], onPick: (placeId: string | nul
   back.type = 'button';
   back.textContent = 'Volver';
   back.addEventListener('click', onBack);
-  panel.append(h, list, back); // "Volver" queda fuera de la lista: la lista tiene solo los 39 lugares
+  panel.append(h, ...(note ? [note] : []), list, back); // "Volver" queda fuera de la lista: la lista tiene solo los 39 lugares
   return panel;
 }

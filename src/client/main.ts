@@ -417,7 +417,7 @@ async function run(boot: Boot): Promise<void> {
       const over = f.state.over;
       if (over && !overShown) {
         overShown = true;
-        overlay.matchOver({ won: over.won, alive: over.alive, time: over.at, kills: f.state.kills });
+        overlay.matchOver({ won: over.won, alive: over.alive, time: over.at, kills: f.state.kills, dummies: f.state.dummies.length });
       }
     } else {
       hud.combat(null);

@@ -76,6 +76,44 @@ test('con el puntero capturado se juega; al soltarlo aparece el menú de Esc', (
   expect(o.requestLock).toHaveBeenCalledTimes(1);
 });
 
+test('el menú de Esc también muestra los controles', () => {
+  overlay.ready(places);
+  overlay.pointerLocked(true);
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('menu');
+  expect(visibleText()).toContain(HELP);
+  expect(visibleText()).toContain(COMBAT_HELP);
+});
+
+test('con una partida en curso, el menú de lugares avisa que elegir uno la deja', () => {
+  const NOTE = 'Elegir un lugar deja la partida y pasa al modo paseo';
+  overlay.ready(places);
+  overlay.togglePlaces(); // desde el título, todavía sin partida
+  expect(visibleText()).not.toContain(NOTE);
+  overlay.togglePlaces();
+  overlay.setMode('partida');
+  overlay.pointerLocked(true);
+  overlay.togglePlaces();
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('places');
+  expect(visibleText()).toContain(NOTE);
+  btn('Banco').click(); // pasa al modo paseo
+  overlay.setMode('paseo');
+  overlay.pointerLocked(true);
+  overlay.togglePlaces();
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('places');
+  expect(visibleText()).not.toContain(NOTE);
+  // terminada, la partida ya no está en curso: elegir un lugar no deja nada
+  btn('Volver').click();
+  btn('Jugar una partida').click();
+  overlay.setMode('partida');
+  overlay.matchOver({ won: true, alive: 1, time: 100, kills: 11, dummies: 11 });
+  overlay.togglePlaces();
+  expect(overlay.screen).toBe('places');
+  expect(visibleText()).not.toContain(NOTE);
+});
+
 test('benchmark: terminada la carga no se muestra nada y M / Esc / pointer lock no cambian la pantalla', () => {
   overlay.bench();
   expect(overlay.screen).toBe('bench');
@@ -175,7 +213,7 @@ test('fatal reemplaza todo por el mensaje', () => {
 test('victoria: jugando suelta el puntero y muestra "¡Ganaste!" con el tiempo y las eliminaciones', () => {
   overlay.ready(places);
   overlay.pointerLocked(true);
-  overlay.matchOver({ won: true, alive: 1, time: 205.4, kills: 4 });
+  overlay.matchOver({ won: true, alive: 1, time: 205.4, kills: 4, dummies: 11 });
   expect(o.exitLock).toHaveBeenCalledTimes(1);
   expect(overlay.screen).toBe('playing'); // hasta que el navegador confirme que soltó el puntero
   overlay.pointerLocked(false);
@@ -197,7 +235,7 @@ test('victoria: jugando suelta el puntero y muestra "¡Ganaste!" con el tiempo y
 test('derrota: "Te eliminaron — quedaban N" (y "quedaba 1")', () => {
   overlay.ready(places);
   overlay.pointerLocked(true);
-  overlay.matchOver({ won: false, alive: 5, time: 61, kills: 0 });
+  overlay.matchOver({ won: false, alive: 5, time: 61, kills: 0, dummies: 11 });
   overlay.pointerLocked(false);
   expect(overlay.screen).toBe('derrota');
   expect(visibleText()).toContain('Te eliminaron — quedaban 5');
@@ -205,9 +243,25 @@ test('derrota: "Te eliminaron — quedaban N" (y "quedaba 1")', () => {
   expect(visibleText()).not.toContain('¡Ganaste!');
   btn('Jugar de nuevo').click();
   overlay.pointerLocked(true);
-  overlay.matchOver({ won: false, alive: 1, time: 10, kills: 2 });
+  overlay.matchOver({ won: false, alive: 1, time: 10, kills: 2, dummies: 11 });
   overlay.pointerLocked(false);
   expect(visibleText()).toContain('Te eliminaron — quedaba 1');
+});
+
+test('si el jugador y el último maniquí mueren en el mismo paso: "Te eliminaron — empate con la zona"', () => {
+  overlay.ready(places);
+  overlay.matchOver({ won: false, alive: 0, time: 731, kills: 1, dummies: 2 });
+  expect(overlay.screen).toBe('derrota');
+  expect(visibleText()).toContain('Te eliminaron — empate con la zona');
+  expect(visibleText()).not.toContain('quedaban');
+});
+
+test('en la práctica libre (sin maniquíes) la derrota dice "Te eliminó la zona"', () => {
+  overlay.ready(places);
+  overlay.matchOver({ won: false, alive: 0, time: 400, kills: 0, dummies: 0 });
+  expect(visibleText()).toContain('Te eliminó la zona');
+  expect(visibleText()).not.toContain('empate');
+  expect(visibleText()).not.toContain('quedaban');
 });
 
 test('si termina con el menú abierto, la pantalla de fin aparece enseguida', () => {
@@ -215,7 +269,7 @@ test('si termina con el menú abierto, la pantalla de fin aparece enseguida', ()
   overlay.pointerLocked(true);
   overlay.pointerLocked(false);
   expect(overlay.screen).toBe('menu');
-  overlay.matchOver({ won: true, alive: 1, time: 700, kills: 11 });
+  overlay.matchOver({ won: true, alive: 1, time: 700, kills: 11, dummies: 11 });
   expect(o.exitLock).not.toHaveBeenCalled();
   expect(overlay.screen).toBe('victoria');
 });
@@ -223,7 +277,7 @@ test('si termina con el menú abierto, la pantalla de fin aparece enseguida', ()
 test('desde la pantalla de fin: M abre lugares, Volver regresa a ella y elegir un lugar sale al modo paseo', () => {
   overlay.ready(places);
   overlay.pointerLocked(true);
-  overlay.matchOver({ won: false, alive: 3, time: 30, kills: 0 });
+  overlay.matchOver({ won: false, alive: 3, time: 30, kills: 0, dummies: 11 });
   overlay.pointerLocked(false);
   overlay.togglePlaces();
   expect(overlay.screen).toBe('places');

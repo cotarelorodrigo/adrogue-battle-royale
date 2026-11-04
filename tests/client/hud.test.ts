@@ -4,11 +4,12 @@
 import { createHud } from '../../src/client/ui/hud.ts';
 import type { Hud, HudFrame } from '../../src/client/ui/hud.ts';
 import { CollisionWorld } from '../../src/shared/collision.ts';
-import { newGun } from '../../src/shared/combat.ts';
+import { AMMO_MAX, newGun } from '../../src/shared/combat.ts';
 import type { WeaponId } from '../../src/shared/combat.ts';
 import type { Vec3 } from '../../src/shared/geo.ts';
+import type { LootItem } from '../../src/shared/loot.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
-import { nearestDrop, newMatch } from '../../src/shared/match.ts';
+import { MATCH, nearestDrop, newMatch } from '../../src/shared/match.ts';
 import type { MatchEvent, MatchState } from '../../src/shared/match.ts';
 import { initialState } from '../../src/shared/player.ts';
 import { zoneAt } from '../../src/shared/zone.ts';
@@ -124,6 +125,49 @@ test('el cartel nombra la munición, el chaleco y el botiquín', () => {
     c.drops[0].item = { kind: 'botiquin' };
   })));
   expect(text('hud-juntar')).toBe('E: juntar botiquín');
+});
+
+test('mirando algo que no sirve juntar, un cartel apagado dice por qué; si al alcance hay algo que sí, ese', () => {
+  const look = (s: MatchState): MatchState => mod(atOrigin(s), (c) => { c.look = { yaw: 0, pitch: -0.7 }; });
+  const full = mod(look(start()), (c) => {
+    c.inv.ammo = { liviana: AMMO_MAX.liviana, cartuchos: AMMO_MAX.cartuchos, pesada: AMMO_MAX.pesada };
+    c.me.vitals.armor = MATCH.armorMax;
+    c.inv.medkits = MATCH.medkitsMax;
+  });
+  const cases: [LootItem, string][] = [
+    [{ kind: 'municion', ammo: 'liviana' }, 'Munición liviana: llena'],
+    [{ kind: 'municion', ammo: 'cartuchos' }, 'Cartuchos: llenos'],
+    [{ kind: 'municion', ammo: 'pesada' }, 'Munición pesada: llena'],
+    [{ kind: 'chaleco' }, 'Chaleco: lleno'],
+    [{ kind: 'botiquin' }, 'Botiquines: llenos (3)'],
+  ];
+  for (const [item, label] of cases) {
+    hud.combat(frame(mod(full, (c) => { c.drops = [{ id: 1, pos: [0, 0, -1.5], item }]; })));
+    expect(shown('hud-juntar'), label).toBe(true);
+    expect(text('hud-juntar')).toBe(label);
+    expect(byId('hud-juntar').classList.contains('full')).toBe(true);
+  }
+  // una caja llena más cerca y un chaleco que sí sirve: E junta el chaleco, y eso dice el cartel
+  const both = mod(full, (c) => {
+    c.me.vitals.armor = 0;
+    c.drops = [{ id: 1, pos: [0, 0, -1.2], item: { kind: 'municion', ammo: 'liviana' } }, { id: 2, pos: [0.3, 0, -2], item: { kind: 'chaleco' } }];
+  });
+  hud.combat(frame(both));
+  expect(text('hud-juntar')).toBe('E: juntar chaleco');
+  expect(byId('hud-juntar').classList.contains('full')).toBe(false);
+});
+
+test('con el cargador vacío: "R: recargar" si hay reserva y "Sin munición" si no', () => {
+  const empty = (reserve: number): MatchState => mod(armed(start(), 'pistola', reserve), (c) => { c.inv.slots[0]!.inMag = 0; });
+  hud.combat(frame(empty(20)));
+  expect(shown('hud-estado')).toBe(true);
+  expect(text('hud-estado')).toBe('R: recargar');
+  hud.combat(frame(empty(0)));
+  expect(text('hud-estado')).toBe('Sin munición');
+  hud.combat(frame(armed(start(), 'pistola', 0))); // con balas en el cargador, nada
+  expect(shown('hud-estado')).toBe(false);
+  hud.combat(frame(mod(empty(20), (c) => { c.inv.slots[0]!.reloadUntil = c.t + 1; })));
+  expect(text('hud-estado')).toBe('Recargando…');
 });
 
 test('"Recargando…" mientras recarga', () => {

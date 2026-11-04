@@ -6,7 +6,7 @@ import { SIM_HZ } from '../../src/shared/fixed-step.ts';
 import type { Vec3 } from '../../src/shared/geo.ts';
 import type { LootItem } from '../../src/shared/loot.ts';
 import type { Building, MapData } from '../../src/shared/mapdata.ts';
-import { MATCH, hitboxes, nearestDrop, newMatch, stepMatch } from '../../src/shared/match.ts';
+import { MATCH, canTake, hitboxes, nearestDrop, newMatch, stepMatch } from '../../src/shared/match.ts';
 import type { MatchDrop, MatchEvent, MatchInput, MatchState } from '../../src/shared/match.ts';
 import { PLAYER, initialState } from '../../src/shared/player.ts';
 import { zoneAt } from '../../src/shared/zone.ts';
@@ -283,6 +283,21 @@ describe('munición, chaleco y botiquines', () => {
     s = tap(s, { use: true }, DOWN);
     expect(s.me.vitals.armor).toBe(100);
     expect(s.drops).toHaveLength(1); // con el chaleco lleno no se junta
+  });
+
+  test('canTake dice si sirve juntarlo; nearestDrop con all también ve lo que no (para el cartel de "lleno")', () => {
+    let s = mod(setup(), (c) => { c.inv.ammo.cartuchos = AMMO_MAX.cartuchos; });
+    s = step(withDrops(s, [drop(1, [0, 0, -1.5], { kind: 'municion', ammo: 'cartuchos' })]), DOWN);
+    expect(nearestDrop(s)).toBeNull();
+    const d = nearestDrop(s, { all: true })!;
+    expect(d.id).toBe(1);
+    expect(canTake(s, d)).toBe(false);
+    expect(nearestDrop(step(s, { pitch: 0.7 }), { all: true })).toBeNull(); // las mismas reglas de alcance: mirando arriba, nada
+    s = mod(s, (c) => { c.inv.ammo.cartuchos = 0; });
+    expect(canTake(s, d)).toBe(true);
+    expect(nearestDrop(s)?.id).toBe(1);
+    expect(canTake(s, { ...d, item: { kind: 'arma', weapon: 'rifle' } })).toBe(true); // un arma, siempre
+    expect(nearestDrop(mod(s, (c) => { c.over = { won: false, alive: 0, at: c.t }; }), { all: true })).toBeNull();
   });
 
   test('se guardan hasta 3 botiquines: el cuarto queda en el piso', () => {

@@ -3,14 +3,15 @@
 // - abajo a la derecha, el arma en la mano, cargador / total de esa munición y las dos ranuras;
 // - arriba al centro, la fase de la zona con su reloj y "Quedan N"; afuera de la zona, una flecha con la distancia;
 // - en el centro, la mira que se abre con la dispersión, la marca de acierto (distinta en la cabeza), los números de
-//   daño flotando desde el punto del impacto y, debajo, "E: juntar…" y "Recargando…" / "Curando…";
+//   daño flotando desde el punto del impacto y, debajo, "E: juntar…" (o, apagado, por qué no se puede juntar lo que
+//   se mira) y "Recargando…" / "Curando…" / "R: recargar" / "Sin munición";
 // - el feed de eliminaciones y, apuntando con el francotirador, la mira telescópica.
 // Todo es DOM: se reescribe un texto o un estilo solo cuando cambia.
 import { spreadFor, WEAPONS } from '../../shared/combat.ts';
 import type { AmmoId, WeaponId } from '../../shared/combat.ts';
 import type { Vec3 } from '../../shared/geo.ts';
 import type { LootItem } from '../../shared/loot.ts';
-import { MATCH, nearestDrop } from '../../shared/match.ts';
+import { canTake, MATCH, nearestDrop } from '../../shared/match.ts';
 import type { MatchState } from '../../shared/match.ts';
 import { zoneAt } from '../../shared/zone.ts';
 import type { CombatFrame } from '../combat/types.ts';
@@ -41,6 +42,18 @@ export function itemLabel(item: LootItem): string {
     case 'municion': return AMMO_LABEL[item.ammo];
     case 'chaleco': return 'chaleco';
     case 'botiquin': return 'botiquín';
+  }
+}
+
+const AMMO_FULL: Record<AmmoId, string> = { liviana: 'Munición liviana: llena', cartuchos: 'Cartuchos: llenos', pesada: 'Munición pesada: llena' };
+
+/** El cartel apagado de un objeto que no sirve juntar porque ya se tiene el máximo (ver canTake). */
+export function fullLabel(item: LootItem): string {
+  switch (item.kind) {
+    case 'municion': return AMMO_FULL[item.ammo];
+    case 'chaleco': return 'Chaleco: lleno';
+    case 'botiquin': return `Botiquines: llenos (${MATCH.medkitsMax})`;
+    case 'arma': return `E: juntar ${itemLabel(item)}`; // un arma siempre se puede juntar
   }
 }
 
@@ -287,10 +300,18 @@ export function createHud(root: HTMLElement): Hud {
     setHidden(crosshair, f.scoped);
     setHidden(scope, !f.scoped);
 
-    const drop = nearestDrop(s);
+    // lo que juntaría E; si al alcance no hay nada que sirva juntar, apagado, por qué no se puede juntar lo que se mira
+    const drop = nearestDrop(s) ?? nearestDrop(s, { all: true });
     setHidden(prompt, !drop);
-    if (drop) setText(prompt, `E: juntar ${itemLabel(drop.item)}`);
-    const st = gun && gun.reloadUntil !== null ? 'Recargando…' : s.inv.healingUntil !== null ? 'Curando…' : '';
+    if (drop) {
+      const take = canTake(s, drop);
+      setText(prompt, take ? `E: juntar ${itemLabel(drop.item)}` : fullLabel(drop.item));
+      prompt.classList.toggle('full', !take);
+    }
+    const st = gun && gun.reloadUntil !== null ? 'Recargando…'
+      : s.inv.healingUntil !== null ? 'Curando…'
+        : gun && gun.inMag <= 0 ? (s.inv.ammo[WEAPONS[gun.id].ammo] > 0 ? 'R: recargar' : 'Sin munición')
+          : '';
     setHidden(status, st === '');
     setText(status, st);
   }

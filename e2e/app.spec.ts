@@ -11,7 +11,7 @@ test('carga sin errores de consola y el canvas no está vacío', async ({ page }
   await open(page);
   await expect(page.getByRole('heading', { name: 'Adrogué' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Hacé click para jugar' })).toBeEnabled();
-  await expect(page.getByText(HELP, { exact: true })).toBeVisible();
+  await expect(page.getByText(HELP, { exact: true }).filter({ visible: true })).toBeVisible(); // también está en el menú de Esc, oculto
   await frames(page, 3);
   const luma = await canvasLuma(page);
   console.log(`luminancia del canvas: media ${luma.mean.toFixed(1)}, varianza ${luma.variance.toFixed(1)}`);
@@ -91,6 +91,7 @@ test('menú M lista 38 lugares + al azar; elegir uno teletransporta y vuelve a j
     await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
   }
   await expect(page.getByText('Calidad:', { exact: true })).toBeVisible();
+  await expect(page.getByText(HELP, { exact: true }).filter({ visible: true })).toBeVisible(); // los controles, también acá
   await page.getByRole('button', { name: 'Créditos' }).click();
   await expect(page.getByRole('link', { name: 'OpenStreetMap' })).toBeVisible();
   expect(errors).toEqual([]);
