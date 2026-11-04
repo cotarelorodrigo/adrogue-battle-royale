@@ -18,6 +18,9 @@ export const FOG_COLOR = 0xc6d3dc;
 /** El cielo se funde con la niebla de la altura del horizonte para abajo (seno del ángulo de elevación): lo que la
  *  niebla tapa del todo y lo que corta camera.far quedan del mismo color que el cielo que tienen atrás. */
 const HORIZON_BLEND = 0.1;
+/** El tone mapping del renderer (el cielo de Preetham está pensado para tone mapping). Los colores que brillan adentro
+ *  están calibrados con esta curva (tests/client/aces.ts). */
+export const TONE_MAPPING = THREE.ACESFilmicToneMapping;
 /** fov vertical (grados) sin apuntar. */
 export const FOV = 75;
 /** Cerca de la cámara (R15: con las capas del suelo a 2 cm no hay z-fighting a distancia). */
@@ -57,7 +60,7 @@ interface Chunk { group: THREE.Group; cx: number; cz: number }
 
 export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuilding[], q: Quality): GameScene {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.toneMapping = THREE.ACESFilmicToneMapping; // el cielo de Preetham está pensado para tone mapping
+  renderer.toneMapping = TONE_MAPPING;
   renderer.toneMappingExposure = OUTDOOR_EXPOSURE; // adentro de un interior la cambia la adaptación del ojo (main)
   // Las estadísticas (renderer.info.render) se ponen en cero una sola vez por cuadro, en render(): lo que se dibuja
   // después en el mismo cuadro (el arma en mano, combat/viewmodel.ts, en una pasada aparte) se suma, y el HUD y los

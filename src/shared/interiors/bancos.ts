@@ -43,8 +43,11 @@ const LAMP_R = 5.5, LAMP_P = 0.55, LAMP_P_FRIO = 0.7;
 /** Lado (m) de la grilla de los paneles. */
 const PASO = 2.6;
 
-/** El número llamado del turnero: LED rojo sobre negro. */
-const TURNO: SignLook = { fondo: '#070707', letra: '#ff3b1c', marco: '#070707', fuente: 'condensada' };
+/** El número llamado del turnero: LED rojo sobre negro. Brilla, así que el rojo va oscurecido: '#aa1503' se ve
+ *  #ff3b1c adentro (ver franjaLuz en Estilo). */
+const TURNO: SignLook = { fondo: '#070707', letra: '#aa1503', marco: '#070707', fuente: 'condensada' };
+/** La franja esmerilada de la pared de vidrio (el vinilo que la hace ver, a la altura de la vista de un chico). */
+const ESMERILADO: Look = { mat: 'liso', color: '#eceeee' };
 /** La puerta del tesoro: el acero de la puerta, los bulones y el volante, y la chapa del marco. */
 const BOVEDA: SignLook = { fondo: '#b3b8bd', letra: '#5c6166', marco: '#7c8186', fuente: 'sans' };
 
@@ -52,11 +55,13 @@ const BOVEDA: SignLook = { fondo: '#b3b8bd', letra: '#5c6166', marco: '#7c8186',
 interface Estilo {
   /** El nombre de la marca, tal cual va en sus carteles. */
   nombre: string;
-  /** El de los carteles de la marca, con sus colores tal cual (el nombre, en el vestíbulo y en el salón). */
-  letrero: SignLook;
-  /** Lo que va iluminado de atrás: la franja de arriba de las cajas (su frente; abajo, `franja`), sus números y el cartel
-   *  de los cajeros. Brillan (van sin hornear), así que sus colores están oscurecidos para que adentro, con la exposición
-   *  de adentro y el tone mapping, se vean los de la marca (ACES: '#883010' da ~#e1561f). */
+  /**
+   * Lo que va iluminado de atrás, como en una sucursal: la franja de arriba de las cajas (su frente; abajo, `franja`) y
+   * los carteles (el nombre de la marca, los números de las cajas y el de los cajeros), que son cajas de luz. Brillan
+   * (van sin hornear), así que sus colores están oscurecidos para que adentro, con INDOOR_EXPOSURE y ACES, se vean los
+   * de la marca: '#883010' se ve #e1561f, '#003860' #005ba4, '#1068ac' #59b7e6, '#1c2c60' #1e44a8 y '#e8e8e8' blanco.
+   * Si cambian la exposición o el tone mapping, tests/client/bancos-luz.test.ts dice qué recalibrar.
+   */
   franjaLuz: Look;
   luminoso: SignLook;
   /** La parte de abajo de la franja, del color de la marca, y el zócalo, de uno oscuro de la misma familia. */
@@ -73,19 +78,19 @@ interface Estilo {
 
 const ESTILOS: Record<Marca, Estilo> = {
   nacion: {
-    nombre: 'BANCO NACIÓN', letrero: { fondo: '#005ba4', letra: '#ffffff', marco: '#59b7e6', fuente: 'sans' },
+    nombre: 'BANCO NACIÓN',
     franjaLuz: { mat: 'luz', color: '#003860' }, luminoso: { fondo: '#003860', letra: '#e8e8e8', marco: '#1068ac', fuente: 'sans' },
     franja: { mat: 'liso', color: '#005ba4' }, zocalo: { mat: 'liso', color: '#123d68' }, cajeros: 'Cajeros automáticos',
     vestibulo: 'frente', cajas: 3, lado: -1,
   },
   galicia: {
-    nombre: 'Galicia', letrero: { fondo: '#e1561f', letra: '#ffffff', marco: '#e1561f', fuente: 'sans' },
+    nombre: 'Galicia',
     franjaLuz: { mat: 'luz', color: '#883010' }, luminoso: { fondo: '#883010', letra: '#e8e8e8', marco: '#883010', fuente: 'sans' },
     franja: { mat: 'liso', color: '#e1561f' }, zocalo: { mat: 'liso', color: '#4b4a4a' }, cajeros: 'Autoservicio',
     vestibulo: 'costado', cajas: 4, lado: -1,
   },
   bbva: {
-    nombre: 'BBVA', letrero: { fondo: '#1e44a8', letra: '#ffffff', marco: '#1e44a8', fuente: 'sans' },
+    nombre: 'BBVA',
     franjaLuz: { mat: 'luz', color: '#1c2c60' }, luminoso: { fondo: '#1c2c60', letra: '#e8e8e8', marco: '#1c2c60', fuente: 'sans' },
     franja: { mat: 'liso', color: '#1e44a8' }, zocalo: { mat: 'liso', color: '#13285e' }, cajeros: 'Cajeros automáticos',
     vestibulo: 'frente', cajas: 3, lado: 1,
@@ -103,8 +108,9 @@ const VENTANILLA_W = 0.45, VENTANILLA_H = 0.12;
 const MAMPARA_T = 0.02, VIDRIO_T = 0.04;
 /** La puerta de la pared de vidrio y la de servicio de las cajas (D10: ≥ 1,0 × 2,2). */
 const PUERTA_W = 1.2, SERVICIO_W = 1.0, PUERTA_H = 2.3;
-/** Parantes de aluminio de la pared de vidrio: cada a lo sumo esto (m), de 5 × 6 cm. */
-const PARANTE_CADA = 1.6, PARANTE_W = 0.05, PARANTE_D = 0.06;
+/** Parantes de aluminio de la pared de vidrio: cada a lo sumo esto (m), de 5 × 6 cm. Los perfiles de piso y de techo,
+ *  de 4 × 4 cm, y la franja esmerilada, de 1,02 a 1,10 m (envuelve al vidrio: 2 mm de cada lado). */
+const PARANTE_CADA = 1.6, PARANTE_W = 0.05, PARANTE_D = 0.06, PERFIL = 0.04, ESMERILADO_Y = [1.02, 1.1] as const;
 /** El zócalo: alto y espesor (fino: no hace rincón en la pared). */
 const ZOCALO_H = 0.1, ZOCALO_T = 0.008;
 /** Lo que se separa de la pared lo que se apoya en ella. */
@@ -121,8 +127,9 @@ const CAJERO_D = box('cajero').d / 2 + AIRE, CAJERO_PASO = 0.85;
 const ESCRITORIO_AIRE = 1.05, ESCRITORIO_PASO = 2.4, PASO_SERVICIO = 0.9;
 /** Una fila de 4 sillas de espera (sillas-espera: 2,2 × ~0,5 m) y lo que la separa de la otra y del mostrador. */
 const FILA_W = 2.2, FILA_D = 0.5, FILA_PASO = 1.2, FILA_MOSTRADOR = 2.4;
-/** El turnero, colgado entre la fila de espera y el mostrador. */
-const TURNERO_MOSTRADOR = 1.3;
+/** El turnero cuelga delante de la franja de las cajas, a esto de ella, en el límite entre dos puestos: ahí no tapa
+ *  ningún número (H4 de la revisión), y mira a la fila. */
+const TURNERO_AIRE = 0.06;
 
 type Rect = [number, number, number, number];
 const rect = ([u0, v0, u1, v1]: Rect): Vec2[] => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
@@ -186,15 +193,17 @@ function paneles(k: Kit, [u0, v0, u1, v1]: Rect, look: Look, power: number): voi
   }
 }
 
-/** Un parante de aluminio (o un travesaño) de la pared de vidrio: de `a` a `b` a lo largo de ella, de y0 a y1. */
-function parante(k: Kit, a: Vec2, b: Vec2, y0: number, y1: number): void {
+/** Una pieza de la pared de vidrio (un parante, un travesaño, un perfil o la franja esmerilada): de `a` a `b` a lo largo
+ *  de ella, de y0 a y1 y de `ancho` de través, centrada en el vidrio. Sin colisión: el vidrio ya frena. */
+function parante(k: Kit, a: Vec2, b: Vec2, y0: number, y1: number, ancho = PARANTE_D, look = ALUMINIO): void {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-  const e: Vec2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], s: Vec2 = [(-e[1] * PARANTE_D) / 2, (e[0] * PARANTE_D) / 2];
-  k.block([add(a, s, -1), add(b, s, -1), add(b, s), add(a, s)], y0, y1, 'none', 'otro', { side: ALUMINIO, top: ALUMINIO, bottom: ALUMINIO });
+  const e: Vec2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], s: Vec2 = [(-e[1] * ancho) / 2, (e[0] * ancho) / 2];
+  k.block([add(a, s, -1), add(b, s, -1), add(b, s), add(a, s)], y0, y1, 'none', 'otro', { side: look, top: look, bottom: look });
 }
 
 /** La pared de vidrio de `from` a `to`, del piso al cielorraso, con su puerta a `at` m de `from` (la hoja dibujada
- *  abierta hacia la izquierda de from → to, D10), sus parantes de aluminio y el marco de la puerta. */
+ *  abierta hacia la izquierda de from → to, D10), sus parantes de aluminio, el marco de la puerta, los perfiles de piso
+ *  (en los paños) y de techo, y la franja esmerilada de los paños. Todo en liso: no suma mallas. */
 function paredDeVidrio(k: Kit, from: Vec2, to: Vec2, at: number): void {
   const cielo = k.ceilingOver(0);
   k.wall(from, to, { t: VIDRIO_T, collide: 'glass', look: VIDRIO, gaps: [{ at, width: PUERTA_W, height: PUERTA_H, glassLeaf: true }] });
@@ -210,6 +219,13 @@ function paredDeVidrio(k: Kit, from: Vec2, to: Vec2, at: number): void {
   }
   for (const s of posts) parante(k, p(s - PARANTE_W / 2), p(s + PARANTE_W / 2), 0, cielo);
   parante(k, p(g0), p(g1), PUERTA_H, PUERTA_H + PARANTE_W);
+  // el perfil de techo, de punta a punta; el de piso y la franja esmerilada, en cada paño (no en el hueco de la puerta)
+  parante(k, p(0), p(len), cielo - PERFIL, cielo, PERFIL);
+  for (const [s0, s1] of [[0, g0], [g1, len]]) {
+    if (s1 - s0 < 0.05) continue;
+    parante(k, p(s0), p(s1), 0, PERFIL, PERFIL);
+    parante(k, p(s0), p(s1), ESMERILADO_Y[0], ESMERILADO_Y[1], VIDRIO_T + 0.004, ESMERILADO);
+  }
 }
 
 /** 1 si +U queda a la izquierda de quien mira hacia +V (desde el salón, a las cajas); −1 si a la derecha (un marco
@@ -314,14 +330,16 @@ interface Medidas extends Caras {
  * lo sumo 1 cm, y con lugar para el vestíbulo, el salón y las cajas):
  * - `lado` es de donde salen los cajeros automáticos y las cajas. Al frente, la medianera más lejos de la puerta de calle
  *   (si la puerta queda en el medio, la del estilo); a un costado, la más cerca.
+ * - La puerta de la calle es la primera puerta, y tiene que estar en el frente (v ≈ 0): si no, no hay sucursal.
  * - A un costado, la pared de vidrio corre a lo largo de V sobre el primer parante de la vidriera pasando la puerta (lo
- *   macizo entre dos aberturas), a más de 0,5 m de ella; si no hay, a 0,8 m de la puerta.
+ *   macizo entre dos aberturas de la arista de la puerta), a más de 0,5 m de ella; si no hay, a 0,8 m de la puerta.
  */
 function medir(k: Kit, e: Estilo): Medidas | null {
   const c = caras(k);
   const { U0, U1, V0, V1 } = c;
   const calle = k.openings.find((o) => o.kind === 'puerta');
-  if (!calle || !(U1 - U0 > 0 && V1 - V0 > 0) || polygonArea(k.inside) < 0.98 * (U1 - U0) * (V1 - V0)) return null;
+  if (!calle || Math.abs(calle.a[1]) > 0.05 || Math.abs(calle.c[1]) > 0.05) return null;
+  if (!(U1 - U0 > 0 && V1 - V0 > 0) || polygonArea(k.inside) < 0.98 * (U1 - U0) * (V1 - V0)) return null;
   const door = { u: (calle.a[0] + calle.c[0]) / 2, w: Math.abs(calle.c[0] - calle.a[0]) };
   const [dU0, dU1] = [door.u - U0, U1 - door.u];
   const lado = e.vestibulo === 'costado' ? (dU0 <= dU1 ? -1 : 1) : Math.abs(dU0 - dU1) < 1 ? e.lado : dU0 > dU1 ? -1 : 1;
@@ -332,7 +350,8 @@ function medir(k: Kit, e: Estilo): Medidas | null {
   if (U1 - U0 < WALL_IN + 1.2 + PUESTO.w + 1.2) return null;
   if (e.vestibulo === 'frente') return salonFondo - VESTIBULO_V < 2.4 ? null : { ...c, door, lado, uw, uo, hacia, vc, salonFondo, ug: uw, g: 0 };
   const far = Math.max(hacia * (calle.a[0] - uw), hacia * (calle.c[0] - uw));
-  const cuts = k.openings.map((o) => [hacia * (o.a[0] - uw), hacia * (o.c[0] - uw)].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0]);
+  const cuts = k.openings.filter((o) => o.edge === calle.edge)
+    .map((o) => [hacia * (o.a[0] - uw), hacia * (o.c[0] - uw)].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0]);
   let g = far + 0.8;
   for (let j = 0; j + 1 < cuts.length; j++) {
     const m = (cuts[j][1] + cuts[j + 1][0]) / 2;
@@ -366,7 +385,7 @@ function sucursal(k: Kit, e: Estilo, m: Medidas): void {
     const atm: Vec2[] = [];
     for (let v = V0 + 0.8; v + box('cajero').w / 2 <= VESTIBULO_V - 0.4 && atm.length < 3; v += CAJERO_PASO) atm.push([at(CAJERO_D), v]);
     cajeros(k, e, atm, miraU(hacia));
-    k.label(e.nombre, [uo, (V0 + VESTIBULO_V) / 2], 1.9, [lado, 0], 2.4, 0.55, e.letrero);
+    k.label(e.nombre, [uo, (V0 + VESTIBULO_V) / 2], 1.9, [lado, 0], 2.4, 0.55, e.luminoso, { glow: true });
     paneles(k, [U0, V0, U1, VESTIBULO_V - VIDRIO_T], PANEL_FRIO, LAMP_P_FRIO);
     paneles(k, [U0, VESTIBULO_V + VIDRIO_T, U1, salonFondo], PANEL, LAMP_P);
     [salonFrente, salonU] = [VESTIBULO_V + 0.6, (U0 + U1) / 2];
@@ -380,7 +399,7 @@ function sucursal(k: Kit, e: Estilo, m: Medidas): void {
     const atm: Vec2[] = [];
     for (let d = 0.75; d + box('cajero').w / 2 <= g - 0.15 && atm.length < 3; d += CAJERO_PASO) atm.push([at(d), COSTADO_V - WALL_IN / 2 - CAJERO_D]);
     cajeros(k, e, atm, MIRA.menosV);
-    k.label(e.nombre, [uw, (V0 + COSTADO_V) / 2], 1.9, [hacia, 0], 2.6, 0.6, e.letrero);
+    k.label(e.nombre, [uw, (V0 + COSTADO_V) / 2], 1.9, [hacia, 0], 2.6, 0.6, e.luminoso, { glow: true });
     paneles(k, span(uw, ug, V0, COSTADO_V), PANEL_FRIO, LAMP_P_FRIO);
     paneles(k, span(ug, uo, V0, COSTADO_V), PANEL, LAMP_P);
     paneles(k, [U0, COSTADO_V, U1, salonFondo], PANEL, LAMP_P);
@@ -409,7 +428,7 @@ function sucursal(k: Kit, e: Estilo, m: Medidas): void {
   for (let d = PASO_SERVICIO + box('escritorio').w / 2; desks < 2 && d + box('escritorio').w / 2 + 0.1 <= rincon; d += ESCRITORIO_PASO, desks++) {
     k.furniture('escritorio', [tabique + hacia * (WALL_IN / 2 + d), V1 - ESCRITORIO_AIRE], 0, MIRA.menosV);
   }
-  k.label(e.nombre, [(tabique + uo) / 2 + (hacia * WALL_IN) / 4, V1], 2.3, [0, -1], 2.4, 0.5, e.letrero);
+  k.label(e.nombre, [(tabique + uo) / 2 + (hacia * WALL_IN) / 4, V1], 2.3, [0, -1], 2.4, 0.5, e.luminoso, { glow: true });
   for (let v = salonFondo - 1.4; desks < 2 && v - 0.8 >= salonFrente; v -= ESCRITORIO_PASO) {
     // contra la pared, la silla del empleado; hacia el salón, la del cliente
     const p: Vec2 = [uo - hacia * ESCRITORIO_AIRE, v];
@@ -418,13 +437,16 @@ function sucursal(k: Kit, e: Estilo, m: Medidas): void {
     desks++;
   }
 
-  // la fila de espera frente a las cajas, mirándolas, y el turnero colgado entre la fila y el mostrador
+  // la fila de espera frente a las cajas, mirándolas; el turnero, colgado delante de la franja en el límite entre dos
+  // puestos (el más cerca del medio de la fila; con un solo puesto, pasando el tabique), mirando a la fila
   const ur = Math.min(U1 - FILA_W / 2 - 0.3, Math.max(U0 + FILA_W / 2 + 0.3, (uw + tabique) / 2));
   for (let j = 0; j < 2; j++) {
     const p: Vec2 = [ur, salonFondo - FILA_MOSTRADOR - j * FILA_PASO];
     if (salon.take([p[0] - FILA_W / 2, p[1] - FILA_D, p[0] + FILA_W / 2, p[1] + FILA_D])) k.furniture('sillas-espera', p, 0, MIRA.V);
   }
-  turnero(k, [ur, salonFondo - TURNERO_MOSTRADOR], MIRA.menosV);
+  const limites = [...Array(Math.max(0, n - 1)).keys()].map((j) => uw + hacia * (j + 1) * PUESTO.w);
+  const ut = limites.length ? limites.reduce((a, x) => (Math.abs(x - ur) < Math.abs(a - ur) ? x : a)) : tabique + hacia * 0.6;
+  turnero(k, [ut, vc - WALL_IN / 2 - TURNERO_AIRE - 0.04], MIRA.menosV);
 
   // las marcas (las cajas: donde se sienta el cajero de la caja 2) y las dos vistas
   const caja = puestos[Math.min(1, puestos.length - 1)];
@@ -443,6 +465,10 @@ function sucursal(k: Kit, e: Estilo, m: Medidas): void {
  * El plan de un banco: la cáscara (solo la planta baja pública), el zócalo y su sucursal. En un lote que no es la caja
  * de una sucursal (los lotes de prueba de los tests de mapgen: un triángulo, uno con una esquina cortada) queda el local
  * vacío, con su zócalo y los paneles que entran.
+ *
+ * Ese respaldo no avisa: build:map sigue con 0 avisos. La guarda es tests/shared/interiors/bancos.test.ts, que lee el
+ * mapa real: si un banco cae al local vacío le faltan las marcas, y si pierde muebles (una fila, un escritorio, una
+ * caja) lo dicen sus cuentas.
  */
 export function bancoPlan(marca: Marca): InteriorPlan {
   return (k) => {

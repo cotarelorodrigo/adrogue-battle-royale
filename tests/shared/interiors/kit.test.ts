@@ -4,7 +4,7 @@ import { CollisionWorld, interiorPrisms } from '../../../src/shared/collision.ts
 import type { Prism } from '../../../src/shared/collision.ts';
 import { hitscan } from '../../../src/shared/combat.ts';
 import { SIM_HZ } from '../../../src/shared/fixed-step.ts';
-import { ensureCCW, polygonArea, signedAreaFromAbove, toWorld } from '../../../src/shared/geo.ts';
+import { ensureCCW, pointInPolygon, polygonArea, signedAreaFromAbove, toWorld } from '../../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
 import { publicFloorArea, validateInterior } from '../../../src/shared/interiors/index.ts';
 import { GROUND_Y, Kit, MODEL_BOX, RAIL_H, SOLID_MIN_H, TREAD, WALL_OUT } from '../../../src/shared/interiors/kit.ts';
@@ -516,6 +516,25 @@ describe('marco local', () => {
     expect(along(frame.v)).toBeCloseTo(MODEL_BOX.mesa!.w, 9);
     expect(along(frame.u)).toBeCloseTo(MODEL_BOX.mesa!.d, 9);
     expect(validateInterior(i)).toEqual([]);
+  });
+
+  // Lo usan los planes para medir el lote (tarea 6): las caras de adentro de las paredes de afuera, en el marco local.
+  test('inside: cada vértice queda adentro, a WALL_OUT de las dos aristas de su esquina; también con el marco espejado', () => {
+    for (const [name, k, foot] of [['girado y espejado', new Kit(b, input), fp], ['el de prueba', new Kit(testInterior().b, testInterior().input), testInterior().b.footprint]] as const) {
+      const ring = k.inside;
+      expect(ring, name).toHaveLength(foot.length);
+      for (const p of ring) {
+        const w = k.at(p);
+        const d = foot.map((a, j) => {
+          const c = foot[(j + 1) % foot.length], l = Math.hypot(c[0] - a[0], c[1] - a[1]);
+          return Math.abs((w[0] - a[0]) * (c[1] - a[1]) - (w[1] - a[1]) * (c[0] - a[0])) / l;
+        }).sort((x, y) => x - y);
+        expect(d[0], `${name}: ${p.join(', ')}`).toBeCloseTo(WALL_OUT, 9);
+        expect(d[1], `${name}: ${p.join(', ')}`).toBeCloseTo(WALL_OUT, 9);
+        expect(d[2], `${name}: ${p.join(', ')}`).toBeGreaterThan(WALL_OUT + 1);
+        expect(pointInPolygon(w, foot), name).toBe(true);
+      }
+    }
   });
 
   test('con el marco espejado, todos los bloques quedan antihorarios y la puerta se entra', () => {
