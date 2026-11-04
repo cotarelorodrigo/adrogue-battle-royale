@@ -55,8 +55,10 @@ test('recorrido: 10 capturas más una por frente relevado, sin errores', async (
     expect(errors).toEqual([]);
   }
 
-  // Techo: al pie de la escalera mirando la pared, W hasta quedar parado arriba; después, mirar hacia la calle.
+  // Techo: al pie de la escalera mirando la pared, W hasta quedar parado arriba (la escalera llega al tope del pretil y
+  // de ahí se cae al techo); después, mirar hacia la calle.
   const l = roofLadder();
+  const roofY = map.buildings.find((b) => b.id === l.buildingId)!.height;
   const n = Math.hypot(l.normal[0], l.normal[1]);
   const [nx, nz] = [l.normal[0] / n, l.normal[1] / n];
   const foot: Vec3 = [l.base[0] + nx * 0.45, 0, l.base[1] + nz * 0.45];
@@ -64,8 +66,8 @@ test('recorrido: 10 capturas más una por frente relevado, sin errores', async (
   await page.keyboard.down('KeyW');
   await page.waitForFunction((top) => {
     const s = window.__adrogue.state();
-    return s.mode === 'walk' && s.onGround && s.pos[1] > top - 0.1;
-  }, l.topY, { timeout: 120_000, polling: 100 });
+    return s.mode === 'walk' && s.onGround && Math.abs(s.pos[1] - top) < 0.05;
+  }, roofY, { timeout: 120_000, polling: 100 });
   await page.keyboard.up('KeyW');
   const roof = (await page.evaluate(() => window.__adrogue.state())).pos;
   await page.evaluate(([p, yaw]) => window.__adrogue.placeAt(p, yaw), [roof, Math.atan2(-nx, -nz)] as const);

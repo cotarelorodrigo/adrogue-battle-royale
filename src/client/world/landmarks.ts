@@ -1,13 +1,15 @@
 // La estación (andenes, alero de chapa, vías y carteles ADROGUÉ) y los monumentos (pedestal + figura simplificada).
-// Las medidas que se pisan (andén, pedestales) salen de collision.ts: lo que se ve es lo que se pisa.
+// Las medidas que se pisan (andén, pedestales) salen de collision.ts, y dónde van el alero, sus postes y los carteles,
+// de shared/station.ts (la colisión usa los mismos postes): lo que se ve es lo que se pisa.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { COLUMN, PEDESTAL, PLATFORM_H } from '../../shared/collision.ts';
-import { distPointSegment, ensureCCW, hashIndex, MARGIN_M } from '../../shared/geo.ts';
+import { COLUMN, PEDESTAL } from '../../shared/collision.ts';
+import { hashIndex } from '../../shared/geo.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import type { MapData, Place, Prop } from '../../shared/mapdata.ts';
+import { at, CANOPY_EAVE, CANOPY_OVERHANG, CANOPY_RIDGE, PLATFORM_H, railRuns, STATION_SIGN_W, stationLayout } from '../../shared/station.ts';
+import type { Axis, StationPost } from '../../shared/station.ts';
 import { splitByCell } from './cells.ts';
-import { clipSegment } from './chunks.ts';
 import { polygonGeometry, ribbon } from './geometry.ts';
 import { SIGN_H, TYPE_LOOK, signGeometry, signMaterial, signTexture } from './signs.ts';
 import type { WorldMaterials } from './types.ts';
@@ -34,16 +36,6 @@ const COPING_H = 0.25;
 const RECESS = 0.6;
 const EDGE_W = 0.35;
 const EDGE_Y = PLATFORM_H + 0.006;
-
-// Alero: techo a dos aguas sobre postes en el eje del andén (sin colisión: finos y pocos).
-const CANOPY_LEN = 50;
-const CANOPY_EAVE = 3.2;
-const CANOPY_RIDGE = 3.6;
-const CANOPY_OVERHANG = 0.5;
-const POST_STEP = 10;
-const POST_R = 0.07;
-const STATION_SIGN_W = 3.2;
-const STATION_SIGN_BOTTOM = 2.0;
 
 type V3 = [number, number, number];
 
@@ -146,27 +138,6 @@ const CORRUGATION_REPEAT = 0.48; // m por textura (4 ondas de 12 cm)
 
 // ─── Vías ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Tramos de la polilínea dentro del rectángulo (cortados en el borde). */
-function clippedRuns(line: Vec2[], x0: number, z0: number, x1: number, z1: number): Vec2[][] {
-  const runs: Vec2[][] = [];
-  let run: Vec2[] = [];
-  const flush = (): void => {
-    if (run.length >= 2) runs.push(run);
-    run = [];
-  };
-  for (let k = 0; k + 1 < line.length; k++) {
-    const a = line[k], b = line[k + 1];
-    const c = clipSegment(a, b, x0, z0, x1, z1);
-    if (!c) { flush(); continue; }
-    if (c[0] !== a) flush(); // entra por el borde: tramo nuevo
-    if (run.length === 0) run.push(c[0]);
-    run.push(c[1]);
-    if (c[1] !== b) flush();
-  }
-  flush();
-  return runs;
-}
-
 /** Desplazamiento a la izquierda (normal (−dz, dx)) de cada punto, con inglete limitado a 2×. */
 function miters(pts: Vec2[]): Vec2[] {
   const dirs: Vec2[] = [];
@@ -222,41 +193,6 @@ function sleeperSpots(pts: Vec2[], out: { p: Vec2; d: Vec2 }[]): void {
 
 // ─── Andenes y alero ────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Distancia, punto más cercano y dirección (unitaria) del tramo de vía más cercano a p. */
-function nearestRail(p: Vec2, rails: Vec2[][]): { d: number; q: Vec2; dir: Vec2 } {
-  let best = { d: Infinity, q: p, dir: [1, 0] as Vec2 };
-  for (const r of rails) {
-    for (let k = 0; k + 1 < r.length; k++) {
-      const a = r[k], b = r[k + 1];
-      const d = distPointSegment(p, a, b);
-      const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz;
-      if (d < best.d && l2 > 0) {
-        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l2));
-        const l = Math.sqrt(l2);
-        best = { d, q: [a[0] + dx * t, a[1] + dz * t], dir: [dx / l, dz / l] };
-      }
-    }
-  }
-  return best;
-}
-
-/** Lados del anillo (antihorario) que dan a la vía: paralelos a ella (±25°), mirándola, y los más cercanos (±1 m).
- *  Las puntas del andén quedan afuera aunque toquen el eje de la vía (pasa en los datos de OSM). */
-function railSides(ring: Vec2[], rails: Vec2[][]): boolean[] {
-  const n = ring.length;
-  const info = ring.map((a, i) => {
-    const c = ring[(i + 1) % n];
-    const dx = c[0] - a[0], dz = c[1] - a[1], len = Math.hypot(dx, dz);
-    const mid: Vec2 = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
-    const { d, q, dir } = nearestRail(mid, rails);
-    const facing = len > 0 && (-dz * (q[0] - mid[0]) + dx * (q[1] - mid[1])) / len > 0;
-    const parallel = len > 0 && Math.abs(dx * dir[0] + dz * dir[1]) / len > Math.cos((25 * Math.PI) / 180);
-    return { d, ok: facing && parallel && len >= 2 };
-  });
-  const dmin = Math.min(...info.filter((e) => e.ok).map((e) => e.d));
-  return info.map((e) => e.ok && e.d <= dmin + 1);
-}
-
 function platformGeometry(ring: Vec2[], rail: boolean[], walls: Builder, edge: Builder): void {
   const n = ring.length;
   const yc = PLATFORM_H - COPING_H;
@@ -286,23 +222,6 @@ function platformGeometry(ring: Vec2[], rail: boolean[], walls: Builder, edge: B
   }
 }
 
-interface Axis { d: Vec2; w: Vec2; s0: number; s1: number; tc: number; width: number }
-
-/** Eje del andén: dirección del lado más largo y extensión de la planta a lo largo (s) y a lo ancho (t). */
-function axisOf(ring: Vec2[]): Axis {
-  let d: Vec2 = [1, 0], best = 0;
-  ring.forEach((a, i) => {
-    const c = ring[(i + 1) % ring.length], l = Math.hypot(c[0] - a[0], c[1] - a[1]);
-    if (l > best) { best = l; d = [(c[0] - a[0]) / l, (c[1] - a[1]) / l]; }
-  });
-  const w: Vec2 = [-d[1], d[0]];
-  const ss = ring.map((p) => p[0] * d[0] + p[1] * d[1]), ts = ring.map((p) => p[0] * w[0] + p[1] * w[1]);
-  const t0 = Math.min(...ts), t1 = Math.max(...ts);
-  return { d, w, s0: Math.min(...ss), s1: Math.max(...ss), tc: (t0 + t1) / 2, width: t1 - t0 };
-}
-
-const at = (ax: Axis, s: number, t: number): Vec2 => [ax.d[0] * s + ax.w[0] * t, ax.d[1] * s + ax.w[1] * t];
-
 /** Caja (largo sobre `dir`) centrada en (p, y). */
 function beam(p: Vec2, y: number, dir: Vec2, length: number, wide: number, tall: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(length, tall, wide);
@@ -311,7 +230,8 @@ function beam(p: Vec2, y: number, dir: Vec2, length: number, wide: number, tall:
   return g;
 }
 
-function post(p: Vec2, y0: number, y1: number, r = POST_R): THREE.BufferGeometry {
+/** Cilindro abierto de 8 lados (CylinderGeometry arranca en +z: el mismo octágono que la colisión). */
+function post({ at: p, r, y0, y1 }: StationPost): THREE.BufferGeometry {
   const g = new THREE.CylinderGeometry(r, r, y1 - y0, 8, 1, true);
   g.translate(p[0], (y0 + y1) / 2, p[1]);
   return g;
@@ -335,9 +255,7 @@ function canopyRoof(b: Builder, ax: Axis, sa: number, sb: number): void {
 export function buildStation(map: MapData, materials: WorldMaterials): THREE.Group {
   const group = new THREE.Group();
   group.name = 'station';
-  const bd = map.bounds;
-  const x0 = bd.minX - MARGIN_M, x1 = bd.maxX + MARGIN_M, z0 = bd.minZ - MARGIN_M, z1 = bd.maxZ + MARGIN_M;
-  const runs = map.railways.flatMap((r) => clippedRuns(r, x0, z0, x1, z1));
+  const runs = railRuns(map);
 
   // Vías: balasto, durmientes y rieles
   if (runs.length > 0) {
@@ -372,43 +290,24 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
     const walls = new Builder(), edge = new Builder();
     const tops: THREE.BufferGeometry[] = [], steel: THREE.BufferGeometry[] = [], signs: THREE.BufferGeometry[] = [];
     const roof = new Builder();
-    const station = map.places.find((p) => p.type === 'station');
-    for (const poly of map.platforms) {
-      const ring = ensureCCW(poly);
-      const rail = runs.length > 0 ? railSides(ring, runs) : ring.map(() => false);
+    for (const { ring, rail, axis: ax, sa, sb, posts, signs: spots } of stationLayout(map)) {
       tops.push(polygonGeometry(ring, PLATFORM_H, 4));
       platformGeometry(ring, rail, walls, edge);
 
-      const ax = axisOf(ring);
-      const len = Math.min(CANOPY_LEN, ax.s1 - ax.s0);
-      const target = station ? station.position[0] * ax.d[0] + station.position[1] * ax.d[1] : (ax.s0 + ax.s1) / 2;
-      const sa = Math.min(Math.max(target - len / 2, ax.s0), ax.s1 - len), sb = sa + len;
       canopyRoof(roof, ax, sa, sb);
       const yR = PLATFORM_H + CANOPY_RIDGE, yE = PLATFORM_H + CANOPY_EAVE;
-      for (let s = sa + POST_STEP / 2; s < sb; s += POST_STEP) {
-        steel.push(post(at(ax, s, ax.tc), PLATFORM_H, yR - 0.1));
-        steel.push(beam(at(ax, s, ax.tc), yE - 0.06, ax.w, ax.width + 2 * CANOPY_OVERHANG - 0.3, 0.08, 0.12));
+      for (const p of posts) {
+        steel.push(post(p));
+        steel.push(beam(p.at, yE - 0.06, ax.w, ax.width + 2 * CANOPY_OVERHANG - 0.3, 0.08, 0.12));
       }
-      steel.push(beam(at(ax, (sa + sb) / 2, ax.tc), yR - 0.12, ax.d, len, 0.1, 0.14));
+      steel.push(beam(at(ax, (sa + sb) / 2, ax.tc), yR - 0.12, ax.d, sb - sa, 0.1, 0.14));
 
-      // Carteles: uno pasando cada punta del alero, contra el borde de atrás, mirando a la vía
-      const railEdge = ring.findIndex((_, i) => rail[i]);
-      let toRail = 1;
-      if (railEdge >= 0) {
-        const a = ring[railEdge], c = ring[(railEdge + 1) % ring.length];
-        toRail = Math.sign(-(c[1] - a[1]) * ax.w[0] + (c[0] - a[0]) * ax.w[1]) || 1;
-      }
-      const tBack = ax.tc - toRail * (ax.width / 2 - 0.35);
-      const yaw = Math.atan2(ax.w[0] * toRail, ax.w[1] * toRail);
-      const yBottom = PLATFORM_H + STATION_SIGN_BOTTOM;
-      for (const s of [sa - 8, sb + 8]) {
-        const sc = Math.min(Math.max(s, ax.s0 + STATION_SIGN_W), ax.s1 - STATION_SIGN_W);
-        const p = at(ax, sc, tBack);
+      for (const sg of spots) {
         const g = signGeometry(STATION_SIGN_W, true);
-        g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(p[0], yBottom + SIGN_H / 2, p[1]),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(1, 1, 1)));
+        g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(sg.at[0], sg.bottomY + SIGN_H / 2, sg.at[1]),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), sg.yaw), new THREE.Vector3(1, 1, 1)));
         signs.push(g);
-        for (const k of [-1, 1]) steel.push(post(at(ax, sc + k * (STATION_SIGN_W / 2 - 0.25), tBack), PLATFORM_H, yBottom + SIGN_H, 0.045));
+        for (const p of sg.posts) steel.push(post(p));
       }
     }
     group.add(mesh('platform', merge([...tops, walls.build()], 'andenes'), materials.platform, true));

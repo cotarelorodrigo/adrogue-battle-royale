@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PARAPET_H, parapetEdges } from '../../shared/collision.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import { ensureCCW } from '../../shared/geo.ts';
 import type { Building, FacadeGround } from '../../shared/mapdata.ts';
@@ -6,8 +7,6 @@ import { frontGeometry } from './fronts.ts';
 import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
 
 export { FLOOR_H, BAY_W };
-const PARAPET_H = 0.6;
-const PARAPET_T = 0.2;
 const MITER_LIMIT = 2;
 const PLANAR_UV = 4;
 
@@ -41,36 +40,13 @@ function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i
   return toGeometry(b);
 }
 
-/** Desplaza hacia adentro cada vértice de un anillo antihorario, con inglete limitado a 2×. */
-function insetRing(fp: Vec2[], t: number): Vec2[] {
-  const n = fp.length;
-  const normals = fp.map((a, i) => {
-    const c = fp[(i + 1) % n];
-    const dx = c[0] - a[0], dz = c[1] - a[1];
-    const len = Math.hypot(dx, dz) || 1;
-    return [-dz / len, dx / len] as Vec2; // hacia afuera
-  });
-  return fp.map((p, i) => {
-    const n1 = normals[(i + n - 1) % n], n2 = normals[i];
-    const mx = n1[0] + n2[0], mz = n1[1] + n2[1];
-    const ml = Math.hypot(mx, mz);
-    if (ml < 1e-6) return [p[0] - n2[0] * t, p[1] - n2[1] * t] as Vec2;
-    const scale = Math.min((2 * t) / ml, MITER_LIMIT * t);
-    return [p[0] - (mx / ml) * scale, p[1] - (mz / ml) * scale] as Vec2;
-  });
-}
-
+/** El pretil de collision.ts (parapetEdges, PARAPET_H): lo que se ve es lo que frena. */
 function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color): THREE.BufferGeometry {
   const b = newBuilder(true);
   const y1 = y0 + PARAPET_H;
-  const inner = insetRing(fp, PARAPET_T);
-  const n = fp.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const a = fp[i], c = fp[j], ai = inner[i], ci = inner[j];
+  for (const { i, a, c, ai, ci } of parapetEdges(fp)) {
     const dx = c[0] - a[0], dz = c[1] - a[1];
     const len = Math.hypot(dx, dz);
-    if (len < 1e-6) continue;
     const nx = -dz / len, nz = dx / len;
     const u0 = cum[i] / BAY_W, u1 = (cum[i] + len) / BAY_W;
     const v0 = y0 / FLOOR_H, v1 = y1 / FLOOR_H;

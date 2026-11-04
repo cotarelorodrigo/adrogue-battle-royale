@@ -1,7 +1,7 @@
 import polygonClipping from 'polygon-clipping';
 import { heightFor } from '../../src/mapgen/buildings.ts';
 import { analyzeGround, exitPockets, solidOutlines } from '../../src/mapgen/pockets.ts';
-import { buildCollisionWorld } from '../../src/shared/collision.ts';
+import { buildCollisionWorld, PARAPET_H } from '../../src/shared/collision.ts';
 import { ensureCCW, pointInPolygon, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, MapData, Prop } from '../../src/shared/mapdata.ts';
@@ -43,7 +43,7 @@ describe('patio cerrado por una U de edificios', () => {
     // la base sobre una pared del patio, la normal hacia el patio
     expect(Math.abs(l.base[0]) <= 6 + 1e-9 && Math.abs(l.base[1]) <= 6 + 1e-9).toBe(true);
     expect(Math.hypot(l.base[0] + l.normal[0], l.base[1] + l.normal[1])).toBeLessThan(Math.hypot(l.base[0], l.base[1]));
-    expect(l.topY).toBe(heightFor(2));
+    expect(l.topY).toBe(heightFor(2) + PARAPET_H); // hasta el tope del pretil
     const world = buildCollisionWorld(map);
     const g = analyzeGround(world, solidOutlines(map));
     expect(g.pockets).toHaveLength(1);

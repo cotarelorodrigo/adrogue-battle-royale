@@ -4,8 +4,8 @@
 // principal es un hueco. Cada hueco recibe una escalera adentro, sobre una pared cuyo techo es accesible desde la
 // calle; si ninguna pared del hueco admite una, el hueco se rellena con un sólido al ras del techo vecino más bajo.
 import polygonClipping from 'polygon-clipping';
-import { buildCollisionWorld, collisionPrisms, DUMPSTER } from '../shared/collision.ts';
-import type { CollisionWorld } from '../shared/collision.ts';
+import { buildCollisionWorld, collisionPrisms, DUMPSTER, roofEdgeY } from '../shared/collision.ts';
+import type { CollisionMap, CollisionWorld } from '../shared/collision.ts';
 import { ensureCCW, pointInPolygon, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, MapData, Prop } from '../shared/mapdata.ts';
@@ -306,9 +306,12 @@ function habitable(world: CollisionWorld, points: Vec2[]): boolean {
   return false;
 }
 
-/** Plantas de los sólidos del mapa, para sembrar `analyzeGround`. */
-export function solidOutlines(map: Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props'>): Vec2[][] {
-  return collisionPrisms(map).prisms.map((p) => p.polygon);
+const isParapet = (tag: string | undefined): boolean => tag?.startsWith('parapet:') === true;
+
+/** Plantas de los sólidos del mapa, para sembrar `analyzeGround`. Los pretiles quedan adentro de la planta de su
+ *  edificio, arriba del techo: no suman semillas en el suelo. */
+export function solidOutlines(map: CollisionMap): Vec2[][] {
+  return collisionPrisms(map).prisms.filter((p) => !isParapet(p.tag)).map((p) => p.polygon);
 }
 
 export interface PocketStats {
@@ -352,7 +355,7 @@ function accessibleBuildings(map: MapData, g: GroundAnalysis, grid: Ctx['grid'])
       if (![1, -1].some((s) => g.regionOf(p.position[0] + perp[0] * s * reach, p.position[1] + perp[1] * s * reach) === 0)) continue;
       for (const j of grid.query(bboxOf([p.position], DUMPSTER.length))) {
         const b = map.buildings[j];
-        if (b.height > DUMPSTER.height + PLAYER.mantleReach + 1e-6) continue;
+        if (roofEdgeY(b) > DUMPSTER.height + PLAYER.mantleReach + 1e-6) continue; // desde arriba, al tope del pretil
         if (pointInPolygon(p.position, b.footprint) || distToRing(p.position, b.footprint) > DUMPSTER.depth / 2 + 0.3) continue;
         ok.add(clusterOf.get(b.id)!);
       }
@@ -379,7 +382,7 @@ function hasExit(ctx: Ctx, p: GroundRegion): boolean {
       const top = world.supportHeight(x, z, R, LOW_MAX);
       for (const j of ctx.grid.query(bboxOf([[x, z]], LADDER_TOP_PUSH + R))) {
         const b = map.buildings[j];
-        if (b.height <= top + PLAYER.mantleReach + 1e-6 && ctx.accessible.has(b.id) && distToRing([x, z], b.footprint) <= LADDER_TOP_PUSH) return true;
+        if (roofEdgeY(b) <= top + PLAYER.mantleReach + 1e-6 && ctx.accessible.has(b.id) && distToRing([x, z], b.footprint) <= LADDER_TOP_PUSH) return true;
       }
     }
   }
@@ -423,12 +426,13 @@ function pocketLadder(ctx: Ctx, pi: number): Ladder | null {
           if (ctx.grid.query(bboxOf(box)).some((j) => j !== bi && polygonDist(box, map.buildings[j].footprint) === 0)) continue;
           const probes = [at(-LADDER_HALF_W, 0.05), at(LADDER_HALF_W, 0.05), box[2], box[3]];
           if (probes.some(([x, z]) => world.overlaps(x, z, 0.01, 0.05, PLAYER.height))) continue;
-          // arriba: parado sobre el techo, con lugar para el cuerpo
+          // arriba (la escalera llega al tope del pretil y de ahí se cae al techo): parado sobre el techo, con lugar
+          // para el cuerpo y sin tocar el pretil
           const top = at(0, -LADDER_TOP_PUSH);
           if (top[0] < bd.minX + R || top[0] > bd.maxX - R || top[1] < bd.minZ + R || top[1] > bd.maxZ - R) continue;
           if (world.overlaps(top[0], top[1], R, b.height, b.height + PLAYER.height)) continue;
           if (world.supportHeight(top[0], top[1], R, b.height) < b.height - 1e-9) continue;
-          return { kind: 'ladder', base, normal: v2(nn, 3), topY: rn(b.height), buildingId: b.id };
+          return { kind: 'ladder', base, normal: v2(nn, 3), topY: rn(roofEdgeY(b)), buildingId: b.id };
         }
       }
     }
@@ -481,7 +485,8 @@ function pocketFill(ctx: Ctx, pi: number): Building[] | null {
     const at = (t: number, w: number): Vec2 => [l.base[0] + d[0] * t + nn[0] * w, l.base[1] + d[1] * t + nn[1] * w];
     return [at(-LADDER_HALF_W, 0), at(LADDER_HALF_W, 0), at(LADDER_HALF_W, LADDER_DEPTH), at(-LADDER_HALF_W, LADDER_DEPTH)];
   });
-  for (const polygon of [...prisms.filter((o) => !ids.has(o.tag ?? '')).map((o) => o.polygon), ...ladderBoxes]) {
+  // los pretiles son de los edificios (quedan arriba de su techo)
+  for (const polygon of [...prisms.filter((o) => !ids.has(o.tag ?? '') && !isParapet(o.tag)).map((o) => o.polygon), ...ladderBoxes]) {
     const ob = bboxOf(polygon);
     if (ob.minX > reach.maxX || ob.maxX < reach.minX || ob.minZ > reach.maxZ || ob.maxZ < reach.minZ) continue;
     if (boxes.some((bx) => polygonDist(bx, polygon) === 0)) return null;

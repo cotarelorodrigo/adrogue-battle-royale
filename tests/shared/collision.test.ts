@@ -1,8 +1,12 @@
-import { CollisionWorld, buildCollisionWorld } from '../../src/shared/collision.ts';
+import { CollisionWorld, DUMPSTER, PARAPET_H, PARAPET_T, PLATFORM_H, TREE_TRUNK_H, buildCollisionWorld, collisionPrisms, trunkHeight,
+} from '../../src/shared/collision.ts';
 import type { LadderVolume, Prism } from '../../src/shared/collision.ts';
 import { distPointSegment, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
-import type { Bounds, MapData } from '../../src/shared/mapdata.ts';
+import type { Bounds, Building, MapData } from '../../src/shared/mapdata.ts';
+import { PLAYER, initialState, stepPlayer } from '../../src/shared/player.ts';
+import type { PlayerState } from '../../src/shared/player.ts';
+import { stationPosts } from '../../src/shared/station.ts';
 
 const bounds: Bounds = { minX: -50, maxX: 50, minZ: -50, maxZ: 50 };
 // Cuadrado de 10 × 10 m, h = 3,8: x ∈ [0, 10], z ∈ [−10, 0] (antihorario visto desde arriba).
@@ -414,10 +418,10 @@ describe('buildCollisionWorld', () => {
   test('altura de techo y tag de cada elemento', () => {
     const cases: [Vec2, number, string][] = [
       [[5, -5], 6.6, 'b7'],
-      [[25, -2], 1.0, 'platform'],
-      [[-10, 10], 1.4, 'dumpster'],
-      [[-20, 10], 1.4, 'dumpster'],
-      [[-10, -20], 3, 'tree'],
+      [[22, -2], 1.0, 'platform'], // en el medio del andén va un poste del alero
+      [[-10, 10], DUMPSTER.height, 'dumpster'],
+      [[-20, 10], DUMPSTER.height, 'dumpster'],
+      [[-10, -20], TREE_TRUNK_H[1] * 1.3, 'tree'],
       [[-30, 10], 0.5, 'bench'],
       [[20, 20], 0.6, 'fountain'],
       [[0, 30], 2.5, 'monument'],
@@ -484,6 +488,103 @@ describe('buildCollisionWorld', () => {
     expect(at(29.9, -3.9)).toBe(true);
     expect(at(30.1, -2)).toBe(false);
     expect(at(9.9, -9.9)).toBe(true);
+  });
+});
+
+// ---------- pretiles, troncos y postes ----------
+
+const mapWith = (part: Partial<MapData>): MapData => ({
+  version: 1, origin: { lat: 0, lon: 0 }, bounds, buildings: [], outskirts: [], roads: [], railways: [], platforms: [], parks: [],
+  places: [], signs: [], props: [], trees: [], randomSpawns: [], ...part,
+});
+// el cuadrado de 10 × 10 de arriba (x ∈ [0, 10], z ∈ [−10, 0]) con 6 m de alto
+const roof6: Building = { id: 'p6', footprint: square.polygon, height: 6, floors: 2, kind: 'house', wall: 'plaster', tint: '#ccc' };
+
+/** `secs` segundos a 60 Hz con la misma entrada. yaw = π/2 mira hacia −x (el borde oeste del cuadrado). */
+function hold(world: CollisionWorld, s: PlayerState, secs: number, jump = false, yaw = Math.PI / 2): PlayerState {
+  for (let i = 0; i < Math.round(secs * 60); i++) s = stepPlayer(s, { forward: 1, right: 0, jump, crouch: false, yaw, pitch: 0 }, world, 1 / 60);
+  return s;
+}
+
+describe('pretiles', () => {
+  const pw = buildCollisionWorld(mapWith({ buildings: [roof6] }));
+  test('uno por arista, de PARAPET_T de ancho hacia adentro, de height a height + PARAPET_H', () => {
+    const ps = collisionPrisms(mapWith({ buildings: [roof6] })).prisms.filter((p) => p.tag === 'parapet:p6');
+    expect(ps).toHaveLength(4);
+    for (const p of ps) expect([p.minY, p.maxY]).toEqual([6, 6 + PARAPET_H]);
+    expect([PARAPET_H, PARAPET_T]).toEqual([0.6, 0.2]);
+  });
+  test('parado en el techo a 0,5 m del borde y caminando hacia afuera 1 s, sigue en el techo', () => {
+    const s = hold(pw, initialState([0.5, 6, -5]), 1);
+    expect(s.mode).toBe('walk');
+    expect(s.onGround).toBe(true);
+    expect(s.pos[1]).toBeCloseTo(6, 9);
+    expect(s.pos[0]).toBeGreaterThanOrEqual(PARAPET_T + PLAYER.radius - 1e-6); // contra la cara de adentro del pretil
+  });
+  test('con salto pasa por encima del pretil y cae afuera', () => {
+    const s = hold(pw, initialState([0.5, 6, -5]), 3, true);
+    expect(s.onGround).toBe(true);
+    expect(s.pos[1]).toBe(0);
+    expect(s.pos[0]).toBeLessThan(-PLAYER.radius);
+  });
+  test('un rayo horizontal a y = 6,3 pega en el pretil: desde afuera en la pared, desde el techo en la cara de adentro', () => {
+    const out = pw.raycast([-10, 6.3, -5], [1, 0, 0], 100)!;
+    expect(out.dist).toBeCloseTo(10, 9);
+    expect(out.normal).toEqual([-1, 0, 0]);
+    expect(out.tag).toBe('parapet:p6');
+    const inner = pw.raycast([5, 6.3, -5], [-1, 0, 0], 100)!;
+    expect(inner.dist).toBeCloseTo(5 - PARAPET_T, 9);
+    expect(inner.tag).toBe('parapet:p6');
+    expect(pw.raycast([-10, 6 + PARAPET_H + 0.01, -5], [1, 0, 0], 100)).toBeNull();
+  });
+  test('un relleno (fill) no tiene pretil', () => {
+    const fill = mapWith({ buildings: [{ ...roof6, fill: true }] });
+    expect(collisionPrisms(fill).prisms.map((p) => p.tag)).toEqual(['p6']);
+    expect(buildCollisionWorld(fill).raycast([-10, 6.3, -5], [1, 0, 0], 100)).toBeNull();
+  });
+});
+
+describe('troncos', () => {
+  test('el sólido mide lo que el tronco dibujado de su variante (por la escala)', () => {
+    expect(TREE_TRUNK_H).toEqual([4.2, 4.6, 4.0]);
+    const trees = [0, 1, 2].map((v) => ({ position: [v * 10, 20] as Vec2, variant: v as 0 | 1 | 2, scale: 0.9 + v * 0.1 }));
+    const ps = collisionPrisms(mapWith({ trees })).prisms;
+    expect(ps.map((p) => p.maxY)).toEqual(trees.map((t) => TREE_TRUNK_H[t.variant] * t.scale));
+    expect(ps.map((p) => p.maxY)).toEqual(trees.map(trunkHeight));
+  });
+  test('un tronco de variante 1 bloquea un disco a y = 4,4 y no a y = 4,7', () => {
+    const tw = buildCollisionWorld(mapWith({ trees: [{ position: [-10, -20], variant: 1, scale: 1 }] }));
+    expect(tw.overlaps(-10, -20, 0.1, 4.4, 4.41)).toBe(true);
+    expect(tw.overlaps(-10, -20, 0.1, 4.7, 4.71)).toBe(false);
+  });
+});
+
+describe('postes de la estación', () => {
+  // dos vías norte–sur y dos andenes de 100 m (como tests/client/landmarks.test.ts)
+  const track = (x: number): Vec2[] => [[x, -300], [x, 300]];
+  const station = mapWith({
+    bounds: { minX: -100, maxX: 100, minZ: -100, maxZ: 100 },
+    railways: [track(0), track(4.2)],
+    platforms: [[[-5.7, -50], [-1.7, -50], [-1.7, 50], [-5.7, 50]], [[5.9, -50], [9.9, -50], [9.9, 50], [5.9, 50]]],
+    places: [{ id: 'estacion-adrogue', name: 'Estación Adrogué', type: 'station', position: [12, 10], enterable: false, spawn: [12, 0, 10] }],
+  });
+  const posts = stationPosts(station);
+  const sw = buildCollisionWorld(station);
+  test('por andén: 5 postes del alero y 2 por cada uno de los 2 carteles, sobre el andén', () => {
+    expect(posts).toHaveLength(18);
+    for (const p of posts) expect(p.y0).toBe(PLATFORM_H);
+    const ps = collisionPrisms(station).prisms.filter((p) => p.tag === 'station-post');
+    expect(ps.map((p) => [p.minY, p.maxY])).toEqual(posts.map((p) => [p.y0, p.y1]));
+  });
+  test('cada poste es sólido en su lugar y un rayo a la altura del pecho pega en él', () => {
+    for (const p of posts) {
+      expect(sw.overlaps(p.at[0], p.at[1], 0.01, p.y0 + 0.1, p.y1 - 0.1)).toBe(true);
+      expect(sw.overlaps(p.at[0] + p.r + 0.02, p.at[1], 0.01, p.y0 + 0.1, p.y1 - 0.1)).toBe(false);
+      expect(sw.overlaps(p.at[0], p.at[1], 0.01, p.y1 + 0.01, p.y1 + 0.1)).toBe(false);
+      const hit = sw.raycast([p.at[0] - 1, PLATFORM_H + 1.3, p.at[1]], [1, 0, 0], 2)!;
+      expect(hit.tag).toBe('station-post');
+      expect(hit.dist).toBeCloseTo(1 - p.r, 2);
+    }
   });
 });
 

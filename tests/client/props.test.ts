@@ -42,14 +42,14 @@ test('escaleras en 2 draw calls (barandas y peldaños); contenedores instanciado
   expect(meshes).toHaveLength(4);
 });
 
-test('contenedores: una instancia por prop, en su posición y rotación, de 1,8 × 1,4 × 1,1', () => {
+test('contenedores: una instancia por prop, en su posición y rotación, de 1,8 × 2 × 1,1', () => {
   const found = dumpsters.map((m) => ({ m, ...decompose(m, 0) }));
   [dumpA, dumpB].forEach((d) => {
     if (d.kind !== 'dumpster') throw new Error();
     const hit = found.find(({ p }) => Math.hypot(p.x - d.position[0], p.z - d.position[1]) < 1e-5)!;
     expect(hit).toBeDefined();
     const { m, p, q, s } = hit;
-    expect(localSize(m)).toEqual([1.8, 1.4, 1.1]);
+    expect(localSize(m)).toEqual([1.8, 2, 1.1]);
     m.geometry.computeBoundingBox();
     expect(m.geometry.boundingBox!.min.y).toBeCloseTo(0);
     expect(p.y).toBeCloseTo(0);

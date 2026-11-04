@@ -63,6 +63,23 @@ export function distPointSegment(p: Vec2, a: Vec2, b: Vec2): number {
   return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dz));
 }
 
+/** Liang–Barsky: recorta el segmento a un rectángulo; null si queda afuera. */
+export function clipSegment(a: Vec2, b: Vec2, minX: number, minZ: number, maxX: number, maxZ: number): [Vec2, Vec2] | null {
+  const dx = b[0] - a[0], dz = b[1] - a[1];
+  let t0 = 0, t1 = 1;
+  const test = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+    return true;
+  };
+  if (!test(-dx, a[0] - minX) || !test(dx, maxX - a[0]) || !test(-dz, a[1] - minZ) || !test(dz, maxZ - a[1])) return null;
+  if (t1 - t0 < 1e-9) return null;
+  return [
+    t0 === 0 ? a : [a[0] + dx * t0, a[1] + dz * t0],
+    t1 === 1 ? b : [a[0] + dx * t1, a[1] + dz * t1],
+  ];
+}
 /** FNV-1a de 32 bits → [0, 1). */
 export function hash01(s: string): number {
   let h = 0x811c9dc5;

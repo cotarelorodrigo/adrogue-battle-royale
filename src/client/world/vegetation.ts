@@ -3,7 +3,7 @@
 // a dibujar.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BENCH, FOUNTAIN_H, TRUNK_R } from '../../shared/collision.ts';
+import { BENCH, FOUNTAIN_H, TRUNK_R, trunkHeight } from '../../shared/collision.ts';
 import { hashIndex } from '../../shared/geo.ts';
 import type { MapData, Prop, Tree } from '../../shared/mapdata.ts';
 import { splitByCell } from './cells.ts';
@@ -14,8 +14,6 @@ import type { WorldMaterials } from './types.ts';
 // ─── Árboles ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 interface Variant {
-  /** Alto del tronco visible (llega hasta adentro de la copa). */
-  trunkH: number;
   /** La copa: base, ancho y alto. */
   crownY: number;
   crownW: number;
@@ -27,13 +25,14 @@ interface Variant {
   bloom?: { colors: string[]; share: number };
 }
 
-/** 0: tipa (copa ancha y baja), 1: plátano (copa redonda y alta), 2: jacarandá (copa aireada, florecida en noviembre). */
+/** 0: tipa (copa ancha y baja), 1: plátano (copa redonda y alta), 2: jacarandá (copa aireada, florecida en noviembre).
+ *  El tronco de cada una mide TREE_TRUNK_H (collision.ts), lo mismo que su sólido, y llega hasta adentro de la copa. */
 const VARIANTS: Variant[] = [
-  { trunkH: 4.2, crownY: 2.8, crownW: 8.5, crownH: 5.5, clusters: 1500,
+  { crownY: 2.8, crownW: 8.5, crownH: 5.5, clusters: 1500,
     leaves: ['#263f1a', '#34522a', '#43642f', '#557837', '#6a8c40'] },
-  { trunkH: 4.6, crownY: 2.6, crownW: 6.5, crownH: 6.8, clusters: 1500,
+  { crownY: 2.6, crownW: 6.5, crownH: 6.8, clusters: 1500,
     leaves: ['#1f3818', '#2c4a22', '#3a5c2a', '#4b6f33', '#5d823c'] },
-  { trunkH: 4.0, crownY: 2.9, crownW: 7, crownH: 5, clusters: 1200,
+  { crownY: 2.9, crownW: 7, crownH: 5, clusters: 1200,
     leaves: ['#2c4220', '#3b5629', '#4b6a31', '#5c7c3a'], bloom: { colors: ['#7f73ad', '#968ac2', '#aa9fcf'], share: 0.3 } },
 ];
 /** Lado de la textura de hojas de cada variante; el atlas las pone una al lado de la otra. */
@@ -197,8 +196,8 @@ export function buildTrees(trees: Tree[], density: number, barkMap?: THREE.Textu
   const UP = new THREE.Vector3(0, 1, 0);
   list.forEach(({ t, h }, i) => {
     const v = VARIANTS[t.variant];
-    // el tronco no se ensancha ni se gira: su octógono es el de la colisión
-    trunk.setMatrixAt(i, m.compose(p.set(t.position[0], 0, t.position[1]), q.identity(), s.set(1, v.trunkH * t.scale, 1)));
+    // el tronco no se ensancha ni se gira y mide lo que su sólido: su octógono y su alto son los de la colisión
+    trunk.setMatrixAt(i, m.compose(p.set(t.position[0], 0, t.position[1]), q.identity(), s.set(1, trunkHeight(t), 1)));
     // la copa de 1 × 1 × 1, estirada al ancho y alto de su variante, girada al azar
     p.set(t.position[0], v.crownY * t.scale, t.position[1]);
     s.set(v.crownW, v.crownH, v.crownW).multiplyScalar(t.scale);

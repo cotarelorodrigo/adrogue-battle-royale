@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { MARGIN_M, pointInPolygon } from '../../shared/geo.ts';
+import { clipSegment, MARGIN_M, pointInPolygon } from '../../shared/geo.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import type { FacadeGround, MapData, Park, Road } from '../../shared/mapdata.ts';
 import { extrudeBuilding, polygonGeometry, ribbon } from './geometry.ts';
@@ -23,23 +23,6 @@ export function isParkFootway(r: Road, parks: Park[]): boolean {
   return parks.some((p) => pointInPolygon(mid, p.polygon));
 }
 
-/** Liang–Barsky: recorta el segmento a un rectángulo; null si queda afuera. */
-export function clipSegment(a: Vec2, b: Vec2, minX: number, minZ: number, maxX: number, maxZ: number): [Vec2, Vec2] | null {
-  const dx = b[0] - a[0], dz = b[1] - a[1];
-  let t0 = 0, t1 = 1;
-  const test = (p: number, q: number): boolean => {
-    if (p === 0) return q >= 0;
-    const t = q / p;
-    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
-    return true;
-  };
-  if (!test(-dx, a[0] - minX) || !test(dx, maxX - a[0]) || !test(-dz, a[1] - minZ) || !test(dz, maxZ - a[1])) return null;
-  if (t1 - t0 < 1e-9) return null;
-  return [
-    t0 === 0 ? a : [a[0] + dx * t0, a[1] + dz * t0],
-    t1 === 1 ? b : [a[0] + dx * t1, a[1] + dz * t1],
-  ];
-}
 /** Un edificio se asigna a un chunk como si su centroide estuviera al menos a esto del borde del área (m). */
 const EDGE_INSET = 10;
 const GROUND_MAT: Record<FacadeGround, keyof WorldMaterials> = { shop: 'wallGroundShop', house: 'wallGroundHouse', brick: 'brickGround' };

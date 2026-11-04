@@ -1,8 +1,9 @@
 // Mundo de colisiones 2,5D: prismas verticales (planta poligonal × [minY, maxY]) y volúmenes de escalera,
 // indexados en una grilla uniforme. Lo usan el cliente y, más adelante, el servidor: solo depende de src/shared.
-import { signedAreaFromAbove } from './geo.ts';
+import { ensureCCW, signedAreaFromAbove } from './geo.ts';
 import type { Vec2, Vec3 } from './geo.ts';
-import type { Bounds, MapData } from './mapdata.ts';
+import type { Bounds, Building, MapData, Place, Tree } from './mapdata.ts';
+import { PLATFORM_H, stationPosts } from './station.ts';
 
 export interface Prism { polygon: Vec2[]; minY: number; maxY: number; tag?: string }
 /** Volumen de una escalera de mano: 0,8 m de ancho a lo largo de la pared y 0,6 m de profundidad desde `base`
@@ -553,15 +554,63 @@ function rayPrism(s: Solid, ox: number, oy: number, oz: number, dx: number, dy: 
   return best;
 }
 
-// Medidas de los sólidos de los props. El cliente las usa para que lo que se ve coincida con lo que se pisa.
-export const PLATFORM_H = 1.0;
+// Medidas de los sólidos. El cliente las usa para que lo que se ve coincida con lo que se pisa.
+export { PLATFORM_H };
+/** Pretil de los techos: de `height` a `height + PARAPET_H`, PARAPET_T hacia adentro de la planta. Los rellenos de
+ *  huecos (`fill`) no llevan. */
+export const PARAPET_H = 0.6, PARAPET_T = 0.2;
+/** El inglete del pretil se limita a 2× su espesor (en una punta aguda no se va lejos). */
+const PARAPET_MITER = 2;
 export const TRUNK_R = 0.3;
-export const TRUNK_H = 3;
-export const DUMPSTER = { length: 1.8, depth: 1.1, height: 1.4 } as const;
+/** Alto del tronco dibujado de cada variante de árbol a escala 1 (tipa, plátano, jacarandá): el sólido sube hasta
+ *  adentro de la copa, así desde la calle nadie se trepa a la punta y queda escondido entre las hojas. Las copas no
+ *  frenan. */
+export const TREE_TRUNK_H = [4.2, 4.6, 4.0] as const;
+/** El contenedor mide 2 m: desde arriba, el mantle (2,4 m) llega justo al tope del pretil de un techo de un piso
+ *  (3,8 + 0,6 m), y desde el suelo se lo trepa. */
+export const DUMPSTER = { length: 1.8, depth: 1.1, height: 2.0 } as const;
 export const BENCH = { length: 1.8, depth: 0.6, height: 0.5 } as const;
 export const FOUNTAIN_H = 0.6;
 export const PEDESTAL = { side: 3, height: 2.5 } as const;
 export const COLUMN = { side: 2, height: 6 } as const;
+
+/** Alto del tronco dibujado (y del sólido) de un árbol. */
+export const trunkHeight = (t: Pick<Tree, 'variant' | 'scale'>): number => TREE_TRUNK_H[t.variant] * t.scale;
+
+/** Alto del borde del techo visto desde afuera: el tope del pretil, o el techo si es un relleno (sin pretil). Hasta ahí
+ *  tiene que llegar una escalera o un mantle para subir. */
+export const roofEdgeY = (b: Pick<Building, 'height' | 'fill'>): number => b.height + (b.fill ? 0 : PARAPET_H);
+
+/** Una arista del pretil sobre una planta antihoraria: la arista i (a → c) y la misma corrida PARAPET_T hacia adentro
+ *  (ai → ci). El cuadrilátero a, c, ci, ai es el tope que se dibuja y la planta del sólido. */
+export interface ParapetEdge { i: number; a: Vec2; c: Vec2; ai: Vec2; ci: Vec2 }
+
+/** Las aristas del pretil de una planta antihoraria (salvo las de largo ~0). La arista de adentro sale de correr cada
+ *  vértice por su bisectriz, con inglete limitado. La usan la colisión y el dibujo (client/world/geometry.ts). */
+export function parapetEdges(fp: Vec2[]): ParapetEdge[] {
+  const n = fp.length, t = PARAPET_T;
+  const normals = fp.map((a, i) => {
+    const c = fp[(i + 1) % n];
+    const dx = c[0] - a[0], dz = c[1] - a[1];
+    const len = Math.hypot(dx, dz) || 1;
+    return [-dz / len, dx / len] as Vec2; // hacia afuera
+  });
+  const inner = fp.map((p, i) => {
+    const n1 = normals[(i + n - 1) % n], n2 = normals[i];
+    const mx = n1[0] + n2[0], mz = n1[1] + n2[1];
+    const ml = Math.hypot(mx, mz);
+    if (ml < 1e-6) return [p[0] - n2[0] * t, p[1] - n2[1] * t] as Vec2;
+    const scale = Math.min((2 * t) / ml, PARAPET_MITER * t);
+    return [p[0] - (mx / ml) * scale, p[1] - (mz / ml) * scale] as Vec2;
+  });
+  const out: ParapetEdge[] = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    if (Math.hypot(fp[j][0] - fp[i][0], fp[j][1] - fp[i][1]) < 1e-6) continue;
+    out.push({ i, a: fp[i], c: fp[j], ai: inner[i], ci: inner[j] });
+  }
+  return out;
+}
 
 function octagon([cx, cz]: Vec2, r: number): Vec2[] {
   const out: Vec2[] = [];
@@ -580,13 +629,26 @@ function orientedBox([cx, cz]: Vec2, rotation: number, length: number, depth: nu
   return [[cx - ux + vx, cz - uz + vz], [cx + ux + vx, cz + uz + vz], [cx + ux - vx, cz + uz - vz], [cx - ux - vx, cz - uz - vz]];
 }
 
-/** Los sólidos (con tag: el id del edificio, o el tipo de prop) y las escaleras del mapa. */
-export function collisionPrisms(map: Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props'>): { prisms: Prism[]; ladders: LadderVolume[] } {
+/** Lo que hace falta del mapa para armar sus sólidos (las vías, los bordes y dónde está la estación ubican los postes). */
+export type CollisionMap = Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props' | 'railways' | 'bounds'> & {
+  places: Pick<Place, 'type' | 'position'>[];
+};
+
+/** Los sólidos y las escaleras del mapa. Tags: el id del edificio, `parapet:<id>` en su pretil, `station-post` en los
+ *  postes de la estación, o el tipo de prop. */
+export function collisionPrisms(map: CollisionMap): { prisms: Prism[]; ladders: LadderVolume[] } {
   const prisms: Prism[] = [];
   const ladders: LadderVolume[] = [];
-  for (const b of map.buildings) prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
+  for (const b of map.buildings) {
+    prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
+    if (b.fill) continue; // un relleno de hueco es un parche entre vecinos: sin pretil
+    for (const e of parapetEdges(ensureCCW(b.footprint))) {
+      prisms.push({ polygon: [e.a, e.c, e.ci, e.ai], minY: b.height, maxY: b.height + PARAPET_H, tag: `parapet:${b.id}` });
+    }
+  }
   for (const p of map.platforms) prisms.push({ polygon: p, minY: 0, maxY: PLATFORM_H, tag: 'platform' });
-  for (const t of map.trees) prisms.push({ polygon: octagon(t.position, TRUNK_R), minY: 0, maxY: TRUNK_H, tag: 'tree' });
+  for (const p of stationPosts(map)) prisms.push({ polygon: octagon(p.at, p.r), minY: p.y0, maxY: p.y1, tag: 'station-post' });
+  for (const t of map.trees) prisms.push({ polygon: octagon(t.position, TRUNK_R), minY: 0, maxY: trunkHeight(t), tag: 'tree' });
   for (const p of map.props) {
     switch (p.kind) {
       case 'ladder':
@@ -611,7 +673,7 @@ export function collisionPrisms(map: Pick<MapData, 'buildings' | 'platforms' | '
   return { prisms, ladders };
 }
 
-export function buildCollisionWorld(map: Pick<MapData, 'buildings' | 'platforms' | 'trees' | 'props' | 'bounds'>): CollisionWorld {
+export function buildCollisionWorld(map: CollisionMap): CollisionWorld {
   const { prisms, ladders } = collisionPrisms(map);
   return new CollisionWorld(prisms, ladders, map.bounds);
 }

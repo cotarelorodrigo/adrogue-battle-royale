@@ -1,7 +1,8 @@
+import { DUMPSTER, PARAPET_H, PARAPET_T, roofEdgeY } from '../shared/collision.ts';
 import { areaRect, distPointSegment, pointInPolygon, polygonArea } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Prop, Road } from '../shared/mapdata.ts';
-import { heightFor } from './buildings.ts';
+import { PLAYER } from '../shared/player.ts';
 import { outwardNormal } from './places.ts';
 import { bboxOf, createGrid, polygonDist, segToPolygonDist } from './spatial.ts';
 import type { Box } from './spatial.ts';
@@ -12,9 +13,10 @@ const LINK_DIST = 1.0;
 const AREA_PER_AID = 1500;
 const MIN_STREET_EDGE = 3;
 const RAY_LEN = 5;
-const DUMPSTER_MAX_H = heightFor(1) + 0.05;
-const DUMPSTER_LEN = 1.8;
-const DUMPSTER_DEPTH = 1.1;
+/** Un contenedor sirve si desde arriba el mantle llega al tope del pretil (los techos de un piso); si no, escalera. */
+const DUMPSTER_MAX_H = DUMPSTER.height + MANTLE_REACH - PARAPET_H + 0.05;
+const DUMPSTER_LEN = DUMPSTER.length;
+const DUMPSTER_DEPTH = DUMPSTER.depth;
 const DUMPSTER_GAP = 0.2;
 const LADDER_W = 0.8;
 const LADDER_D = 0.6;
@@ -23,6 +25,13 @@ const NON_VEHICULAR = new Set(['footway', 'pedestrian', 'service']);
 /** En la fachada de un lote, la ayuda queda a SLOT_END de la punta, y el cartel y el toldo empiezan SLOT_GAP más allá. */
 const SLOT_END = 0.1;
 const SLOT_GAP = 0.2;
+/** Arriba de una escalera, el controlador deja al jugador a esto de la pared, sobre el techo (MANTLE_PUSH de player.ts). */
+const LADDER_TOP_PUSH = 0.6;
+/** Ahí el jugador tiene que quedar a esto del borde de la planta: sin tocar el pretil (PARAPET_T adentro), cae al techo.
+ *  Si no, queda arriba del pretil de la medianera y, con W, camina por encima. */
+const LANDING_CLEAR = PARAPET_T + PLAYER.radius + 0.03;
+/** Paso con que la escalera de un lote se aleja de la punta hasta que su llegada queda libre. */
+const SLOT_STEP = 0.05;
 /** Una arista de la planta es de la fachada si sus dos puntas quedan a esta distancia de la línea del frente (como
  *  frontEdgesOf de lots.ts). */
 const ON_FRONT = 0.15;
@@ -123,13 +132,21 @@ function facesRoad(ctx: Ctx, mid: Vec2, n: Vec2): boolean {
 
 const nearLine = (p: Vec2, line: Vec2[]): boolean => line.some((q, i) => i > 0 && distPointSegment(p, line[i - 1], q) <= ON_FRONT);
 
+/** ¿Arriba de una escalera con base en `base` (normal exterior n) el jugador queda lejos de todo borde de la planta? */
+function landingClear(fp: Vec2[], base: Vec2, n: Vec2): boolean {
+  const q: Vec2 = [base[0] - n[0] * LADDER_TOP_PUSH, base[1] - n[1] * LADDER_TOP_PUSH];
+  return pointInPolygon(q, fp) && fp.every((a, i) => distPointSegment(q, a, fp[(i + 1) % fp.length]) >= LANDING_CLEAR);
+}
+
 /**
  * Aristas candidatas en la fachada de un lote: una por punta pedida, con la ayuda pegada a esa punta (en el primer tramo
- * recto, desde la punta, donde entra entera) y no en el medio, donde taparía el cartel y la vidriera.
+ * recto, desde la punta, donde entra entera) y no en el medio, donde taparía el cartel y la vidriera. Una escalera se
+ * corre lo justo para que arriba el jugador no quede sobre el pretil de la medianera.
  */
 function slotEdges(ctx: Ctx, bi: number, lot: LotFront): Edge[] {
   const b = ctx.ix.buildings[bi];
-  const half = (b.height <= DUMPSTER_MAX_H ? DUMPSTER_LEN : LADDER_W) / 2;
+  const ladder = b.height > DUMPSTER_MAX_H;
+  const half = (ladder ? LADDER_W : DUMPSTER_LEN) / 2;
   const line = lot.line;
   const lens = line.slice(1).map((q, i) => Math.hypot(q[0] - line[i][0], q[1] - line[i][1]));
   const total = lens.reduce((t, l) => t + l, 0);
@@ -144,12 +161,15 @@ function slotEdges(ctx: Ctx, bi: number, lot: LotFront): Edge[] {
       if (len >= 2 * (SLOT_END + half)) {
         const [p, q] = punta === 'inicio' ? [line[k], line[k + 1]] : [line[k + 1], line[k]];
         const d: Vec2 = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
-        const s = SLOT_END + half;
-        const mid: Vec2 = [p[0] + d[0] * s, p[1] + d[1] * s];
+        const along = (t: number): Vec2 => [p[0] + d[0] * t, p[1] + d[1] * t];
+        let s = SLOT_END + half;
         let n: Vec2 = [-d[1], d[0]];
-        if (pointInPolygon([mid[0] + n[0] * 0.05, mid[1] + n[1] * 0.05], b.footprint)) n = [d[1], -d[0]];
+        if (pointInPolygon([along(s)[0] + n[0] * 0.05, along(s)[1] + n[1] * 0.05], b.footprint)) n = [d[1], -d[0]];
+        // la escalera se aleja de la punta hasta que arriba no deja al jugador sobre el pretil de la medianera
+        while (ladder && s + half + SLOT_END <= len && !landingClear(b.footprint, along(s), n)) s += SLOT_STEP;
+        const mid = along(s);
         const largo = from + s + half + SLOT_GAP;
-        if (largo <= total) out.push({ bi, i: -1, len, mid, n, d, street: opensToStreet(ctx, bi, mid, n), slot: { punta, largo } });
+        if (largo <= total && s + half + SLOT_END <= len) out.push({ bi, i: -1, len, mid, n, d, street: opensToStreet(ctx, bi, mid, n), slot: { punta, largo } });
         break;
       }
       from += len;
@@ -200,7 +220,8 @@ function makeAid(b: Building, e: Edge): Aid {
   const hw = LADDER_W / 2;
   const corner = (s: number, t: number): Vec2 => [e.mid[0] + e.d[0] * hw * s + e.n[0] * LADDER_D * t, e.mid[1] + e.d[1] * hw * s + e.n[1] * LADDER_D * t];
   return {
-    prop: { kind: 'ladder', base: e.mid, normal: e.n, topY: b.height, buildingId: b.id },
+    // hasta el tope del pretil: el empuje de arriba de la escalera pasa por encima y deja al jugador sobre el techo
+    prop: { kind: 'ladder', base: e.mid, normal: e.n, topY: roofEdgeY(b), buildingId: b.id },
     pos: e.mid,
     box: [corner(-1, 0), corner(1, 0), corner(1, 1), corner(-1, 1)],
   };
@@ -308,8 +329,15 @@ export function placeClimbAidsWithStats(buildings: Building[], roads: Road[], lo
       push(first.edge);
       stats[first.tier === 0 ? 'tier0' : 'tier1']++;
     } else {
-      let longest: Edge | undefined;
-      for (const e of lowEdges) if (inArea(ctx, e) && (!longest || e.len > longest.len + 1e-9)) longest = e;
+      // la arista más larga del más bajo, mejor si la caja de la ayuda queda libre (con otro edificio encima, el pie de
+      // la escalera queda trabado)
+      const longestOf = (es: Edge[]): Edge | undefined => {
+        let best: Edge | undefined;
+        for (const e of es) if (!best || e.len > best.len + 1e-9) best = e;
+        return best;
+      };
+      const inside = lowEdges.filter((e) => inArea(ctx, e));
+      const longest = longestOf(inside.filter((e) => isFree(ctx, e, aidOf(ctx, e)))) ?? longestOf(inside);
       if (longest) {
         push(longest);
         stats.fallback++;

@@ -4,6 +4,7 @@ import { buildMonuments, buildStation } from '../../src/client/world/landmarks.t
 import type { WorldMaterials } from '../../src/client/world/types.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { MapData, Prop } from '../../src/shared/mapdata.ts';
+import { stationPosts } from '../../src/shared/station.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
 // Las mallas se arman al recolectar los tests (fuera de beforeEach): el canvas falso se instala antes.
@@ -111,6 +112,23 @@ describe('estación', () => {
     const signs = meshes.filter((m) => m.name === 'stationSigns');
     expect(signs).toHaveLength(1); // los 4 carteles comparten textura: una sola malla
     expect(signs[0].geometry.getAttribute('position').count).toBe(4 * 24); // 4 cajas de 24 vértices
+  });
+
+  test('los postes dibujados (alero y carteles) son los sólidos de la colisión: stationPosts', () => {
+    const steel = meshes.find((m) => m.name === 'steel')!;
+    const pos = steel.geometry.getAttribute('position');
+    const posts = stationPosts(map);
+    expect(posts).toHaveLength(18);
+    for (const p of posts) {
+      // el cilindro de 8 lados del poste: sus vértices a radio r del eje, abajo en y0 y arriba en y1
+      let bottom = 0, top = 0;
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.abs(Math.hypot(pos.getX(i) - p.at[0], pos.getZ(i) - p.at[1]) - p.r) > 1e-4) continue;
+        if (Math.abs(pos.getY(i) - p.y0) < 1e-4) bottom++;
+        if (Math.abs(pos.getY(i) - p.y1) < 1e-4) top++;
+      }
+      expect([bottom >= 8, top >= 8], `${p.at}`).toEqual([true, true]);
+    }
   });
 
   test('a lo sumo 9 draw calls más los durmientes (uno por celda)', () => {

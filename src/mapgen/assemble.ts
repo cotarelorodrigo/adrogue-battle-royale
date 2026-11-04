@@ -115,7 +115,8 @@ export function assembleMap(
   const holes = exitPockets(map);
   warnings.push(...holes.warnings);
 
-  const world = buildCollisionWorld(map);
+  // los lugares todavía no tienen spawn, pero la estación ya ubica sus postes: el mundo es el mismo que el del juego
+  const world = buildCollisionWorld({ ...map, places: matched.places.map((p) => ({ type: p.type, position: v2(p.position) })) });
   map.places = matched.places.map((p0): Place => {
     const p: Omit<Place, 'spawn'> = {
       ...p0,

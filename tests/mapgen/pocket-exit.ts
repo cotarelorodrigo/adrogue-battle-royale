@@ -10,7 +10,8 @@ export type Ladder = Extract<Prop, { kind: 'ladder' }>;
 
 /**
  * Desde los puntos del hueco al alcance de una escalera: parado ahí, mirando la pared y con W apretado, ¿sube y queda
- * parado en el techo (y = topY)? Suelta W apenas termina el mantle de arriba. Devuelve la escalera que funcionó o null.
+ * parado en el techo de su edificio? La escalera llega al tope del pretil y el mantle de arriba lo deja en el aire sobre
+ * el techo: W sigue apretada hasta que cae y queda apoyado ahí. Devuelve la escalera que funcionó o null.
  */
 export function climbOut(world: CollisionWorld, map: MapData, region: GroundRegion): Ladder | null {
   const byBase = new Map<string, Ladder>();
@@ -25,14 +26,15 @@ export function climbOut(world: CollisionWorld, map: MapData, region: GroundRegi
     tried.add(l);
     const n = Math.hypot(l.normal[0], l.normal[1]);
     const yaw = Math.atan2(l.normal[0] / n, l.normal[1] / n); // adelante = −normal: hacia la pared
+    const roof = map.buildings.find((b) => b.id === l.buildingId)!.height;
+    const onRoof = (st: PlayerState): boolean => st.mode === 'walk' && st.onGround && Math.abs(st.pos[1] - roof) < 1e-6;
     let s: PlayerState = initialState([x, 0, z]);
     let climbed = false;
     for (let t = 0; t < l.topY / PLAYER.ladderSpeed + 3; t += 1 / 60) {
       s = stepPlayer(s, { forward: 1, right: 0, jump: false, crouch: false, yaw, pitch: 0 }, world, 1 / 60);
       if (s.mode === 'mantle') climbed = true;
-      else if (climbed) break;
+      else if (climbed && onRoof(s)) return l;
     }
-    if (climbed && s.mode === 'walk' && s.onGround && Math.abs(s.pos[1] - l.topY) < 1e-6) return l;
     if (tried.size >= 4) break;
   }
   return null;

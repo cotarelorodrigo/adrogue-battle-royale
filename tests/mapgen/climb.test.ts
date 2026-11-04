@@ -1,5 +1,6 @@
 import { heightFor } from '../../src/mapgen/buildings.ts';
 import { MANTLE_REACH, placeClimbAids, placeClimbAidsWithStats, roofClusters } from '../../src/mapgen/climb.ts';
+import { DUMPSTER, PARAPET_H } from '../../src/shared/collision.ts';
 import { areaRect, distPointSegment, ensureCCW, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, Prop, Road } from '../../src/shared/mapdata.ts';
@@ -22,12 +23,20 @@ const h1 = box('h1', 0, 0, 10, 10, 1);
 const h2adj = box('h2', 10, 0, 20, 10, 2, 5.8); // Δh = 2.0 ≤ 2.4
 const h3adj = box('h3', 10, 0, 20, 10, 2); // Δh = 3.2 > 2.4
 const aidsFor = (b: Building[]): Prop[] => placeClimbAids(b, roads);
+/** En la fachada de un lote, el eje de la escalera queda a esto de la punta. */
+const LADDER_AT = 0.6;
 
 test('MANTLE_REACH', () => expect(MANTLE_REACH).toBe(2.4));
 
 test('cluster de 1 piso → contenedor; de 2 pisos → escalera', () => {
   expect(aidsFor([h1])).toEqual([expect.objectContaining({ kind: 'dumpster' })]);
-  expect(aidsFor([box('t', 0, 0, 10, 10, 2)])[0]).toMatchObject({ kind: 'ladder', topY: heightFor(2), buildingId: 't' });
+  // la escalera llega al tope del pretil: el empuje del final pasa por encima
+  expect(aidsFor([box('t', 0, 0, 10, 10, 2)])[0]).toMatchObject({ kind: 'ladder', topY: heightFor(2) + PARAPET_H, buildingId: 't' });
+});
+
+test('desde arriba de un contenedor el mantle llega al tope del pretil de un piso, y al contenedor desde el suelo', () => {
+  expect(DUMPSTER.height + MANTLE_REACH).toBeGreaterThanOrEqual(heightFor(1) + PARAPET_H - 1e-9);
+  expect(DUMPSTER.height).toBeLessThanOrEqual(MANTLE_REACH);
 });
 
 test('edificios pegados con Δh ≤ 2,4 forman un cluster', () => expect(roofClusters([h1, h2adj])).toHaveLength(1));
@@ -40,6 +49,16 @@ test('Δh 3,2 → clusters separados, ambos con acceso', () => {
 test('edificios a ≤ 1 m forman cluster; a más de 1 m no', () => {
   expect(roofClusters([h1, box('n', 11, 0, 20, 10, 1)])).toHaveLength(1);
   expect(roofClusters([h1, box('n', 11.5, 0, 20, 10, 1)])).toHaveLength(2);
+});
+
+test('sin arista a la calle, la escalera va en la arista más larga con la caja libre (no contra otro edificio)', () => {
+  // la arista sur (6,5 m) es la más larga pero tiene un vecino a 0,3 m: el pie de la escalera quedaría trabado
+  const t: Building = { ...box('t', 0, 0, 1, 1, 2), footprint: ensureCCW([[0, 0], [6.5, 0], [6.4, 4.2], [0, 4.2]]) };
+  const around = [box('s', -1, -4, 7.5, -0.3, 1), box('n', -1, 6.2, 7.5, 10, 1), box('e', 8.5, -4, 12, 10, 1), box('o', -5, -4, -2, 10, 1)];
+  const { props, stats } = placeClimbAidsWithStats([t, ...around], roads);
+  expect(stats.fallback).toBeGreaterThanOrEqual(1);
+  const a = props.find((p) => p.kind === 'ladder' && p.buildingId === 't');
+  expect(a).toMatchObject({ base: [expect.closeTo(3.2, 6), expect.closeTo(4.2, 6)], normal: [expect.closeTo(0, 9), expect.closeTo(1, 9)] });
 });
 
 test('el acceso del cluster va en el edificio más bajo', () => {
@@ -143,15 +162,17 @@ describe('lotes relevados: la ayuda no tapa la fachada', () => {
     const fin = placeClimbAidsWithStats([m, ...vecinos], roads, new Map([['m', { line, puntas: ['fin' as const] }]]));
     const a = ayudaDe(fin.props, 'm');
     if (a?.kind !== 'ladder') throw new Error('esperaba ladder');
-    expect(a.base[0]).toBeCloseTo(20 - 0.1 - 0.4, 6);
+    // a 0,6 m de la punta y no a 0,1 + 0,4: arriba, el jugador queda 0,6 m adentro y lejos del pretil de la medianera
+    // (0,2 de pretil + 0,35 de radio + margen), así cae al techo en vez de quedar parado sobre el pretil
+    expect(a.base[0]).toBeCloseTo(20 - LADDER_AT, 6);
     expect(a.base[1]).toBeCloseTo(0, 6);
     expect(a.normal).toEqual([expect.closeTo(0, 9), expect.closeTo(-1, 9)]);
-    expect(fin.slots.get('m')).toEqual({ fin: expect.closeTo(0.1 + 0.8 + 0.2, 6) });
+    expect(fin.slots.get('m')).toEqual({ fin: expect.closeTo(LADDER_AT + 0.4 + 0.2, 6) });
     const ini = placeClimbAidsWithStats([m, ...vecinos], roads, new Map([['m', { line, puntas: ['inicio' as const] }]]));
     const b = ayudaDe(ini.props, 'm');
     if (b?.kind !== 'ladder') throw new Error('esperaba ladder');
-    expect(b.base[0]).toBeCloseTo(10 + 0.1 + 0.4, 6);
-    expect(ini.slots.get('m')).toEqual({ inicio: expect.closeTo(1.1, 6) });
+    expect(b.base[0]).toBeCloseTo(10 + LADDER_AT, 6);
+    expect(ini.slots.get('m')).toEqual({ inicio: expect.closeTo(LADDER_AT + 0.6, 6) });
   });
   test('un lote de un piso: el contenedor va en la punta y reserva su largo', () => {
     const m = front(box('m', 10, 0, 20, 10, 1));
@@ -179,8 +200,8 @@ describe('lotes relevados: la ayuda no tapa la fachada', () => {
     const { props, slots } = placeClimbAidsWithStats([m, vecinos[0]], roads, new Map([['m', { line, puntas: ['fin' as const] }]]));
     const a = props.find((p) => p.kind === 'ladder' && p.buildingId === 'm');
     if (a?.kind !== 'ladder') throw new Error('esperaba ladder');
-    expect(a.base).toEqual([expect.closeTo(19.5, 6), expect.closeTo(0, 6)]);
-    expect(slots.get('m')).toEqual({ fin: expect.closeTo(1.1, 6) });
+    expect(a.base).toEqual([expect.closeTo(20 - LADDER_AT, 6), expect.closeTo(0, 6)]);
+    expect(slots.get('m')).toEqual({ fin: expect.closeTo(LADDER_AT + 0.6, 6) });
   });
   test('sin el lote en el mapa de lotes, sigue yendo al medio de la arista', () => {
     const m = front(box('m', 10, 0, 20, 10, 2));
