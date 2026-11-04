@@ -2,7 +2,8 @@
   "estilos": {
     "edificio-gris": {"pisos": 3, "color": "#c5c9ce", "colorPB": "#6e3b2d", "pb": "vidriera", "arriba": "ventanas"},
     "galeria-blanca": {"pisos": 2, "color": "#e7e6e2", "colorPB": "#e9e8e4", "pb": "vidriera", "arriba": "ventanas"},
-    "edificio-galicia": {"pisos": 3, "color": "#d5d1ca", "colorPB": "#d9d6d0", "arriba": "vidriado"}
+    "edificio-galicia": {"pisos": 3, "color": "#d5d1ca", "colorPB": "#d9d6d0", "arriba": "vidriado"},
+    "galeria-ea": {"pisos": 2, "color": "#e4e1da", "material": "ladrillo", "pb": "vidriera", "arriba": "ventanas", "toldo": {"color": "#1f6b4f"}}
   },
   "calles": [
     {
@@ -83,6 +84,27 @@
             {"ancho": 5.9, "pisos": 2, "color": "#c8cacb", "colorPB": "#d5d7d8", "pb": "vidriera", "arriba": "vidriado", "cartel": {"texto": "LIBROS", "fondo": "#d9d9d6", "letra": "#4a4a4a"}, "nota": "librería bajo una marquesina de hormigón; el cartel de arriba está borrado"},
             {"ancho": 6.8, "pisos": 2, "color": "#c9c4bb", "colorPB": "#e9e9e9", "pb": "vidriera", "arriba": "ciego", "cartel": {"texto": "ÓPTICA AFAS", "fondo": "#f0f0f0", "letra": "#2b4f9e"}},
             {"ancho": 9.1, "pisos": 2, "color": "#2c56a5", "colorPB": "#8d8f8c", "pb": "vidriera", "arriba": "ciego", "puerta": "medio", "cartel": {"texto": "GIORGIS Y CÍA.", "fondo": "#c8202f", "letra": "#ffffff"}, "nota": "inmobiliaria en la esquina con Pellerano; franja azul arriba, revestimiento de mármol gris"}
+          ]
+        },
+        {
+          "id": "ea-pellerano-macias-s",
+          "desde": "Pellerano",
+          "hasta": "Benigno Macías",
+          "vereda": "sur",
+          "fecha": "2025-08",
+          "osmAusentes": ["Riviera Café"],
+          "lotes": [
+            {"ancho": 13.8, "usa": "galeria-ea", "colorPB": "#1e1e1e", "puerta": "medio", "cartel": {"texto": "FILOMENA", "fondo": "#1e1e1e", "letra": "#d8b25a", "fuente": "serif"}, "lugar": "filomena", "nota": "bar en la esquina con Pellerano; sigue por Pellerano"},
+            {"ancho": 7.4, "usa": "galeria-ea", "colorPB": "#f0f0f0", "cartel": {"texto": "MOCKBA", "fondo": "#f2f2f2", "letra": "#1a1a1a", "posicion": "alto"}},
+            {"ancho": 3.5, "usa": "galeria-ea", "colorPB": "#cfcfcf", "pb": "persiana", "cartel": {"texto": "BUENOS AIRES CAMBIO", "fondo": "#1d2b5a", "letra": "#ffffff"}},
+            {"ancho": 7.1, "usa": "galeria-ea", "colorPB": "#d9965a", "puerta": "medio", "nota": "café con frente de madera y girasoles de decoración; el nombre no se lee"},
+            {"ancho": 9.4, "usa": "galeria-ea", "colorPB": "#e9e9e7", "pb": "acceso", "cartel": {"texto": "GALERIA ADROGUE", "fondo": "#2547a0", "letra": "#ffffff", "posicion": "alto"}},
+            {"ancho": 3.5, "usa": "galeria-ea", "colorPB": "#efefef", "nota": "local de ropa sin cartel"},
+            {"ancho": 3.5, "usa": "galeria-ea", "colorPB": "#7a5a44", "nota": "local de ropa con marco de madera, sin cartel"},
+            {"ancho": 3.2, "usa": "galeria-ea", "colorPB": "#2b2b33", "cartel": {"texto": "HARDY", "fondo": "#1d1d2b", "letra": "#ffffff", "posicion": "alto"}},
+            {"ancho": 4.5, "usa": "galeria-ea", "colorPB": "#ededeb", "cartel": {"texto": "PRÉSTAMOS PERSONALES", "fondo": "#f4f4f4", "letra": "#2f7a3e"}},
+            {"ancho": 4.5, "usa": "galeria-ea", "colorPB": "#e5e5e3", "cartel": {"texto": "LÓPEZ LIBREROS", "fondo": "#1f3f8f", "letra": "#ffffff"}, "nota": "kiosco de diarios; el cartel dice «López y Ve… Libreros», el resto queda tapado"},
+            {"ancho": 12.3, "pisos": 2, "color": "#eeeeec", "colorPB": "#f4f4f2", "pb": "vidriera", "arriba": "ventanas", "puerta": "medio", "toldo": {"color": "#dcdcd9"}, "nota": "café de la esquina con Macías, con un logo «B» y dibujos de comida en la marquesina; en OSM figura Riviera Café, que no se ve"}
           ]
         }
       ]
