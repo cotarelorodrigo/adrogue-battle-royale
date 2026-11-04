@@ -35,6 +35,7 @@ maniquíes y sin botín. Para volver a jugar, **Jugar una partida** en el menú 
 | Tecla | Qué hace |
 |---|---|
 | W A S D | moverse |
+| Shift | correr mientras la mantenés: 8,5 m/s en vez de 6, solo hacia adelante (también en diagonal); no se corre agachado, apuntando, disparando ni curándote |
 | Mouse | mirar |
 | Espacio | saltar; con W frente a un borde de hasta 2,4 m (un contenedor, un murito), trepar |
 | C | agacharse |

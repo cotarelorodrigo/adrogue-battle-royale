@@ -154,6 +154,8 @@ Las esperas y los cierres suman 720 s: la zona se cierra del todo a los 12 minut
 - **Pantallas de fin:** "¡Ganaste!" o "Te eliminaron — quedaban N", con el tiempo de partida, las eliminaciones y
   "Jugar de nuevo".
 - **Controles nuevos:**
+  - Shift: correr (8,5 m/s en vez de 6), solo hacia adelante y no agachado, apuntando, disparando ni curándose. Se
+    agregó después de cerrar la etapa, a pedido del usuario;
   - clic izquierdo: disparar;
   - clic derecho: apuntar;
   - R: recargar;

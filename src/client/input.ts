@@ -3,7 +3,7 @@
 // cuentan con el puntero capturado: lo que se toque en un menú o en la pantalla de fin no se aplica después.
 //
 // Estados y pulsos (el contrato de stepMatch):
-// - WASD, Espacio, C, el clic izquierdo (`fire`) y el derecho (`aim`) son estados: read() dice si están apretados ahora
+// - WASD, Espacio, C, Shift (correr), el clic izquierdo (`fire`) y el derecho (`aim`) son estados: read() dice si están apretados ahora
 //   (el controlador detecta solo el flanco del salto, y la partida el del gatillo de las semiautomáticas).
 // - E (`use`), R (`reload`), H (`heal`), 1 / 2 y la rueda (`slot`) son pulsos: cada toque queda guardado hasta el
 //   próximo read(), que lo devuelve una sola vez. main.ts llama a read() una vez por paso de la simulación, así que
@@ -16,7 +16,7 @@ export const MOUSE_SENSITIVITY = 0.0022;
 /** Mirar justo arriba o abajo deja el yaw indefinido: se frena un poco antes. */
 const PITCH_LIMIT = Math.PI / 2 - 0.01;
 
-const HELD_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC']);
+const HELD_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC', 'ShiftLeft', 'ShiftRight']);
 /** Botones del mouse (MouseEvent.button). */
 const LEFT = 0, RIGHT = 2;
 
@@ -118,6 +118,7 @@ export function createInput(target: Window): Input {
         right: axis(held.has('KeyD'), held.has('KeyA')),
         jump: held.has('Space'),
         crouch: held.has('KeyC'),
+        sprint: held.has('ShiftLeft') || held.has('ShiftRight'),
         yaw,
         pitch,
         fire: fireHeld || firePress,

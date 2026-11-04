@@ -3,11 +3,13 @@
 import type { CollisionWorld } from './collision.ts';
 import type { Vec3 } from './geo.ts';
 
-export const PLAYER = { radius: 0.35, height: 1.8, crouchHeight: 1.2, eye: 1.65, crouchEye: 1.05, runSpeed: 6.0, crouchSpeed: 2.5,
+export const PLAYER = { radius: 0.35, height: 1.8, crouchHeight: 1.2, eye: 1.65, crouchEye: 1.05, runSpeed: 6.0, sprintSpeed: 8.5, crouchSpeed: 2.5,
   airControl: 0.3, gravity: 20, jumpVelocity: 7.07, stepUp: 0.45, mantleReach: 2.4, mantleTime: 0.45, ladderSpeed: 3.0, maxDt: 0.1, subStep: 1/120 } as const;
 
-/** yaw: convención de la cámara de three.js (orden 'YXZ'); yaw = 0 mira hacia −z (norte). pitch solo mueve la cámara. */
-export interface PlayerInput { forward: -1|0|1; right: -1|0|1; jump: boolean; crouch: boolean; yaw: number; pitch: number }
+/** yaw: convención de la cámara de three.js (orden 'YXZ'); yaw = 0 mira hacia −z (norte). pitch solo mueve la cámara.
+ *  sprint: correr (Shift). Solo cuenta yendo hacia adelante (también en diagonal) y sin agacharse: lleva la velocidad a
+ *  sprintSpeed en el piso, y en el aire se conserva la del pique. */
+export interface PlayerInput { forward: -1|0|1; right: -1|0|1; jump: boolean; crouch: boolean; yaw: number; pitch: number; sprint?: boolean }
 /** pos = pies. mantleT = segundos transcurridos del mantle (0 … mantleTime). jumpHeld = jump venía apretado del paso
  *  anterior: saltar pide apretarlo de nuevo (mantenerlo no rebota). */
 export interface PlayerState { pos: Vec3; vel: Vec3; onGround: boolean; crouching: boolean;
@@ -30,6 +32,8 @@ const LADDER_MIN_CLIMB = 0.1;
 
 interface Command {
   forward: number;
+  /** corre: sprint apretado y yendo hacia adelante */
+  sprint: boolean;
   jump: boolean;
   crouch: boolean;
   fx: number; fz: number; // hacia dónde mira (unitario, en el plano)
@@ -84,7 +88,7 @@ function command(input: PlayerInput): Command {
   if (len > 0) {
     wx /= len; wz /= len; // en diagonal no se corre más rápido
   }
-  return { forward: f, jump: input.jump === true, crouch: input.crouch === true, fx, fz, wx, wz };
+  return { forward: f, sprint: input.sprint === true && f > 0, jump: input.jump === true, crouch: input.crouch === true, fx, fz, wx, wz };
 }
 
 function load(s: PlayerState): Work {
@@ -130,8 +134,9 @@ function walkStep(m: Work, c: Command, world: CollisionWorld, h: number, jumpPre
   if (c.jump && c.forward > 0 && tryMantle(m, c, world)) return;
   if (c.forward > 0 && !c.jump && tryLadder(m, c, world)) return;
 
+  const upright = c.sprint ? PLAYER.sprintSpeed : PLAYER.runSpeed;
   if (m.onGround) {
-    const speed = m.crouching ? PLAYER.crouchSpeed : PLAYER.runSpeed;
+    const speed = m.crouching ? PLAYER.crouchSpeed : upright;
     accelerate(m, c.wx * speed, c.wz * speed, GROUND_ACCEL * h);
     m.vy = 0;
     if (jumpPressed) {
@@ -139,7 +144,7 @@ function walkStep(m: Work, c: Command, world: CollisionWorld, h: number, jumpPre
       m.onGround = false;
     }
   } else if (c.wx !== 0 || c.wz !== 0) {
-    accelerate(m, c.wx * PLAYER.runSpeed, c.wz * PLAYER.runSpeed, AIR_ACCEL * h);
+    accelerate(m, c.wx * upright, c.wz * upright, AIR_ACCEL * h);
   }
 
   moveHorizontal(m, world, h, bodyH);

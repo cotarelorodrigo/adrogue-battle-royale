@@ -594,6 +594,24 @@ describe('cambiar de arma', () => {
   });
 });
 
+describe('correr', () => {
+  const speed = (s: MatchState): number => Math.hypot(s.me.player.vel[0], s.me.player.vel[2]);
+  const armed = (): MatchState => mod(setup(), (c) => { c.inv.slots[0] = newGun('rifle'); });
+
+  test('con Shift hacia adelante se corre a sprintSpeed', () =>
+    expect(speed(run(setup(), { forward: 1, sprint: true }, 1))).toBeCloseTo(PLAYER.sprintSpeed, 6));
+  test('apuntando o con el gatillo apretado no se corre', () => {
+    expect(speed(run(armed(), { forward: 1, sprint: true, aim: true }, 1))).toBeCloseTo(PLAYER.runSpeed, 6);
+    expect(speed(run(armed(), { forward: 1, sprint: true, fire: true }, 1))).toBeCloseTo(PLAYER.runSpeed, 6);
+  });
+  test('curándose no se corre: sigue a la mitad de velocidad', () => {
+    let s = mod(setup(), (c) => { c.me.vitals.hp = 40; c.inv.medkits = 1; });
+    s = run(step(s, { heal: true }), { forward: 1, sprint: true }, 1);
+    expect(s.inv.healingUntil).not.toBeNull();
+    expect(speed(s)).toBeCloseTo(PLAYER.runSpeed * MATCH.healSlow, 6);
+  });
+});
+
 describe('curación', () => {
   const hurt = (s: MatchState) => mod(s, (c) => { c.me.vitals.hp = 40; c.inv.medkits = 1; });
 

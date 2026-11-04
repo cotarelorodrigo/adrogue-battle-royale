@@ -56,6 +56,17 @@ test('S y A dan −1; W+S se anulan', () => {
   expect(input.read().forward).toBe(1);
 });
 
+test('Shift (izquierda o derecha) es correr mientras está apretada', () => {
+  press('ShiftLeft');
+  expect(input.read().sprint).toBe(true);
+  release('ShiftLeft');
+  expect(input.read().sprint).toBe(false);
+  press('ShiftRight');
+  expect(input.read().sprint).toBe(true);
+  window.dispatchEvent(new Event('blur'));
+  expect(input.read().sprint).toBe(false);
+});
+
 test('Espacio y C se reportan mientras están apretadas', () => {
   press('Space');
   press('KeyC');

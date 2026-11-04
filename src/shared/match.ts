@@ -344,8 +344,12 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   const usePressed = input.use === true && !s.held.use;
   const firePressed = input.fire === true && !s.held.fire;
 
-  // 1. movimiento: contra el mundo (stepPlayer) y después contra los maniquíes
-  const player = keepOutOfBodies(move(s.me.player, input, world, dt, inv.healingUntil !== null), s.me.player, dummies, world);
+  // 1. movimiento: contra el mundo (stepPlayer) y después contra los maniquíes. No se corre (Shift) curándose (ya se
+  // camina a healSlow), ni apuntando o con el gatillo apretado con un arma en la mano.
+  const healing = inv.healingUntil !== null;
+  const armed = inv.slots[inv.active] !== null;
+  const sprint = input.sprint === true && !healing && !(armed && (input.aim === true || input.fire === true));
+  const player = keepOutOfBodies(move(s.me.player, { ...input, sprint }, world, dt, healing), s.me.player, dummies, world);
 
   // 2. cambio de ranura: cancela la recarga del arma que se guarda y la curación; la que se saca tarda MATCH.raise en
   // poder disparar (si no, con dos armas lentas se dispararía al doble de la cadencia)

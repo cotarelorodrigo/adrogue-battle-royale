@@ -211,6 +211,31 @@ describe('escaleras', () => {
   });
 });
 
+describe('correr (Shift)', () => {
+  const lane = at(-40, 40); // carril libre
+  const sprint: PlayerInput = { ...fwd, sprint: true };
+  const speed2D = (s: PlayerState): number => Math.hypot(s.vel[0], s.vel[2]);
+  test('hacia adelante llega a sprintSpeed', () => {
+    const s = run(lane, sprint, 0.5); // acelera en ~0,14 s
+    expect(speed2D(s)).toBeCloseTo(PLAYER.sprintSpeed, 6);
+    expect(run(s, sprint, 1).pos[0] - s.pos[0]).toBeCloseTo(PLAYER.sprintSpeed, 1); // 8,5 m en 1 s
+  });
+  test('en diagonal hacia adelante también', () =>
+    expect(speed2D(run(lane, { ...sprint, right: 1 }, 1))).toBeCloseTo(PLAYER.sprintSpeed, 6));
+  test('de costado o para atrás no corre más rápido', () => {
+    expect(speed2D(run(lane, { ...idle, right: 1, sprint: true }, 1))).toBeCloseTo(PLAYER.runSpeed, 6);
+    expect(speed2D(run(lane, { ...back, sprint: true }, 1))).toBeCloseTo(PLAYER.runSpeed, 6);
+  });
+  test('agachado no corre', () =>
+    expect(speed2D(run(lane, { ...sprint, crouch: true }, 1))).toBeCloseTo(PLAYER.crouchSpeed, 6));
+  test('el salto conserva la velocidad del pique', () => {
+    let s = run(lane, sprint, 0.5);
+    s = run(s, { ...sprint, jump: true }, 0.3);
+    expect(s.onGround).toBe(false);
+    expect(speed2D(s)).toBeCloseTo(PLAYER.sprintSpeed, 6);
+  });
+});
+
 describe('agacharse', () => {
   // Viga baja: y ∈ [1,4; 3] sobre x ∈ [3, 8]. Es el único prisma con minY > 0 (el mapa no tiene techos colgantes).
   const beamWorld = new CollisionWorld([box(3, -2, 8, 2, 3, 1.4)], [], bounds);
