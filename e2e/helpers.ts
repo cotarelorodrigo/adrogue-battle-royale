@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { signedAreaFromAbove } from '../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../src/shared/geo.ts';
 import type { MapData } from '../src/shared/mapdata.ts';
 import type {} from '../src/client/debug.ts'; // tipa window.__adrogue
@@ -52,6 +53,40 @@ export const TOUR6: TourStop[] = [
   // borde este, mirando hacia el oeste: todo el mapa por delante
   { id: 'borde', pos: eastEdge(), yaw: Math.PI / 2 },
 ];
+
+/** Ids de los frentes relevados en `data/frentes.json`. */
+function faceIds(): string[] {
+  const data = JSON.parse(readFileSync('data/frentes.json', 'utf8')) as { calles: { frentes: { id: string }[] }[] };
+  return data.calles.flatMap((c) => c.frentes.map((f) => f.id));
+}
+
+/** Una parada por frente relevado: a 9 m de la fachada, frente al punto medio de sus aristas `front.edges`
+ *  (promedio pesado por largo de los lotes `${faceId}-N`), mirando hacia la fachada. */
+export function faceStops(): TourStop[] {
+  return faceIds().map((faceId) => {
+    const lot = new RegExp(`^${faceId}-\\d+$`);
+    let len = 0, cx = 0, cz = 0, nx = 0, nz = 0;
+    for (const b of map.buildings) {
+      if (!b.front || !lot.test(b.id)) continue;
+      const fp = b.footprint;
+      const sign = signedAreaFromAbove(fp) < 0 ? -1 : 1; // normal exterior de una planta antihoraria: (−dz, dx)
+      for (const e of b.front.edges) {
+        const a = fp[e], c = fp[(e + 1) % fp.length];
+        const dx = c[0] - a[0], dz = c[1] - a[1], l = Math.hypot(dx, dz);
+        len += l;
+        cx += ((a[0] + c[0]) / 2) * l;
+        cz += ((a[1] + c[1]) / 2) * l;
+        nx += -dz * sign;
+        nz += dx * sign;
+      }
+    }
+    if (len === 0) throw new Error(`frente ${faceId}: no hay lotes con aristas de frente en el mapa`);
+    const n = Math.hypot(nx, nz);
+    const [ux, uz] = [nx / n, nz / n];
+    const pos: Vec3 = [cx / len + ux * 9, 0, cz / len + uz * 9];
+    return { id: `frente-${faceId}`, pos, yaw: Math.atan2(ux, uz) }; // adelante = −normal: hacia la fachada
+  });
+}
 
 export async function goTo(page: Page, stop: TourStop): Promise<void> {
   if ('place' in stop) await page.evaluate((id) => window.__adrogue.teleport(id), stop.place);

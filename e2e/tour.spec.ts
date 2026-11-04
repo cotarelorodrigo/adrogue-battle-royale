@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import type { Vec3 } from '../src/shared/geo.ts';
 import type { Prop } from '../src/shared/mapdata.ts';
-import { collectErrors, eastEdge, frames, inBounds, map, open, play } from './helpers.ts';
+import { collectErrors, eastEdge, faceStops, frames, goTo, inBounds, map, open, play } from './helpers.ts';
 
 const DIR = 'test-results/tour';
 const PLACES = ['estacion-adrogue', 'plaza-almirante-brown', 'banco-nacion', 'mcdonalds', 'la-veneciana', 'cine-pixel',
@@ -22,7 +22,7 @@ function roofLadder(): Ladder {
   return ladders.reduce((a, b) => (Math.hypot(b.base[0] - gx, b.base[1] - gz) < Math.hypot(a.base[0] - gx, a.base[1] - gz) ? b : a));
 }
 
-test('recorrido: 10 capturas sin errores', async ({ page }) => {
+test('recorrido: 10 capturas más una por frente relevado, sin errores', async ({ page }) => {
   const errors = collectErrors(page);
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
@@ -40,6 +40,19 @@ test('recorrido: 10 capturas sin errores', async ({ page }) => {
   for (const id of PLACES) {
     await page.evaluate((x) => window.__adrogue.teleport(x), id);
     await shot(id);
+  }
+
+  // Frentes relevados: una captura por frente; después, ida y vuelta de calidad (cambia los materiales de los
+  // merges, también el de `front`) sin errores.
+  const faces = faceStops();
+  for (const stop of faces) {
+    await goTo(page, stop);
+    await shot(stop.id);
+    await page.evaluate(() => window.__adrogue.setQuality('baja'));
+    await frames(page, 8);
+    await page.evaluate(() => window.__adrogue.setQuality('media'));
+    await frames(page, 2);
+    expect(errors).toEqual([]);
   }
 
   // Techo: al pie de la escalera mirando la pared, W hasta quedar parado arriba; después, mirar hacia la calle.
@@ -62,7 +75,7 @@ test('recorrido: 10 capturas sin errores', async ({ page }) => {
   await page.evaluate(([p, yaw]) => window.__adrogue.placeAt(p, yaw), [eastEdge(), Math.PI / 2] as const);
   await shot('borde-este');
 
-  expect(files).toHaveLength(10);
+  expect(files).toHaveLength(10 + faces.length);
   for (const f of files) expect(existsSync(f), f).toBe(true);
   expect(errors).toEqual([]);
 });

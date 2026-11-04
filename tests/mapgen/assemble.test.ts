@@ -145,13 +145,16 @@ describe('assembleMap sobre datos reales', () => {
     // y los edificios que cruzan el borde existen (antes eran siluetas sin colisión)
     expect(map.buildings.some((bd) => bd.footprint.some(([x, z]) => x > b.maxX || x < b.minX || z > b.maxZ || z < b.minZ))).toBe(true);
   });
-  test('cada lugar con cartel y sin foto tiene la fachada de su tipo en la arista del cartel', () => {
+  test('cada lugar con cartel y sin foto tiene la fachada de su tipo en la arista del cartel (salvo en un lote relevado)', () => {
     const inputs = loadPlaces();
     const byId = new Map(map.buildings.map((b) => [b.id, b]));
-    const signed = map.places.filter((p) => p.sign && !photos.some((f) => f.placeId === p.id));
-    expect(signed.length).toBeGreaterThanOrEqual(25);
+    // un lote relevado dibuja su propio frente: el lugar enlazado no lleva fachada procedural
+    const onLot = map.places.filter((p) => p.buildingId && byId.get(p.buildingId)!.front);
+    for (const p of onLot) expect(byId.get(p.buildingId!)!.facades, p.id).toBeUndefined();
+    const signed = map.places.filter((p) => p.sign && !photos.some((f) => f.placeId === p.id) && !onLot.includes(p));
+    expect(signed.length).toBeGreaterThanOrEqual(15);
     const firstOnEdge = new Map<string, string>();
-    for (const p of map.places.filter((q) => q.sign)) {
+    for (const p of map.places.filter((q) => q.sign && !onLot.includes(q))) {
       const b = byId.get(p.buildingId!)!;
       const fp = b.footprint;
       // arista del cartel: pasa a ≤ 10 cm del ancla y mira para el mismo lado
