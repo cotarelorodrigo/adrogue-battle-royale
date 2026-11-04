@@ -1,6 +1,6 @@
-// Los maniquíes: todos en una InstancedMesh (1 draw call, y otro en la pasada de sombras). Cada uno mira hacia un lado
-// fijo sacado de su id; un impacto lo tiñe un instante; al morir se cae de espaldas y a los DUMMY_GONE_AFTER s
-// desaparece.
+// Los maniquíes: todos en una InstancedMesh (1 draw call, y otro en la pasada de sombras si la calidad la pide: ver
+// setShadows). Cada uno mira hacia un lado fijo sacado de su id; un impacto lo tiñe un instante; al morir se cae de
+// espaldas y a los DUMMY_GONE_AFTER s desaparece.
 import * as THREE from 'three';
 import { hash01 } from '../../shared/geo.ts';
 import { PLAYER } from '../../shared/player.ts';
@@ -22,6 +22,8 @@ const START_CAPACITY = 23;
 export interface DummiesView extends CombatView {
   /** La malla de los maniquíes (cambia si hace falta más capacidad). */
   readonly mesh: THREE.InstancedMesh;
+  /** Si proyectan sombra (según la calidad: duplica sus triángulos). */
+  setShadows(on: boolean): void;
 }
 
 export function createDummies(parent: THREE.Object3D): DummiesView {
@@ -29,13 +31,14 @@ export function createDummies(parent: THREE.Object3D): DummiesView {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true });
   /** id → hasta cuándo (ms) sigue teñido por el último impacto */
   const flashUntil = new Map<string, number>();
+  let shadows = true;
   let mesh = makeMesh(START_CAPACITY);
   parent.add(mesh);
 
   function makeMesh(capacity: number): THREE.InstancedMesh {
     const m = new THREE.InstancedMesh(geometry, material, capacity);
     m.name = 'dummies';
-    m.castShadow = true;
+    m.castShadow = shadows;
     m.receiveShadow = true;
     m.count = 0;
     m.visible = false;
@@ -48,6 +51,10 @@ export function createDummies(parent: THREE.Object3D): DummiesView {
 
   return {
     get mesh() { return mesh; },
+    setShadows(on) {
+      shadows = on;
+      mesh.castShadow = on;
+    },
     update({ state, now, events }) {
       for (const e of events) if (e.type === 'hit') flashUntil.set(e.id, now + HIT_FLASH_MS);
       if (state.dummies.length > mesh.instanceMatrix.count) {

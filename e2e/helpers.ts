@@ -2,10 +2,15 @@
 import { readFileSync } from 'node:fs';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { buildCollisionWorld } from '../src/shared/collision.ts';
+import { hitscan } from '../src/shared/combat.ts';
 import { signedAreaFromAbove } from '../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../src/shared/geo.ts';
 import type { MapData } from '../src/shared/mapdata.ts';
-import type {} from '../src/client/debug.ts'; // tipa window.__adrogue
+import { MATCH, newMatch } from '../src/shared/match.ts';
+import { PLAYER } from '../src/shared/player.ts';
+import { zoneAt } from '../src/shared/zone.ts';
+import type { DebugStats } from '../src/client/debug.ts'; // también tipa window.__adrogue
 
 export const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 
@@ -88,6 +93,99 @@ export function faceStops(): TourStop[] {
     const pos: Vec3 = [cx / len + ux * 9, 0, cz / len + uz * 9];
     return { id: `frente-${faceId}`, pos, yaw: Math.atan2(ux, uz) }; // adelante = −normal: hacia la fachada
   });
+}
+
+/** Semilla de las partidas del recorrido de rendimiento: el mismo botín y la misma zona en cada corrida. */
+export const PERF_SEED = 42;
+
+/** La parada "combate": una partida con PERF_SEED y 11 maniquíes en la fase 4 de la zona. */
+export interface CombatStop {
+  seed: number;
+  /** segundos de partida: la zona ya se achicó a 0,18 del radio inicial */
+  t: number;
+  pos: Vec3;
+  /** a lo largo de la calle, con pitch 0: los tiros pasan entre las dos filas de maniquíes */
+  yaw: number;
+  /** los 11 maniquíes, de pie en dos filas adelante */
+  dummies: Vec3[];
+  /** objetos a menos de 120 m (el radio del botín en alta; baja y media lo achican: QUALITY.dropRadius) */
+  drops: number;
+  /** metros hasta el borde de la zona */
+  zoneEdge: number;
+}
+
+/** El peor caso del combate a la vista: el punto de botín de la calle (adentro de la zona) con más objetos a menos de
+ *  120 m, mirando hacia donde la vista llega más lejos (a lo largo de la calle: también lo más caro del mundo); los
+ *  maniquíes en dos filas adelante, desde los 8 m, a 1,5 m a cada lado del medio y donde el cuerpo no se mete en ningún
+ *  sólido. */
+export function combatStop(): CombatStop {
+  const world = buildCollisionWorld(map);
+  const m = newMatch(map, world, { seed: PERF_SEED, dummies: 11 });
+  const t = 520;
+  const z = zoneAt(m.zone, t);
+  const fromCenter = (p: Vec3): number => Math.hypot(p[0] - z.center[0], p[2] - z.center[1]);
+  const dropsNear = (p: Vec3): number =>
+    m.drops.filter((d) => Math.hypot(d.pos[0] - p[0], d.pos[1] + MATCH.dropLift - p[1] - PLAYER.eye, d.pos[2] - p[2]) <= 120).length;
+  let pos: Vec3 | null = null, drops = -1;
+  for (const s of map.lootSpots) {
+    if (s.tier !== 'calle' || fromCenter(s.pos) > z.r - 10) continue;
+    const n = dropsNear(s.pos);
+    if (n > drops) [pos, drops] = [s.pos, n];
+  }
+  if (!pos) throw new Error('combate: ningún punto de botín de la calle adentro de la zona');
+  const eye: Vec3 = [pos[0], pos[1] + PLAYER.eye, pos[2]];
+  let yaw = 0, clear = 0;
+  for (let k = 0; k < 72; k++) {
+    const a = (k / 72) * 2 * Math.PI;
+    const d = hitscan(world, [], eye, [-Math.sin(a), 0, -Math.cos(a)], 400)?.dist ?? 400;
+    if (d > clear) [yaw, clear] = [a, d];
+  }
+  const [fx, fz, rx, rz] = [-Math.sin(yaw), -Math.cos(yaw), Math.cos(yaw), -Math.sin(yaw)];
+  const dummies: Vec3[] = [];
+  for (let d = 8; dummies.length < 11 && d < clear - 2; d += 4) {
+    for (const side of [-1.5, 1.5]) {
+      const p: Vec3 = [pos[0] + fx * d + rx * side, pos[1], pos[2] + fz * d + rz * side];
+      const free = !world.overlaps(p[0], p[2], PLAYER.radius, p[1], p[1] + PLAYER.height);
+      if (free && fromCenter(p) < z.r - 2 && dummies.length < 11) dummies.push(p);
+    }
+  }
+  if (dummies.length < 11) throw new Error(`combate: entran ${dummies.length} maniquíes en la fila (vista despejada: ${clear.toFixed(0)} m)`);
+  return { seed: PERF_SEED, t, pos, yaw, dummies, drops, zoneEdge: z.r - fromCenter(pos) };
+}
+
+/** Arma la parada "combate" en la página: partida nueva, el jugador y los maniquíes en su lugar, la zona en la fase 4
+ *  y el rifle en la mano. */
+export async function goToCombat(page: Page, c: CombatStop): Promise<void> {
+  await page.evaluate((stop) => {
+    const a = window.__adrogue;
+    a.newMatch(stop.seed, stop.dummies.length);
+    a.placeAt(stop.pos, stop.yaw);
+    stop.dummies.forEach((p, i) => a.placeDummy(i, p));
+    a.skipTo(stop.t);
+    a.give('rifle');
+  }, c);
+}
+
+/** El máximo de draw calls y de triángulos de los próximos n cuadros (con efectos que duran un cuadro, como el
+ *  fogonazo, uno solo no alcanza). */
+export async function maxStats(page: Page, n: number): Promise<DebugStats> {
+  return page.evaluate(
+    (count) =>
+      new Promise<DebugStats>((resolve) => {
+        const max = { drawCalls: 0, triangles: 0, fps: 0 };
+        let k = 0;
+        const tick = (): void => {
+          const s = window.__adrogue.stats(); // el juego ya dibujó este cuadro (su rAF va antes)
+          max.drawCalls = Math.max(max.drawCalls, s.drawCalls);
+          max.triangles = Math.max(max.triangles, s.triangles);
+          max.fps = s.fps;
+          if (++k >= count) resolve(max);
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    n,
+  );
 }
 
 export async function goTo(page: Page, stop: TourStop): Promise<void> {

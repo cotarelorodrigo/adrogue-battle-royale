@@ -1,6 +1,7 @@
 // El botín tirado en el piso: una InstancedMesh por tipo de objeto (las 4 armas, la munición, el chaleco y el
 // botiquín: 7 draw calls como mucho, sin sombra). Solo se dibuja lo que está a menos de DROP_RADIUS de la cámara
-// (spec 2a §5). Cada objeto flota centrado en pos + dropLift, el punto que se mira para juntarlo, y gira despacio.
+// (spec 2a §5), o menos en las calidades que lo achican (setRadius). Cada objeto flota centrado en pos + dropLift, el
+// punto que se mira para juntarlo, y gira despacio.
 import * as THREE from 'three';
 import type { AmmoId } from '../../shared/combat.ts';
 import { hashIndex } from '../../shared/geo.ts';
@@ -11,7 +12,7 @@ import { dropGeometry, DROP_KINDS } from './models.ts';
 import type { DropKind } from './models.ts';
 import type { CombatView } from './types.ts';
 
-/** Más lejos que esto (m, desde la cámara hasta el centro del objeto) no se dibuja. */
+/** Más lejos que esto (m, desde la cámara hasta el centro del objeto) no se dibuja nunca. */
 export const DROP_RADIUS = 120;
 /** Vueltas: rad/s. Vaivén: amplitud (m) y rad/s. */
 const SPIN = 0.9;
@@ -30,6 +31,8 @@ export const dropKind = (item: LootItem): DropKind => (item.kind === 'arma' ? it
 export interface DropsView extends CombatView {
   /** Una malla por tipo, en el orden de DROP_KINDS (cambian si hace falta más capacidad). */
   readonly meshes: readonly THREE.InstancedMesh[];
+  /** Hasta dónde se dibuja (m), según la calidad; nunca más que DROP_RADIUS. */
+  setRadius(r: number): void;
 }
 
 export function createDrops(parent: THREE.Object3D): DropsView {
@@ -39,6 +42,7 @@ export function createDrops(parent: THREE.Object3D): DropsView {
   for (const m of meshes) parent.add(m);
   /** Los objetos cerca de la cámara, por tipo: se reusan cuadro a cuadro. */
   const near: MatchDrop[][] = DROP_KINDS.map(() => []);
+  let radius: number = DROP_RADIUS;
 
   function makeMesh(i: number, capacity: number): THREE.InstancedMesh {
     const m = new THREE.InstancedMesh(geometries[i], material, capacity);
@@ -54,9 +58,12 @@ export function createDrops(parent: THREE.Object3D): DropsView {
 
   return {
     meshes,
+    setRadius(r) {
+      radius = Math.min(DROP_RADIUS, Math.max(0, r));
+    },
     update({ state, cam, now }) {
       for (const list of near) list.length = 0;
-      const r2 = DROP_RADIUS * DROP_RADIUS;
+      const r2 = radius * radius;
       for (const d of state.drops) {
         const dx = d.pos[0] - cam.pos[0], dy = d.pos[1] + MATCH.dropLift - cam.pos[1], dz = d.pos[2] - cam.pos[2];
         if (dx * dx + dy * dy + dz * dz <= r2) near[DROP_KINDS.indexOf(dropKind(d.item))].push(d);

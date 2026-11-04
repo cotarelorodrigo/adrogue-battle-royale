@@ -1,18 +1,36 @@
-// Arma el juego: carga el mapa, la escena y los materiales, conecta entrada, jugador, menús y HUD, y corre el bucle.
+// Arma el juego: carga el mapa, la escena y los materiales, conecta entrada, partida, menús y HUD, y corre el bucle.
+// Hay dos modos:
+// - partida (spec 2a §2): "Hacé click para jugar" (y "Jugar de nuevo") arranca una partida de práctica contra
+//   maniquíes. stepMatch corre a paso fijo y los eventos de todos los pasos del cuadro van a los efectos, a los sonidos
+//   y al HUD. El clic derecho apunta: el fov se cierra de a poco al del arma;
+// - paseo: un lugar elegido en el menú (M) recorre el mapa sin partida, como en la etapa 1 (stepPlayer, sin zona, sin
+//   maniquíes ni botín). Se vuelve a una partida con "Jugar una partida" en el menú de Esc.
+import { Group } from 'three';
 import { buildCollisionWorld } from '../shared/collision.ts';
+import { AMMO_BOX, AMMO_MAX, newGun, WEAPONS } from '../shared/combat.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import type { MapData } from '../shared/mapdata.ts';
-import { FixedStep } from '../shared/fixed-step.ts';
+import { newMatch, stepMatch } from '../shared/match.ts';
+import type { MatchEvent, MatchInput, MatchState } from '../shared/match.ts';
+import { FixedStep, SIM_HZ } from '../shared/fixed-step.ts';
 import { eyeHeight, initialState, PLAYER, stepPlayer } from '../shared/player.ts';
 import type { PlayerState } from '../shared/player.ts';
+import { createRng } from '../shared/rng.ts';
 import photoFacadeData from '../../data/photo-facades.json';
+import { createSfx, playEvents } from './audio/sfx.ts';
 import { benchSeconds, createBench } from './bench.ts';
-import { debugEnabled, installDebug } from './debug.ts';
+import { createDrops } from './combat/drops.ts';
+import { createDummies } from './combat/dummies.ts';
+import { createEffects } from './combat/effects.ts';
+import type { CombatFrame, CombatView } from './combat/types.ts';
+import { createViewmodel } from './combat/viewmodel.ts';
+import { createZoneWall } from './combat/zone-wall.ts';
+import { debugEnabled, installDebug, matchParams } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
 import { loadQuality, QUALITY, saveQuality } from './render/quality.ts';
 import type { Quality } from './render/quality.ts';
-import { createScene } from './render/scene.ts';
+import { createScene, FOV } from './render/scene.ts';
 import { createHud, FpsMeter } from './ui/hud.ts';
 import { createOverlay, showFatal } from './ui/overlay.ts';
 import type { Overlay } from './ui/overlay.ts';
@@ -30,6 +48,10 @@ const MSG_NO_WEBGL2 = 'Tu navegador no soporta WebGL2. Probá con Chrome, Edge o
 const MSG_CONTEXT_LOST = 'Se perdió el contexto gráfico. Recargá la página.';
 const MSG_LOAD_FAILED = 'No se pudo cargar el mapa. Recargá la página.';
 const INITIAL_PLACE = 'estacion-adrogue';
+/** Rapidez (1/s) con la que el fov va y vuelve de la mira (la misma que el arma en mano). */
+const AIM_RATE = 14;
+/** skipTo no avanza más que esto (s) de una vez. */
+const SKIP_MAX = 3600;
 
 type Game = Omit<AdrogueDebug, 'ready' | 'photosReady'>;
 
@@ -37,6 +59,9 @@ const root = document.getElementById('app')!;
 const debug = debugEnabled(location.search);
 /** Segundos del benchmark (?bench=1, ?benchSecs=N) o null para jugar. No necesita ?debug=1. */
 const benchSecs = benchSeconds(location.search);
+const params = matchParams(location.search);
+/** La primera partida usa ?semilla o una al azar (el único Math.random del juego); cada partida nueva, la siguiente. */
+const firstSeed = params.seed ?? Math.floor(Math.random() * 4294967296);
 let game: Game | null = null;
 let markReady!: () => void;
 let failReady!: (e: unknown) => void;
@@ -62,6 +87,12 @@ if (debug) {
     state: () => need().state(),
     stats: () => need().stats(),
     setQuality: (q) => need().setQuality(q),
+    match: () => need().match(),
+    give: (w) => need().give(w),
+    placeDummy: (i, pos) => need().placeDummy(i, pos),
+    skipTo: (t) => need().skipTo(t),
+    newMatch: (seed, n) => need().newMatch(seed, n),
+    counters: () => need().counters(),
     ready,
     photosReady,
   });
@@ -130,10 +161,16 @@ async function run(boot: Boot): Promise<void> {
     requestLock: () => lockPointer(canvas),
     exitLock: () => document.exitPointerLock(),
     onQuality: (q) => void setQuality(q),
-    onPlace: (id) => (id === null ? spawnRandom() : teleport(id)),
+    onPlace: (id) => startWalk(id),
+    onPlay: () => startMatch((firstSeed + matches) >>> 0, params.dummies),
   });
   boot.overlay = overlay;
-  document.addEventListener('pointerlockchange', () => overlay.pointerLocked(document.pointerLockElement === canvas));
+  document.addEventListener('pointerlockchange', () => {
+    const locked = document.pointerLockElement === canvas;
+    if (!locked) input.reset(); // con el menú abierto no llegan los keyup ni los mouseup, y lo que se toque no cuenta
+    overlay.pointerLocked(locked);
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // el clic derecho apunta
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F3') {
       e.preventDefault(); // F3 es "buscar" en el navegador
@@ -187,14 +224,54 @@ async function run(boot: Boot): Promise<void> {
     ...climbProps,
   ]);
 
-  let state: PlayerState = initialState([0, 0, 0]);
+  // El combate: maniquíes, botín, zona y efectos cuelgan de un grupo que se esconde en el modo paseo; el arma en mano
+  // tiene su propia escena y se dibuja después del mundo.
+  const combat = new Group();
+  combat.name = 'combate';
+  combat.visible = false;
+  const dummies = createDummies(combat);
+  const drops = createDrops(combat);
+  const effects = createEffects(combat);
+  const views: CombatView[] = [createZoneWall(combat), drops, dummies, effects];
+  /** Lo del combate que cambia con la calidad: hasta dónde se ve el botín y si los maniquíes dan sombra. */
+  const applyCombatQuality = (q: Quality): void => {
+    drops.setRadius(QUALITY[q].dropRadius);
+    dummies.setShadows(QUALITY[q].dummyShadows);
+  };
+  applyCombatQuality(quality);
+  const viewmodel = createViewmodel(scene.renderer);
+  scene.addStatic([combat]);
+  const sfx = createSfx();
+
+  /** El jugador del modo paseo. */
+  let walker: PlayerState = initialState([0, 0, 0]);
+  /** La partida en curso; null en el modo paseo (y antes de jugar). */
+  let match: MatchState | null = null;
+  let matches = 0; // partidas arrancadas: la semilla de la próxima es firstSeed + matches
+  let overShown = false;
+  let fov = FOV;
+  const pickRng = createRng(firstSeed ^ 0x5bd1e995); // el lugar al azar del modo paseo
+
+  const player = (): PlayerState => (match ? match.me.player : walker);
+  function setPlayer(p: PlayerState): void {
+    if (match) match = { ...match, me: { ...match.me, player: p } };
+    else walker = p;
+  }
+  function inMatch(): MatchState {
+    if (!match) throw new Error('No hay partida: es el modo paseo (o todavía no se jugó)');
+    return match;
+  }
+  /** yaw para mirar desde `from` hacia `to` (en planta); si son el mismo punto, el de ahora. */
+  const yawToward = (from: Vec3, to: Vec2): number => {
+    const dx = to[0] - from[0], dz = to[1] - from[2];
+    return dx === 0 && dz === 0 ? input.look().yaw : Math.atan2(-dx, -dz);
+  };
   function spawnAt(spawn: Vec3, lookAt: Vec2): void {
-    state = initialState(spawn);
-    const dx = lookAt[0] - spawn[0], dz = lookAt[1] - spawn[2];
-    input.setLook(dx === 0 && dz === 0 ? input.read().yaw : Math.atan2(-dx, -dz), 0);
+    setPlayer(initialState(spawn));
+    input.setLook(yawToward(spawn, lookAt), 0);
   }
   function placeAt(pos: Vec3, yaw: number): void {
-    state = initialState(pos);
+    setPlayer(initialState(pos));
     input.setLook(yaw, 0);
   }
   function teleport(placeId: string): void {
@@ -204,7 +281,29 @@ async function run(boot: Boot): Promise<void> {
   }
   /** Un spawn al azar de map.randomSpawns, mirando hacia el centro del mapa. */
   function spawnRandom(): void {
-    spawnAt(map.randomSpawns[Math.floor(Math.random() * map.randomSpawns.length)], [0, 0]);
+    spawnAt(map.randomSpawns[Math.floor(pickRng.next() * map.randomSpawns.length)], [0, 0]);
+  }
+
+  /** Partida nueva: el jugador en su punto de aparición, mirando hacia el centro del mapa, y nada de la anterior. */
+  function startMatch(seed: number, n: number): void {
+    match = newMatch(map, world, { seed, dummies: n });
+    matches++;
+    overShown = false;
+    fov = FOV;
+    effects.clear();
+    hud.clear();
+    combat.visible = true;
+    overlay.setMode('partida');
+    input.setLook(yawToward(match.me.player.pos, [0, 0]), 0);
+  }
+  /** Modo paseo en un lugar (null = al azar): sin partida. */
+  function startWalk(placeId: string | null): void {
+    match = null;
+    combat.visible = false;
+    hud.clear();
+    overlay.setMode('paseo');
+    if (placeId === null) spawnRandom();
+    else teleport(placeId);
   }
 
   let qualitySeq = 0;
@@ -235,6 +334,7 @@ async function run(boot: Boot): Promise<void> {
     scene.applyQuality(q);
     setTreeDensity(trees, QUALITY[q].treeDensity);
     setDumpsterShadows(climbProps, QUALITY[q].dumpsterShadows);
+    applyCombatQuality(q);
   }
 
   // Benchmark: la cámara recorre sola el camino fijo; empieza a medir cuando la escena está completa (fotos incluidas).
@@ -249,6 +349,17 @@ async function run(boot: Boot): Promise<void> {
   });
   if (bench) void photosReady.then(() => bench.start(performance.now()));
 
+  /** El fov va de a poco hacia el de la mira del arma (o al normal) y el mouse gira más despacio cuanto más se cierra. */
+  function aimFov(m: MatchState, dt: number): void {
+    const gun = m.inv.slots[m.inv.active];
+    const target = gun && m.aiming && m.me.alive ? WEAPONS[gun.id].aimFov : FOV;
+    fov += (target - fov) * (1 - Math.exp(-AIM_RATE * Math.min(0.1, Math.max(0, dt))));
+    if (Math.abs(target - fov) < 0.05) fov = target;
+    scene.setFov(fov);
+    const half = (deg: number): number => Math.tan((deg * Math.PI) / 360);
+    input.setZoom(half(fov) / half(FOV));
+  }
+
   const fps = new FpsMeter();
   const fixed = new FixedStep(); // la simulación avanza a 60 Hz sin importar los fps del cuadro
   let last = performance.now();
@@ -257,15 +368,54 @@ async function run(boot: Boot): Promise<void> {
     raf = requestAnimationFrame(frame);
     const dt = (now - last) / 1000; // FixedStep descarta dt ≤ 0 y limita los pasos por cuadro
     last = now;
+    let f: CombatFrame | null = null;
     if (bench) {
       const v = bench.frame(now);
       scene.update(v.pos, PLAYER.eye, v.yaw, v.pitch);
     } else {
-      const cmd = input.read();
-      if (overlay.screen === 'playing') fixed.advance(dt, (h) => { state = stepPlayer(state, cmd, world, h); }); // sin puntero capturado, en pausa
-      scene.update(state.pos, eyeHeight(state), cmd.yaw, cmd.pitch);
+      /** los eventos de todos los pasos de este cuadro (state.events tiene solo los del último) */
+      const events: MatchEvent[] = [];
+      if (overlay.screen === 'playing') { // sin puntero capturado, en pausa
+        fixed.advance(dt, (h) => {
+          const cmd = input.read(); // uno por paso: cada toque de E, R, H, 1, 2 o la rueda lo consume un solo paso
+          if (match) {
+            match = stepMatch(match, cmd, world, h);
+            events.push(...match.events);
+          } else {
+            walker = stepPlayer(walker, cmd, world, h);
+          }
+        });
+      }
+      const look = input.look();
+      const p = player();
+      const eye = eyeHeight(p);
+      scene.update(p.pos, eye, look.yaw, look.pitch);
+      if (match) {
+        aimFov(match, dt);
+        f = { state: match, cam: { pos: [p.pos[0], p.pos[1] + eye, p.pos[2]], yaw: look.yaw, pitch: look.pitch }, now, events };
+        for (const v of views) v.update(f);
+        viewmodel.update(f);
+        playEvents(sfx, events);
+      } else {
+        fov = FOV;
+        scene.setFov(FOV);
+        input.setZoom(1);
+      }
     }
     scene.render();
+    if (f) {
+      viewmodel.render(); // encima del mundo, en el mismo cuadro: renderer.info suma las dos pasadas
+      const gun = f.state.inv.slots[f.state.inv.active];
+      const scoped = !!gun && WEAPONS[gun.id].scope === true && f.state.aiming && fov < (FOV + WEAPONS[gun.id].aimFov) / 2;
+      hud.combat({ ...f, fov, scoped, project: scene.project });
+      const over = f.state.over;
+      if (over && !overShown) {
+        overShown = true;
+        overlay.matchOver({ won: over.won, alive: over.alive, time: over.at, kills: f.state.kills });
+      }
+    } else {
+      hud.combat(null);
+    }
     fps.tick(now);
     hud.update(now, fps.fps, scene.renderer.info.render.calls);
     if (first) {
@@ -274,13 +424,55 @@ async function run(boot: Boot): Promise<void> {
     }
   }
 
-  teleport(INITIAL_PLACE);
+  teleport(INITIAL_PLACE); // de fondo del título, en el modo paseo hasta que se toque "Hacé click para jugar"
   game = {
     teleport,
     placeAt,
-    state: () => structuredClone(state), // copia: desde afuera no se puede tocar el estado del juego
+    state: () => structuredClone(player()), // copia: desde afuera no se puede tocar el estado del juego
     stats: () => ({ drawCalls: scene.renderer.info.render.calls, triangles: scene.renderer.info.render.triangles, fps: fps.fps }),
     setQuality,
+    match: () => match && {
+      t: match.t,
+      seed: match.seed,
+      me: { hp: match.me.vitals.hp, armor: match.me.vitals.armor, alive: match.me.alive, pos: [...match.me.player.pos] },
+      inv: structuredClone(match.inv),
+      alive: (match.me.alive ? 1 : 0) + match.dummies.filter((d) => d.alive).length,
+      drops: match.drops.length,
+      kills: match.kills,
+      over: match.over && { ...match.over },
+    },
+    give(weapon) {
+      const m = inMatch();
+      if (!Object.hasOwn(WEAPONS, weapon)) throw new Error(`No existe el arma "${weapon}"`);
+      const inv = structuredClone(m.inv);
+      const other = inv.active === 0 ? 1 : 0;
+      if (inv.slots[inv.active] !== null && inv.slots[other] === null) inv.active = other;
+      inv.slots[inv.active] = newGun(weapon);
+      const ammo = WEAPONS[weapon].ammo;
+      inv.ammo[ammo] = Math.min(AMMO_MAX[ammo], inv.ammo[ammo] + AMMO_BOX[ammo]);
+      inv.healingUntil = null;
+      match = { ...m, inv };
+    },
+    placeDummy(i, pos) {
+      const m = inMatch();
+      if (!Number.isInteger(i) || i < 0 || i >= m.dummies.length) throw new RangeError(`No existe el maniquí ${i}: hay ${m.dummies.length}`);
+      const list = m.dummies.slice();
+      list[i] = { ...list[i], player: initialState(pos) };
+      match = { ...m, dummies: list };
+    },
+    skipTo(t) {
+      let m = inMatch();
+      if (!(t - m.t <= SKIP_MAX)) throw new RangeError(`skipTo(${t}): a lo sumo ${SKIP_MAX} s de una vez`);
+      const still: MatchInput = { forward: 0, right: 0, jump: false, crouch: false, ...input.look(), fire: false, aim: false,
+        reload: false, use: false, heal: false, slot: null };
+      const h = 1 / SIM_HZ;
+      while (m.t < t - 1e-9) m = stepMatch(m, still, world, h); // los eventos de estos pasos no se dibujan ni suenan
+      match = m;
+    },
+    newMatch: (seed, n) => startMatch(seed >>> 0, n),
+    counters: () => (combat.visible
+      ? { decals: effects.decals, tracers: effects.tracers, dummies: dummies.mesh.count }
+      : { decals: 0, tracers: 0, dummies: 0 }),
   };
   if (bench) overlay.bench();
   else overlay.ready(map.places);

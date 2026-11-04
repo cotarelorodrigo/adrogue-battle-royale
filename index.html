@@ -38,14 +38,69 @@
       .fatal p { font-size: 1.15rem; max-width: 30rem; }
       .bench-result { font-size: 1.25rem; font-weight: 600; }
 
-      .crosshair { position: fixed; left: 50%; top: 50%; width: 14px; height: 14px; transform: translate(-50%, -50%);
-        pointer-events: none; }
-      .crosshair::before, .crosshair::after { content: ''; position: absolute; background: rgba(255, 255, 255, 0.85);
-        box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); }
-      .crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
-      .crosshair::after { left: 0; top: 6px; width: 14px; height: 2px; }
+      .panel.end h2 { font-size: 2rem; }
+
+      /* Mira: cuatro brazos separados por --gap (el HUD lo abre con la dispersión del arma). */
+      .crosshair { position: fixed; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; --gap: 3px; }
+      .crosshair i { position: absolute; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+        transition: transform 80ms ease-out; }
+      .crosshair i:nth-child(-n + 2) { left: -1px; width: 2px; height: 7px; }
+      .crosshair i:nth-child(n + 3) { top: -1px; width: 7px; height: 2px; }
+      .crosshair i:nth-child(1) { bottom: 0; transform: translateY(calc(-1 * var(--gap))); }
+      .crosshair i:nth-child(2) { top: 0; transform: translateY(var(--gap)); }
+      .crosshair i:nth-child(3) { right: 0; transform: translateX(calc(-1 * var(--gap))); }
+      .crosshair i:nth-child(4) { left: 0; transform: translateX(var(--gap)); }
       .stats { position: fixed; left: 8px; top: 8px; padding: 2px 8px; border-radius: 4px; pointer-events: none;
         background: rgba(0, 0, 0, 0.55); font: 13px/1.6 ui-monospace, Menlo, Consolas, monospace; }
+
+      /* HUD de la partida */
+      .match-hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        font-variant-numeric: tabular-nums; }
+      .hitmarker { position: fixed; left: 50%; top: 50%; width: 0; height: 0; }
+      .hitmarker i { position: absolute; left: -1px; top: -5px; width: 2px; height: 9px; background: #fff;
+        box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); }
+      .hitmarker i:nth-child(1) { transform: rotate(45deg) translateY(-12px); }
+      .hitmarker i:nth-child(2) { transform: rotate(135deg) translateY(-12px); }
+      .hitmarker i:nth-child(3) { transform: rotate(225deg) translateY(-12px); }
+      .hitmarker i:nth-child(4) { transform: rotate(315deg) translateY(-12px); }
+      .hitmarker.head i { background: #ff4d3d; height: 12px; top: -6px; }
+      .dmg-layer { position: fixed; inset: 0; overflow: hidden; }
+      .dmg { position: absolute; left: 0; top: 0; translate: -50% -100%; font-weight: 700; font-size: 1.15rem; color: #fff; }
+      .dmg.head { color: #ffd23f; font-size: 1.35rem; }
+      .hud-top { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 0.6rem;
+        align-items: center; }
+      .hud-top > div { padding: 3px 10px; border-radius: 6px; background: rgba(0, 0, 0, 0.45); }
+      .hud-top .alive { font-weight: 600; }
+      .zone-arrow { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); display: flex; align-items: center;
+        gap: 0.45rem; padding: 3px 10px; border-radius: 6px; background: rgba(30, 70, 160, 0.6); }
+      .zone-arrow .arrow { width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent;
+        border-bottom: 16px solid #9cc3ff; }
+      .prompt, .status { position: fixed; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+      .prompt { top: calc(50% + 34px); font-weight: 600; }
+      .status { top: calc(50% + 58px); opacity: 0.9; }
+      .feed { position: fixed; top: 10px; right: 12px; display: flex; flex-direction: column; align-items: flex-end;
+        gap: 4px; }
+      .feed > div { padding: 2px 10px; border-radius: 6px; background: rgba(0, 0, 0, 0.45); }
+      .vitals { position: fixed; left: 16px; bottom: 16px; width: 15rem; display: flex; flex-direction: column; gap: 6px; }
+      .bar { position: relative; height: 1.35rem; border-radius: 5px; overflow: hidden; background: rgba(0, 0, 0, 0.45); }
+      .bar .fill { position: absolute; inset: 0 auto 0 0; }
+      .bar.hp .fill { background: #3fb950; }
+      .bar.armor .fill { background: #3d8bff; }
+      .bar .num { position: relative; display: block; padding: 0 8px; line-height: 1.35rem; font-weight: 700; }
+      .medkits { font-size: 0.9rem; }
+      .weapon { position: fixed; right: 16px; bottom: 16px; text-align: right; display: flex; flex-direction: column;
+        gap: 2px; }
+      .weapon .name { font-weight: 600; }
+      .weapon .ammo { font-size: 1.8rem; font-weight: 700; }
+      .weapon .slots { display: flex; gap: 6px; justify-content: flex-end; font-size: 0.85rem; }
+      .weapon .slots span { padding: 1px 8px; border-radius: 5px; background: rgba(0, 0, 0, 0.45); opacity: 0.7; }
+      .weapon .slots span.active { opacity: 1; outline: 1px solid rgba(255, 255, 255, 0.7); }
+      /* Mira telescópica: negro alrededor de un círculo, con la cruz fina. */
+      .scope { position: fixed; inset: 0;
+        background: radial-gradient(circle at center, transparent 0 38vmin, rgba(0, 0, 0, 0.94) 38.4vmin); }
+      .scope::before, .scope::after { content: ''; position: absolute; background: rgba(0, 0, 0, 0.85); }
+      .scope::before { left: 50%; top: 12vh; bottom: 12vh; width: 1px; }
+      .scope::after { top: 50%; left: 20vw; right: 20vw; height: 1px; }
     </style>
   </head>
   <body>

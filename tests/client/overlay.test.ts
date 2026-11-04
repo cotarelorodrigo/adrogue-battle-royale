@@ -2,7 +2,7 @@
 // El menú de Esc solo aparece al soltar el pointer lock, que Chrome headless no tiene: el flujo de pantallas se prueba acá.
 import sources from '../../data/sources.json';
 import type { Place } from '../../src/shared/mapdata.ts';
-import { createOverlay, HELP } from '../../src/client/ui/overlay.ts';
+import { COMBAT_HELP, createOverlay, HELP } from '../../src/client/ui/overlay.ts';
 import type { Overlay } from '../../src/client/ui/overlay.ts';
 
 const places = [
@@ -19,6 +19,7 @@ const o = {
   exitLock: vi.fn(),
   onQuality: vi.fn(),
   onPlace: vi.fn(),
+  onPlay: vi.fn(),
 };
 
 /** Botones visibles (sin ningún ancestro oculto) con ese texto. */
@@ -48,14 +49,18 @@ test('mientras carga, el botón de jugar está deshabilitado y M no hace nada', 
   expect(overlay.screen).toBe('loading');
 });
 
-test('título con los textos exactos; el click pide el pointer lock', () => {
+test('título con los textos exactos; el click arranca una partida y pide el pointer lock', () => {
   overlay.ready(places);
   expect(overlay.screen).toBe('title');
   expect(visibleText()).toContain('Adrogué');
   expect(visibleText()).toContain(HELP);
   expect(HELP).toBe('WASD moverse · Espacio saltar · C agacharse · Mouse mirar · M lugares · Esc menú');
+  expect(visibleText()).toContain(COMBAT_HELP);
+  expect(COMBAT_HELP).toBe('Clic disparar · Clic derecho apuntar · R recargar · E juntar · 1, 2 o rueda cambiar de arma · H botiquín');
   btn('Hacé click para jugar').click();
+  expect(o.onPlay).toHaveBeenCalledTimes(1);
   expect(o.requestLock).toHaveBeenCalledTimes(1);
+  expect(o.onPlay.mock.invocationCallOrder[0]).toBeLessThan(o.requestLock.mock.invocationCallOrder[0]);
 });
 
 test('con el puntero capturado se juega; al soltarlo aparece el menú de Esc', () => {
@@ -163,4 +168,85 @@ test('fatal reemplaza todo por el mensaje', () => {
   overlay.pointerLocked(true);
   overlay.togglePlaces();
   expect(overlay.screen).toBe('error');
+});
+
+// ---------- fin de la partida y modo paseo ----------
+
+test('victoria: jugando suelta el puntero y muestra "¡Ganaste!" con el tiempo y las eliminaciones', () => {
+  overlay.ready(places);
+  overlay.pointerLocked(true);
+  overlay.matchOver({ won: true, alive: 1, time: 205.4, kills: 4 });
+  expect(o.exitLock).toHaveBeenCalledTimes(1);
+  expect(overlay.screen).toBe('playing'); // hasta que el navegador confirme que soltó el puntero
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('victoria');
+  expect(visibleText()).toContain('¡Ganaste!');
+  expect(visibleText()).toContain('Tiempo: 3:25 · Eliminaciones: 4'); // el tiempo jugado, para abajo
+  expect(buttons().map((b) => b.textContent)).toEqual(['Jugar de nuevo']);
+  overlay.back(); // Esc no la cierra
+  expect(overlay.screen).toBe('victoria');
+  btn('Jugar de nuevo').click();
+  expect(o.onPlay).toHaveBeenCalledTimes(1);
+  expect(o.requestLock).toHaveBeenCalledTimes(1);
+  overlay.pointerLocked(true);
+  expect(overlay.screen).toBe('playing');
+  overlay.pointerLocked(false); // la partida nueva sigue: soltar el puntero vuelve al menú de Esc
+  expect(overlay.screen).toBe('menu');
+});
+
+test('derrota: "Te eliminaron — quedaban N" (y "quedaba 1")', () => {
+  overlay.ready(places);
+  overlay.pointerLocked(true);
+  overlay.matchOver({ won: false, alive: 5, time: 61, kills: 0 });
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('derrota');
+  expect(visibleText()).toContain('Te eliminaron — quedaban 5');
+  expect(visibleText()).toContain('Tiempo: 1:01 · Eliminaciones: 0');
+  expect(visibleText()).not.toContain('¡Ganaste!');
+  btn('Jugar de nuevo').click();
+  overlay.pointerLocked(true);
+  overlay.matchOver({ won: false, alive: 1, time: 10, kills: 2 });
+  overlay.pointerLocked(false);
+  expect(visibleText()).toContain('Te eliminaron — quedaba 1');
+});
+
+test('si termina con el menú abierto, la pantalla de fin aparece enseguida', () => {
+  overlay.ready(places);
+  overlay.pointerLocked(true);
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('menu');
+  overlay.matchOver({ won: true, alive: 1, time: 700, kills: 11 });
+  expect(o.exitLock).not.toHaveBeenCalled();
+  expect(overlay.screen).toBe('victoria');
+});
+
+test('desde la pantalla de fin: M abre lugares, Volver regresa a ella y elegir un lugar sale al modo paseo', () => {
+  overlay.ready(places);
+  overlay.pointerLocked(true);
+  overlay.matchOver({ won: false, alive: 3, time: 30, kills: 0 });
+  overlay.pointerLocked(false);
+  overlay.togglePlaces();
+  expect(overlay.screen).toBe('places');
+  btn('Volver').click();
+  expect(overlay.screen).toBe('derrota');
+  overlay.togglePlaces();
+  btn('Banco').click();
+  expect(o.onPlace).toHaveBeenCalledWith('b');
+  expect(o.requestLock).toHaveBeenCalledTimes(1);
+  overlay.pointerLocked(true);
+  overlay.pointerLocked(false);
+  expect(overlay.screen).toBe('menu'); // ya no vuelve a la pantalla de fin
+});
+
+test('modo paseo: el menú de Esc ofrece "Jugar una partida"', () => {
+  overlay.ready(places);
+  overlay.setMode('paseo');
+  overlay.pointerLocked(true);
+  overlay.pointerLocked(false);
+  expect(buttons().map((b) => b.textContent)).toEqual(['Seguir', 'Jugar una partida', 'Baja', 'Media', 'Alta', 'Lugares', 'Créditos']);
+  btn('Jugar una partida').click();
+  expect(o.onPlay).toHaveBeenCalledTimes(1);
+  expect(o.requestLock).toHaveBeenCalledTimes(1);
+  overlay.setMode('partida');
+  expect(buttons().map((b) => b.textContent)).toEqual(['Seguir', 'Baja', 'Media', 'Alta', 'Lugares', 'Créditos']);
 });

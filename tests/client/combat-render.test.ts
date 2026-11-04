@@ -132,6 +132,19 @@ describe('maniquíes', () => {
     dummies.forEach((d, i) => expect(instancePos(view.mesh, i).toArray()).toEqual(d.player.pos));
   });
 
+  test('setShadows saca la pasada de sombras (calidades baja y media), también si la malla crece', () => {
+    const root = new THREE.Group();
+    const view = createDummies(root);
+    view.setShadows(false);
+    view.update(frame(matchState({ dummies: [fighter('m1', [0, 0, -5])] }), 1000));
+    expect(drawCalls(root)).toBe(1);
+    const many = Array.from({ length: 40 }, (_, i) => fighter(`m${i}`, [i, 0, -5]));
+    view.update(frame(matchState({ dummies: many }), 1000));
+    expect(view.mesh.castShadow).toBe(false);
+    view.setShadows(true);
+    expect(drawCalls(root)).toBe(2);
+  });
+
   test(`uno muerto se cae y a los ${DUMMY_GONE_AFTER} s ya no se dibuja`, () => {
     const root = new THREE.Group();
     const view = createDummies(root);
@@ -210,6 +223,22 @@ describe('botín', () => {
     // al alejarse, los de lejos dejan de contarse
     view.update(frame(matchState({ drops }), 1000, [], { pos: [5000, 0, 5000], yaw: 0, pitch: 0 }));
     expect(drawCalls(root)).toBe(0);
+  });
+
+  test('setRadius achica el radio (calidades baja y media) y nunca pasa de los 120 m del spec', () => {
+    const root = new THREE.Group();
+    const view = createDrops(root);
+    const cam: Vec3 = [0, 1.65, 0];
+    const count = (): number => view.meshes.reduce((s, m) => s + (m.visible ? m.count : 0), 0);
+    const within = (r: number): number =>
+      drops.filter((d) => Math.hypot(d.pos[0] - cam[0], d.pos[1] + MATCH.dropLift - cam[1], d.pos[2] - cam[2]) <= r).length;
+    view.setRadius(80);
+    view.update(frame(matchState({ drops }), 1000, [], { pos: cam, yaw: 0, pitch: 0 }));
+    expect(count()).toBe(within(80));
+    expect(count()).toBeLessThan(within(DROP_RADIUS));
+    view.setRadius(500);
+    view.update(frame(matchState({ drops }), 1000, [], { pos: cam, yaw: 0, pitch: 0 }));
+    expect(count()).toBe(within(DROP_RADIUS));
   });
 
   test('flotan centrados a dropLift sobre su piso, donde se los mira para juntarlos, y giran despacio', () => {

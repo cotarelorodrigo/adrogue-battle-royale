@@ -11,6 +11,11 @@ test('sombras de los contenedores solo en alta', () => {
   expect([QUALITY.baja.dumpsterShadows, QUALITY.media.dumpsterShadows, QUALITY.alta.dumpsterShadows]).toEqual([false, false, true]);
 });
 
+test('el botín se ve a 80, 100 y 120 m, y los maniquíes proyectan sombra solo en alta (como los contenedores)', () => {
+  expect([QUALITY.baja.dropRadius, QUALITY.media.dropRadius, QUALITY.alta.dropRadius]).toEqual([80, 100, 120]);
+  expect([QUALITY.baja.dummyShadows, QUALITY.media.dummyShadows, QUALITY.alta.dummyShadows]).toEqual([false, false, true]);
+});
+
 test('calidad por defecto media y persistida', () => {
   localStorage.clear();
   expect(loadQuality()).toBe('media');

@@ -14,7 +14,8 @@ export const FOG_COLOR = 0xc6d3dc;
 /** El cielo se funde con la niebla de la altura del horizonte para abajo (seno del ángulo de elevación): lo que la
  *  niebla tapa del todo y lo que corta camera.far quedan del mismo color que el cielo que tienen atrás. */
 const HORIZON_BLEND = 0.1;
-const FOV = 75;
+/** fov vertical (grados) sin apuntar. */
+export const FOV = 75;
 /** Cerca de la cámara (R15: con las capas del suelo a 2 cm no hay z-fighting a distancia). */
 const NEAR = 0.15;
 /** Sol de media mañana, del noreste (en Adrogué el sol va por el norte): ilumina la fachada de la estación, que mira
@@ -44,6 +45,10 @@ export interface GameScene {
   applyQuality(q: Quality): void;
   /** Cámara en los ojos del jugador, culling de chunks y sombra centrada en él. */
   update(feet: Vec3, eye: number, yaw: number, pitch: number): void;
+  /** fov vertical de la cámara (grados): al apuntar se cierra. */
+  setFov(deg: number): void;
+  /** Un punto del mundo en píxeles CSS de la ventana con la cámara de ahora, o null si queda detrás. */
+  project(p: Vec3): [number, number] | null;
   /** Dibuja el mundo y pone en cero renderer.info: las pasadas que siguen en el mismo cuadro se suman. */
   render(): void;
 }
@@ -92,6 +97,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   let cullRadius = Infinity;
   let shadowsOn = false;
   let shadowX = NaN, shadowZ = NaN;
+  const projected = new THREE.Vector3();
 
   function placeSun(x: number, z: number): void {
     const sx = Math.round(x / SHADOW_SNAP) * SHADOW_SNAP;
@@ -173,6 +179,17 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
       camera.rotation.set(pitch, yaw, 0);
       for (const c of chunks) c.group.visible = Math.hypot(c.cx - feet[0], c.cz - feet[2]) <= cullRadius;
       if (shadowsOn) placeSun(feet[0], feet[2]);
+    },
+    setFov(deg) {
+      if (camera.fov === deg) return;
+      camera.fov = deg;
+      camera.updateProjectionMatrix();
+    },
+    project(p) {
+      camera.updateMatrixWorld(); // la de este cuadro, aunque todavía no se haya dibujado
+      projected.set(p[0], p[1], p[2]).project(camera);
+      if (!(projected.z > -1 && projected.z < 1)) return null; // detrás de la cámara (o más allá de camera.far)
+      return [((projected.x + 1) / 2) * window.innerWidth, ((1 - projected.y) / 2) * window.innerHeight];
     },
     render() {
       renderer.info.reset();

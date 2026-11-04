@@ -1,5 +1,7 @@
-// Pantallas sobre el juego: título, menú de Esc, lugares, créditos y errores. Decide qué se ve según el pointer lock:
-// con el puntero capturado se juega; al soltarlo (Esc del navegador, cambio de ventana) aparece el menú.
+// Pantallas sobre el juego: título, menú de Esc, lugares, créditos, victoria, derrota y errores. Decide qué se ve según
+// el pointer lock: con el puntero capturado se juega; al soltarlo (Esc del navegador, cambio de ventana) aparece el menú.
+// "Hacé click para jugar", "Jugar de nuevo" y "Jugar una partida" arrancan una partida; elegir un lugar arranca el modo
+// paseo (sin partida, como en la etapa 1).
 import type { Place } from '../../shared/mapdata.ts';
 import { QUALITY_LABEL } from '../render/quality.ts';
 import type { Quality } from '../render/quality.ts';
@@ -7,9 +9,20 @@ import { createCredits } from './credits.ts';
 import { createPlacesMenu } from './places-menu.ts';
 
 export const HELP = 'WASD moverse · Espacio saltar · C agacharse · Mouse mirar · M lugares · Esc menú';
+export const COMBAT_HELP = 'Clic disparar · Clic derecho apuntar · R recargar · E juntar · 1, 2 o rueda cambiar de arma · H botiquín';
 const QUALITIES = Object.entries(QUALITY_LABEL) as [Quality, string][];
 
-export type Screen = 'loading' | 'title' | 'playing' | 'menu' | 'places' | 'credits' | 'error' | 'bench';
+export type Screen = 'loading' | 'title' | 'playing' | 'menu' | 'places' | 'credits' | 'victoria' | 'derrota' | 'error' | 'bench';
+
+/** Cómo terminó la partida, para la pantalla de fin. */
+export interface MatchResult {
+  won: boolean;
+  /** cuántos quedaban vivos (en la derrota, sin contar al jugador) */
+  alive: number;
+  /** segundos jugados */
+  time: number;
+  kills: number;
+}
 
 export interface OverlayOptions {
   quality: Quality;
@@ -17,8 +30,10 @@ export interface OverlayOptions {
   requestLock(): void;
   exitLock(): void;
   onQuality(q: Quality): void;
-  /** `null` = un lugar al azar. */
+  /** Arranca el modo paseo en ese lugar; `null` = un lugar al azar. */
   onPlace(placeId: string | null): void;
+  /** Partida nueva ("Hacé click para jugar", "Jugar de nuevo", "Jugar una partida"); después se pide el puntero. */
+  onPlay(): void;
 }
 
 export interface Overlay {
@@ -34,6 +49,11 @@ export interface Overlay {
   /** Tecla Esc con el puntero libre: cierra lugares o créditos. */
   back(): void;
   setQuality(q: Quality): void;
+  /** Hay partida o se está paseando: en el modo paseo el menú de Esc ofrece "Jugar una partida". */
+  setMode(mode: 'partida' | 'paseo'): void;
+  /** Terminó la partida: la pantalla de victoria o de derrota, cuando el navegador suelte el puntero (si se estaba
+   *  jugando) o enseguida. Queda como pantalla de base hasta que arranque otra partida o el modo paseo. */
+  matchOver(r: MatchResult): void;
   fatal(message: string): void;
 }
 
@@ -66,9 +86,14 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
 
   const title = el('div', 'panel');
   const status = el('p', 'help', 'Cargando…');
-  const play = button('Hacé click para jugar', () => o.requestLock(), 'primary');
+  const startMatch = (): void => {
+    ended = null;
+    o.onPlay();
+    o.requestLock();
+  };
+  const play = button('Hacé click para jugar', startMatch, 'primary');
   play.disabled = true;
-  title.append(el('h1', undefined, 'Adrogué'), status, play, el('p', 'help', HELP));
+  title.append(el('h1', undefined, 'Adrogué'), status, play, el('p', 'help', HELP), el('p', 'help', COMBAT_HELP));
 
   const menu = el('div', 'panel');
   const quality = el('div', 'quality');
@@ -83,28 +108,38 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
     qualityButtons.set(q, b);
     quality.append(b);
   });
+  const playFromWalk = button('Jugar una partida', startMatch); // solo en el modo paseo
+  playFromWalk.hidden = true;
   menu.append(
     button('Seguir', () => o.requestLock(), 'primary'),
+    playFromWalk,
     quality,
     button('Lugares', () => show('places')),
     button('Créditos', () => show('credits')),
   );
 
+  const end = el('div', 'panel end');
+  const endTitle = el('h2');
+  const endStats = el('p', 'help');
+  end.append(endTitle, endStats, button('Jugar de nuevo', startMatch, 'primary'));
+
   const credits = createCredits(() => show(home()));
   let places: HTMLElement | null = null;
-  wrap.append(title, menu, credits);
+  wrap.append(title, menu, end, credits);
   root.append(wrap);
 
   let screen: Screen = 'loading';
   let started = false; // ya se jugó: la pantalla de base pasa a ser el menú en vez del título
+  let ended: 'victoria' | 'derrota' | null = null; // la partida terminó: la pantalla de base es la de fin
   let afterUnlock: Screen | null = null;
-  const home = (): Screen => (started ? 'menu' : 'title');
+  const home = (): Screen => ended ?? (started ? 'menu' : 'title');
 
   function show(s: Screen): void {
     screen = s;
     wrap.hidden = s === 'playing' || s === 'bench';
     title.hidden = s !== 'loading' && s !== 'title';
     menu.hidden = s !== 'menu';
+    end.hidden = s !== 'victoria' && s !== 'derrota';
     credits.hidden = s !== 'credits';
     if (places) places.hidden = s !== 'places';
     // Que Espacio no "apriete" el último botón con foco mientras se juega.
@@ -126,6 +161,7 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
       places = createPlacesMenu(
         list,
         (id) => {
+          ended = null;
           o.onPlace(id);
           show(home());
           o.requestLock();
@@ -164,6 +200,22 @@ export function createOverlay(root: HTMLElement, o: OverlayOptions): Overlay {
       if (screen === 'places' || screen === 'credits') show(home());
     },
     setQuality,
+    setMode(mode) {
+      playFromWalk.hidden = mode !== 'paseo';
+    },
+    matchOver(r) {
+      if (screen === 'loading' || screen === 'error' || screen === 'bench') return;
+      ended = r.won ? 'victoria' : 'derrota';
+      endTitle.textContent = r.won ? '¡Ganaste!' : `Te eliminaron — ${r.alive === 1 ? 'quedaba 1' : `quedaban ${r.alive}`}`;
+      const secs = Math.max(0, Math.floor(r.time)); // el tiempo jugado, para abajo
+      endStats.textContent = `Tiempo: ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} · Eliminaciones: ${r.kills}`;
+      if (screen === 'playing') {
+        afterUnlock = ended; // se muestra cuando el navegador confirme que soltó el puntero
+        o.exitLock();
+      } else if (screen === 'menu' || screen === 'title') {
+        show(ended);
+      }
+    },
     fatal(message) {
       screen = 'error';
       showFatal(root, message);

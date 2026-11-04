@@ -129,3 +129,117 @@ test('teclas ajenas no cuentan y la distribución del teclado no importa (code, 
   window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'z' })); // AZERTY: la tecla de W dice 'z'
   expect(input.read().forward).toBe(1);
 });
+
+// ---------- botones del mouse, rueda y pulsos de la partida ----------
+
+const mouse = (type: 'mousedown' | 'mouseup', button: number): void => {
+  window.dispatchEvent(new MouseEvent(type, { button }));
+};
+const wheel = (deltaY: number): void => {
+  window.dispatchEvent(new WheelEvent('wheel', { deltaY }));
+};
+
+test('fire es true mientras el botón izquierdo está apretado', () => {
+  setLocked(true);
+  mouse('mousedown', 0);
+  expect(input.read().fire).toBe(true);
+  expect(input.read().fire).toBe(true);
+  expect(input.read().fire).toBe(true);
+  mouse('mouseup', 0);
+  expect(input.read().fire).toBe(false);
+});
+
+test('un clic más corto que un paso igual dispara una vez', () => {
+  setLocked(true);
+  mouse('mousedown', 0);
+  mouse('mouseup', 0);
+  expect(input.read().fire).toBe(true);
+  expect(input.read().fire).toBe(false);
+});
+
+test('aim es true mientras el botón derecho está apretado, aunque se dispare a la vez', () => {
+  setLocked(true);
+  mouse('mousedown', 2);
+  mouse('mousedown', 0);
+  expect(input.read()).toMatchObject({ aim: true, fire: true });
+  mouse('mouseup', 0);
+  expect(input.read()).toMatchObject({ aim: true, fire: false });
+  mouse('mouseup', 2);
+  expect(input.read().aim).toBe(false);
+});
+
+test('sin el puntero capturado los botones no disparan ni apuntan, pero soltarlos siempre cuenta', () => {
+  mouse('mousedown', 0);
+  mouse('mousedown', 2);
+  expect(input.read()).toMatchObject({ fire: false, aim: false });
+  setLocked(true);
+  mouse('mousedown', 0);
+  setLocked(false); // Esc con el botón apretado: el mouseup llega con el menú abierto
+  mouse('mouseup', 0);
+  input.read();
+  expect(input.read().fire).toBe(false);
+});
+
+test('use es true un solo read por toque de E (aunque se mantenga apretada)', () => {
+  press('KeyE');
+  expect(input.read().use).toBe(true);
+  expect(input.read().use).toBe(false);
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', repeat: true })); // la repetición del teclado
+  expect(input.read().use).toBe(false);
+  release('KeyE');
+  expect(input.read().use).toBe(false);
+  press('KeyE');
+  release('KeyE'); // el toque se guarda hasta el próximo read, aunque ya se haya soltado
+  expect(input.read().use).toBe(true);
+});
+
+test('R recarga y H usa el botiquín, un read por toque', () => {
+  press('KeyR');
+  press('KeyH');
+  expect(input.read()).toMatchObject({ reload: true, heal: true });
+  expect(input.read()).toMatchObject({ reload: false, heal: false });
+});
+
+test('1 y 2 eligen la ranura, un read por toque', () => {
+  press('Digit2');
+  expect(input.read().slot).toBe(1);
+  expect(input.read().slot).toBeNull();
+  press('Digit1');
+  expect(input.read().slot).toBe(0);
+});
+
+test('la rueda: arriba la ranura 1, abajo la 2 (solo con el puntero capturado)', () => {
+  wheel(100);
+  expect(input.read().slot).toBeNull();
+  setLocked(true);
+  wheel(100);
+  wheel(120);
+  expect(input.read().slot).toBe(1);
+  expect(input.read().slot).toBeNull();
+  wheel(-100);
+  expect(input.read().slot).toBe(0);
+});
+
+test('look() da la vista sin consumir los pulsos', () => {
+  input.setLook(0.5, 0.2);
+  press('KeyE');
+  expect(input.look()).toEqual({ yaw: 0.5, pitch: 0.2 });
+  expect(input.read()).toMatchObject({ use: true, yaw: 0.5, pitch: 0.2 });
+});
+
+test('reset() descarta los pulsos y suelta los botones', () => {
+  setLocked(true);
+  mouse('mousedown', 0);
+  mouse('mousedown', 2);
+  press('KeyE');
+  press('Digit2');
+  input.reset();
+  expect(input.read()).toMatchObject({ fire: false, aim: false, use: false, slot: null });
+});
+
+test('setZoom achica lo que gira el mouse', () => {
+  setLocked(true);
+  input.setZoom(0.25);
+  moveMouse(100, 0);
+  expect(input.read().yaw).toBeCloseTo(-25 * MOUSE_SENSITIVITY, 9);
+});

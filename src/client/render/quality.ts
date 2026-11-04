@@ -5,6 +5,11 @@ export interface QualityPreset {
   shadows: false | { mapSize: number; range: number };
   /** Los ~700 contenedores también proyectan sombra (duplican sus triángulos y casi no se notan). */
   dumpsterShadows: boolean;
+  /** Los maniquíes proyectan sombra: como los contenedores, duplican sus triángulos (1.188 con 11), solo en alta. */
+  dummyShadows: boolean;
+  /** El botín se dibuja hasta esta distancia (m): 120 en alta, como dice el spec. En baja y media, menos: a 100 m un
+   *  objeto ocupa 2 o 3 píxeles y donde el mundo ya es caro (Esteban Adrogué a lo largo) los triángulos no alcanzan. */
+  dropRadius: number;
   /** Niebla hasta acá (m) y camera.far un poco más allá: lo que se corta ya es del color del horizonte. */
   drawDistance: number;
   treeDensity: number;
@@ -16,9 +21,12 @@ export interface QualityPreset {
 export const FAR_PAST_FOG = 50;
 
 export const QUALITY: Record<Quality, QualityPreset> = {
-  baja: { pixelRatioMax: 0.75, shadows: false, dumpsterShadows: false, drawDistance: 250, treeDensity: 0.5, anisotropy: 1, textureSize: 512 },
-  media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, dumpsterShadows: false, drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024 },
-  alta: { pixelRatioMax: 2, shadows: { mapSize: 2048, range: 150 }, dumpsterShadows: true, drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024 },
+  baja: { pixelRatioMax: 0.75, shadows: false, dumpsterShadows: false, dummyShadows: false, dropRadius: 80, drawDistance: 250, treeDensity: 0.5,
+    anisotropy: 1, textureSize: 512 },
+  media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, dumpsterShadows: false, dummyShadows: false, dropRadius: 100,
+    drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024 },
+  alta: { pixelRatioMax: 2, shadows: { mapSize: 2048, range: 150 }, dumpsterShadows: true, dummyShadows: true, dropRadius: 120,
+    drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024 },
 };
 
 /** Cómo se llama cada calidad en pantalla (menú de Esc y benchmark). */

@@ -17,7 +17,18 @@ npm install
 npm run dev
 ```
 
-Abrí <http://localhost:5173> y hacé click en **Hacé click para jugar**.
+Abrí <http://localhost:5173> y hacé click en **Hacé click para jugar**: arranca una partida de práctica.
+
+### La partida
+
+Aparecés sin armas en un punto al azar, con 11 maniquíes repartidos por el centro (12 jugadores en total). Los
+maniquíes no se mueven ni disparan: tienen vida 100 y algunos, chaleco. En la calle, en los techos y frente a los
+lugares hay botín: armas (pistola, escopeta, rifle y francotirador), munición, chalecos y botiquines. La zona se achica
+en 5 fases y se cierra del todo a los 12 minutos; afuera se pierde vida, y también la pierden los maniquíes. Ganás si
+quedás último en pie; si te eliminan, ves cuántos quedaban. En los dos casos, **Jugar de nuevo** arranca otra partida.
+
+Elegir un lugar en el menú de lugares (M) deja la partida y pasa al **modo paseo**: recorrer el mapa sin zona, sin
+maniquíes y sin botín. Para volver a jugar, **Jugar una partida** en el menú de Esc.
 
 ### Controles
 
@@ -28,9 +39,26 @@ Abrí <http://localhost:5173> y hacé click en **Hacé click para jugar**.
 | Espacio | saltar; con W frente a un borde de hasta 2,4 m (un contenedor, un murito), trepar |
 | C | agacharse |
 | W contra una escalera de mano | subir (Espacio o S para soltarse) |
-| M | lugares: teletransportarse a uno de los 38 lugares, o a uno al azar |
-| Esc | menú: seguir, calidad (Baja / Media / Alta, queda guardada), lugares y créditos |
+| Clic izquierdo | disparar (el rifle sigue disparando mientras lo mantenés; las otras, un tiro por clic) |
+| Clic derecho | apuntar: acerca la vista y achica la dispersión; con el francotirador, mira telescópica |
+| R | recargar |
+| E | juntar lo que tenés adelante, a menos de 2,5 m (aparece "E: juntar…") |
+| 1, 2 o la rueda | cambiar de arma (la rueda: hacia arriba la 1, hacia abajo la 2) |
+| H | usar un botiquín: tarda 3 s y cura 50 (disparar o cambiar de arma lo corta) |
+| M | lugares: pasar al modo paseo en uno de los 38 lugares, o en uno al azar |
+| Esc | menú: seguir, calidad (Baja / Media / Alta, queda guardada), lugares y créditos; en el modo paseo, también **Jugar una partida** |
 | F3 | fps y draw calls |
+
+### Para probar
+
+Dos parámetros de la dirección cambian la partida:
+
+- `?maniquis=N`: cuántos maniquíes, de 0 a 23 (11 si no se dice). Con 0 es práctica libre: no se gana, la partida
+  termina solo si la zona te elimina.
+- `?semilla=N`: la semilla del sorteo (botín, zona, puntos de aparición y chalecos de los maniquíes). La misma semilla
+  da la misma partida; **Jugar de nuevo** sigue con N + 1, N + 2… Sin semilla, se elige una al azar.
+
+Por ejemplo, <http://localhost:5173/?maniquis=2&semilla=7>.
 
 ## Regenerar el mapa
 
