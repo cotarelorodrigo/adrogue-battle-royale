@@ -59,7 +59,11 @@ export function planZone(bounds: Bounds, players: number, seed: number): ZonePla
     const dist = (prevR - r) * Math.sqrt(rng.next());
     const p: Vec2 = [prevC[0] + Math.cos(ang) * dist, prevC[1] + Math.sin(ang) * dist];
     const s = maxScaleInside(prevC, p, bounds);
-    const center: Vec2 = [prevC[0] + (p[0] - prevC[0]) * s, prevC[1] + (p[1] - prevC[1]) * s];
+    // El clamp final absorbe el error de un ulp del escalado.
+    const center: Vec2 = [
+      Math.min(bounds.maxX, Math.max(bounds.minX, prevC[0] + (p[0] - prevC[0]) * s)),
+      Math.min(bounds.maxZ, Math.max(bounds.minZ, prevC[1] + (p[1] - prevC[1]) * s)),
+    ];
     circles.push({ center, r });
     prevC = center;
     prevR = r;
