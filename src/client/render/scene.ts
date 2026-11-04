@@ -6,7 +6,7 @@ import type { Vec3 } from '../../shared/geo.ts';
 import type { OutskirtBuilding } from '../../shared/mapdata.ts';
 import { CHUNK } from '../world/chunks.ts';
 import type { WorldMaterials } from '../world/types.ts';
-import { QUALITY } from './quality.ts';
+import { FAR_PAST_FOG, QUALITY } from './quality.ts';
 import type { Quality } from './quality.ts';
 
 /** Color de la niebla, parecido al horizonte del cielo. También es el de las siluetas de las afueras. */
@@ -44,6 +44,7 @@ export interface GameScene {
   applyQuality(q: Quality): void;
   /** Cámara en los ojos del jugador, culling de chunks y sombra centrada en él. */
   update(feet: Vec3, eye: number, yaw: number, pitch: number): void;
+  /** Dibuja el mundo y pone en cero renderer.info: las pasadas que siguen en el mismo cuadro se suman. */
   render(): void;
 }
 
@@ -53,6 +54,10 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.toneMapping = THREE.ACESFilmicToneMapping; // el cielo de Preetham está pensado para tone mapping
   renderer.toneMappingExposure = 0.7;
+  // Las estadísticas (renderer.info.render) se ponen en cero una sola vez por cuadro, en render(): lo que se dibuja
+  // después en el mismo cuadro (el arma en mano, combat/viewmodel.ts, en una pasada aparte) se suma, y el HUD y los
+  // presupuestos de e2e/perf.spec.ts ven el cuadro entero y no solo la última pasada.
+  renderer.info.autoReset = false;
 
   const scene = new THREE.Scene();
   const fog = new THREE.Fog(FOG_COLOR, 1, 2);
@@ -112,7 +117,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
     resize();
     fog.near = p.drawDistance * 0.5;
     fog.far = p.drawDistance;
-    camera.far = p.drawDistance + 50;
+    camera.far = p.drawDistance + FAR_PAST_FOG;
     camera.updateProjectionMatrix();
     cullRadius = p.drawDistance + CULL_PAD;
 
@@ -170,6 +175,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
       if (shadowsOn) placeSun(feet[0], feet[2]);
     },
     render() {
+      renderer.info.reset();
       renderer.render(scene, camera);
     },
   };

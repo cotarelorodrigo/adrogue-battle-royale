@@ -12,6 +12,9 @@ export interface QualityPreset {
   textureSize: 512 | 1024;
 }
 
+/** camera.far queda esto (m) más allá de drawDistance, donde la niebla ya tapa todo. */
+export const FAR_PAST_FOG = 50;
+
 export const QUALITY: Record<Quality, QualityPreset> = {
   baja: { pixelRatioMax: 0.75, shadows: false, dumpsterShadows: false, drawDistance: 250, treeDensity: 0.5, anisotropy: 1, textureSize: 512 },
   media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, dumpsterShadows: false, drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024 },
