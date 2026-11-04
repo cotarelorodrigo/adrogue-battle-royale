@@ -2,6 +2,7 @@
 import { buildCollisionWorld } from '../shared/collision.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import type { MapData } from '../shared/mapdata.ts';
+import { FixedStep } from '../shared/fixed-step.ts';
 import { eyeHeight, initialState, PLAYER, stepPlayer } from '../shared/player.ts';
 import type { PlayerState } from '../shared/player.ts';
 import photoFacadeData from '../../data/photo-facades.json';
@@ -249,18 +250,19 @@ async function run(boot: Boot): Promise<void> {
   if (bench) void photosReady.then(() => bench.start(performance.now()));
 
   const fps = new FpsMeter();
+  const fixed = new FixedStep(); // la simulación avanza a 60 Hz sin importar los fps del cuadro
   let last = performance.now();
   let first = true;
   function frame(now: number): void {
     raf = requestAnimationFrame(frame);
-    const dt = (now - last) / 1000; // stepPlayer recorta a maxDt y descarta dt ≤ 0
+    const dt = (now - last) / 1000; // FixedStep descarta dt ≤ 0 y limita los pasos por cuadro
     last = now;
     if (bench) {
       const v = bench.frame(now);
       scene.update(v.pos, PLAYER.eye, v.yaw, v.pitch);
     } else {
       const cmd = input.read();
-      if (overlay.screen === 'playing') state = stepPlayer(state, cmd, world, dt); // sin puntero capturado, en pausa
+      if (overlay.screen === 'playing') fixed.advance(dt, (h) => { state = stepPlayer(state, cmd, world, h); }); // sin puntero capturado, en pausa
       scene.update(state.pos, eyeHeight(state), cmd.yaw, cmd.pitch);
     }
     scene.render();
