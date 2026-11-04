@@ -31,6 +31,16 @@ export function createDummies(parent: THREE.Object3D): DummiesView {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true });
   /** id → hasta cuándo (ms) sigue teñido por el último impacto */
   const flashUntil = new Map<string, number>();
+  /** id → hacia dónde mira (rad): sale del id, se calcula una vez */
+  const facing = new Map<string, number>();
+  const yawOf = (id: string): number => {
+    let yaw = facing.get(id);
+    if (yaw === undefined) {
+      yaw = hash01(`maniqui:${id}`) * 2 * Math.PI;
+      facing.set(id, yaw);
+    }
+    return yaw;
+  };
   let shadows = true;
   let mesh = makeMesh(START_CAPACITY);
   parent.add(mesh);
@@ -74,7 +84,7 @@ export function createDummies(parent: THREE.Object3D): DummiesView {
         }
         const p = d.player.pos;
         pos.set(p[0], p[1] + LYING_LIFT * k, p[2]);
-        q.setFromAxisAngle(Y, hash01(`maniqui:${d.id}`) * 2 * Math.PI).multiply(fall.setFromAxisAngle(X, (-Math.PI / 2) * k));
+        q.setFromAxisAngle(Y, yawOf(d.id)).multiply(fall.setFromAxisAngle(X, (-Math.PI / 2) * k));
         scale.set(1, d.player.crouching ? PLAYER.crouchHeight / PLAYER.height : 1, 1);
         mesh.setMatrixAt(n, mat.compose(pos, q, scale));
         mesh.setColorAt(n, (flashUntil.get(d.id) ?? -Infinity) > now ? HIT_TINT : WHITE);
@@ -85,7 +95,8 @@ export function createDummies(parent: THREE.Object3D): DummiesView {
       mesh.visible = n > 0;
       mesh.instanceMatrix.needsUpdate = true;
       mesh.instanceColor!.needsUpdate = true;
-      mesh.boundingSphere = null; // three lo recalcula con las instancias de ahora para el frustum culling
+      // la esfera del frustum culling, con las instancias de ahora: three no la recalcula sola, y así reusa la misma
+      if (mesh.visible) mesh.computeBoundingSphere();
     },
     dispose() {
       parent.remove(mesh);

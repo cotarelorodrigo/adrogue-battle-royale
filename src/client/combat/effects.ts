@@ -3,6 +3,7 @@
 // deja lugar a la nueva, y cada una se achica en su último segundo y se borra a los DECAL_MS).
 import * as THREE from 'three';
 import { hashIndex } from '../../shared/geo.ts';
+import { smooth } from './ease.ts';
 import type { CombatView } from './types.ts';
 
 export const TRACER_MS = 80;
@@ -58,11 +59,6 @@ function holeTexture(): THREE.DataTexture {
   return t;
 }
 
-const smooth = (a: number, b: number, x: number): number => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
-
 export function createEffects(parent: THREE.Object3D): EffectsView {
   // trazadores
   const tracerGeo = new THREE.BufferGeometry();
@@ -98,7 +94,8 @@ export function createEffects(parent: THREE.Object3D): EffectsView {
   const Z = new THREE.Vector3(0, 0, 1);
 
   function drawTracers(now: number): void {
-    tracers.forEach((t, i) => {
+    for (let i = 0; i < tracers.length; i++) {
+      const t = tracers[i];
       const k = (now - t.born) / TRACER_MS;
       dir.subVectors(t.to, t.from);
       const len = dir.length();
@@ -111,7 +108,7 @@ export function createEffects(parent: THREE.Object3D): EffectsView {
       tPos.setXYZ(2 * i + 1, b.x, b.y, b.z);
       tCol.setXYZW(2 * i, TRACER_COLOR.r, TRACER_COLOR.g, TRACER_COLOR.b, 0);
       tCol.setXYZW(2 * i + 1, TRACER_COLOR.r, TRACER_COLOR.g, TRACER_COLOR.b, 0.9 * (1 - smooth(0.6, 1, k)));
-    });
+    }
     tPos.needsUpdate = true;
     tCol.needsUpdate = true;
     tracerGeo.setDrawRange(0, tracers.length * 2);
@@ -119,15 +116,24 @@ export function createEffects(parent: THREE.Object3D): EffectsView {
   }
 
   function drawDecals(now: number): void {
-    decals.forEach((d, i) => {
+    for (let i = 0; i < decals.length; i++) {
+      const d = decals[i];
       const left = DECAL_MS - (now - d.born);
       scale.setScalar(DECAL_SIZE * Math.min(1, left / DECAL_FADE_MS));
       decalMesh.setMatrixAt(i, mat.compose(d.pos, d.quat, scale));
-    });
+    }
     decalMesh.count = decals.length;
     decalMesh.visible = decals.length > 0;
     decalMesh.instanceMatrix.needsUpdate = true;
-    decalMesh.boundingSphere = null; // three lo recalcula con las marcas de ahora para el frustum culling
+    // la esfera del frustum culling, con las marcas de ahora: three no la recalcula sola, y así reusa la misma
+    if (decalMesh.visible) decalMesh.computeBoundingSphere();
+  }
+
+  /** Cuántos de adelante (los más viejos) ya vencieron, sin armar una función por cuadro. */
+  function expired<T extends { born: number }>(list: readonly T[], now: number, ttl: number): number {
+    let n = 0;
+    while (n < list.length && now - list[n].born >= ttl) n++;
+    return n;
   }
 
   return {
@@ -155,10 +161,8 @@ export function createEffects(parent: THREE.Object3D): EffectsView {
       if (tracers.length > TRACER_MAX) tracers.splice(0, tracers.length - TRACER_MAX);
       if (decals.length > DECAL_MAX) decals.splice(0, decals.length - DECAL_MAX);
       // vencidos: los más viejos están adelante
-      const t0 = tracers.findIndex((t) => now - t.born < TRACER_MS);
-      tracers.splice(0, t0 < 0 ? tracers.length : t0);
-      const d0 = decals.findIndex((d) => now - d.born < DECAL_MS);
-      decals.splice(0, d0 < 0 ? decals.length : d0);
+      tracers.splice(0, expired(tracers, now, TRACER_MS));
+      decals.splice(0, expired(decals, now, DECAL_MS));
       drawTracers(now);
       drawDecals(now);
     },

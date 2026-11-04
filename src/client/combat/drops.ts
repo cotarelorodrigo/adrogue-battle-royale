@@ -69,7 +69,8 @@ export function createDrops(parent: THREE.Object3D): DropsView {
         if (dx * dx + dy * dy + dz * dz <= r2) near[DROP_KINDS.indexOf(dropKind(d.item))].push(d);
       }
       const s = now / 1000;
-      near.forEach((list, i) => {
+      for (let i = 0; i < near.length; i++) {
+        const list = near[i];
         let m = meshes[i];
         if (list.length > m.instanceMatrix.count) {
           parent.remove(m);
@@ -77,18 +78,20 @@ export function createDrops(parent: THREE.Object3D): DropsView {
           m = meshes[i] = makeMesh(i, Math.max(list.length, m.instanceMatrix.count * 2));
           parent.add(m);
         }
-        list.forEach((d, j) => {
+        for (let j = 0; j < list.length; j++) {
+          const d = list[j];
           const phase = hashIndex(d.id) * 2 * Math.PI;
           pos.set(d.pos[0], d.pos[1] + MATCH.dropLift + BOB * Math.sin(s * BOB_SPEED + phase), d.pos[2]);
           m.setMatrixAt(j, mat.compose(pos, q.setFromAxisAngle(Y, s * SPIN + phase), one));
           if (d.item.kind === 'municion') m.setColorAt(j, AMMO_COLOR[d.item.ammo]);
-        });
+        }
         m.count = list.length;
         m.visible = list.length > 0;
         m.instanceMatrix.needsUpdate = true;
         if (m.instanceColor) m.instanceColor.needsUpdate = true;
-        m.boundingSphere = null; // three lo recalcula con las instancias de ahora para el frustum culling
-      });
+        // la esfera del frustum culling, con las instancias de ahora: three no la recalcula sola, y así reusa la misma
+        if (m.visible) m.computeBoundingSphere();
+      }
     },
     dispose() {
       for (const m of meshes) {

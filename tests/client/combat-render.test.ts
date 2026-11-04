@@ -464,6 +464,31 @@ describe('efectos', () => {
   });
 });
 
+test('las esferas del frustum culling se reusan cuadro a cuadro y siguen a lo que se dibuja', () => {
+  const root = new THREE.Group();
+  const dummies = createDummies(root), drops = createDrops(root), effects = createEffects(root), zone = createZoneWall(root);
+  const views: CombatView[] = [dummies, drops, effects, zone];
+  // a los 150 y 160 s la zona se está cerrando (fase 1): la pared cambia de radio
+  const at = (x: number, t: number): MatchState => matchState({ t, dummies: [fighter('m1', [x, 0, -5])], drops: [{ id: 1, pos: [x, 0, -3], item: { kind: 'chaleco' } }] });
+  const impact = (x: number): MatchEvent[] => [{ type: 'impact', point: [x, 1, -8], normal: [0, 0, 1] }];
+  const decals = root.getObjectByName('decals') as THREE.InstancedMesh;
+  const vest = (): THREE.InstancedMesh => drops.meshes[DROP_KINDS.indexOf('chaleco')];
+  const spheres = (): (THREE.Sphere | null)[] => [dummies.mesh.boundingSphere, vest().boundingSphere, decals.boundingSphere, zone.mesh.geometry.boundingSphere];
+  for (const v of views) v.update(frame(at(0, 150), 1000, impact(0)));
+  const first = spheres();
+  for (const sp of first) expect(sp).toBeInstanceOf(THREE.Sphere);
+  for (const v of views) v.update(frame(at(50, 160), 1016, impact(50)));
+  spheres().forEach((sp, i) => expect(sp, `esfera ${i}`).toBe(first[i])); // la misma, no una nueva
+  expect(dummies.mesh.boundingSphere!.containsPoint(new THREE.Vector3(50, 1, -5))).toBe(true);
+  expect(dummies.mesh.boundingSphere!.containsPoint(new THREE.Vector3(0, 1, -5))).toBe(false);
+  expect(vest().boundingSphere!.containsPoint(new THREE.Vector3(50, MATCH.dropLift, -3))).toBe(true);
+  for (const x of [0, 50]) expect(decals.boundingSphere!.containsPoint(new THREE.Vector3(x, 1, -8))).toBe(true);
+  const z = zoneAt(ZONE, 160);
+  expect(zone.mesh.geometry.boundingSphere!.center.toArray()).toEqual([z.center[0], ZONE_WALL_H / 2, z.center[1]]);
+  expect(zone.mesh.geometry.boundingSphere!.radius).toBeCloseTo(Math.hypot(z.r, ZONE_WALL_H / 2), 9);
+  expect(effects.decals).toBe(2);
+});
+
 test('dispose() deja renderer.info.memory (geometrías y texturas) como estaba y saca todo de la escena', () => {
   const memory = memoryCounter();
   const root = new THREE.Group();

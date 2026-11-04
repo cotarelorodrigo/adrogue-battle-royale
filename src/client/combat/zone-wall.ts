@@ -83,6 +83,9 @@ export function createZoneWall(parent: THREE.Object3D): ZoneWallView {
 
   let cx = NaN, cz = NaN, r = NaN;
   const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+  /** La esfera del frustum culling: una sola, que shape() mueve (three no la recalcula si no es null). */
+  const sphere = new THREE.Sphere();
+  geometry.boundingSphere = sphere;
 
   function shape(x: number, z: number, radius: number): void {
     const inner = Math.max(0, radius - RING_W);
@@ -94,7 +97,8 @@ export function createZoneWall(parent: THREE.Object3D): ZoneWallView {
       position.setXYZ(4 * k + 3, x + inner * c, RING_Y, z + inner * s);
     }
     position.needsUpdate = true;
-    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(x, ZONE_WALL_H / 2, z), Math.hypot(radius, ZONE_WALL_H / 2));
+    sphere.center.set(x, ZONE_WALL_H / 2, z);
+    sphere.radius = Math.hypot(radius, ZONE_WALL_H / 2);
   }
 
   return {
@@ -103,7 +107,9 @@ export function createZoneWall(parent: THREE.Object3D): ZoneWallView {
       const zone = zoneAt(state.zone, state.t);
       mesh.visible = zone.r > 0;
       if (!mesh.visible || (zone.center[0] === cx && zone.center[1] === cz && zone.r === r)) return;
-      [cx, cz, r] = [zone.center[0], zone.center[1], zone.r];
+      cx = zone.center[0];
+      cz = zone.center[1];
+      r = zone.r;
       shape(cx, cz, r);
     },
     dispose() {

@@ -14,6 +14,7 @@ import { WEAPONS } from '../../shared/combat.ts';
 import type { WeaponId } from '../../shared/combat.ts';
 import { MATCH } from '../../shared/match.ts';
 import { PLAYER } from '../../shared/player.ts';
+import { smooth } from './ease.ts';
 import { weaponModel } from './models.ts';
 import type { WeaponModel } from './models.ts';
 import type { CombatView } from './types.ts';
@@ -60,11 +61,6 @@ const MAG_IN: [number, number] = [0.55, 0.82];
 const BOB_RATE = 1.6;
 const BOB = 0.007;
 
-const smooth = (a: number, b: number, x: number): number => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
-
 export interface ViewmodelView extends CombatView {
   /** Dibuja el arma encima de lo que ya está en pantalla. Va después de scene.render(), en el mismo cuadro. Sin arma
    *  a la vista no hace ninguna pasada. */
@@ -98,7 +94,8 @@ function flashGeometry(): THREE.BufferGeometry {
 export function createViewmodel(renderer: ViewRenderer): ViewmodelView {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(VIEW_FOV, 16 / 9, 0.01, 10);
-  // la misma luz que el mundo (scene.ts), fija respecto de la cámara
+  // el mismo cielo que el mundo (scene.ts) y un sol más suave que el suyo a propósito (2,2 contra 3,0), los dos fijos
+  // respecto de la cámara
   scene.add(new THREE.HemisphereLight(0xd8e6ff, 0x80705a, 2.0));
   const sun = new THREE.DirectionalLight(0xfff0dc, 2.2);
   sun.position.set(0.5, 1, 0.6);
