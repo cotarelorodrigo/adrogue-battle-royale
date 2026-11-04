@@ -40,6 +40,8 @@ export const MATCH = {
   dropLift: 0.3,
   /** más rápido que esto (m/s, en 3D: saltar o trepar también cuenta) es moverse para la dispersión */
   movingSpeed: 0.5,
+  /** se aparece adentro del primer círculo de la zona, a por lo menos esto (m) de su borde */
+  spawnMargin: 10,
 } as const;
 
 export interface Fighter { id: string; name: string; player: PlayerState; vitals: Vitals; alive: boolean; diedAt?: number }
@@ -94,7 +96,8 @@ function shotSeed(seed: number, n: number): number {
 
 /**
  * Partida nueva. Con la semilla se sortean, en este orden: el botín, la zona, los puntos de aparición (distintos, entre
- * los de `map.randomSpawns` donde el cuerpo no se mete en ningún sólido) y el chaleco de cada maniquí (0, 25 o 50).
+ * los de `map.randomSpawns` donde el cuerpo no se mete en ningún sólido y que quedan adentro del primer círculo: ver
+ * spawnsInside) y el chaleco de cada maniquí (0, 25 o 50).
  * El botín sale antes que todo lo demás: la misma semilla da el mismo botín con cualquier cantidad de maniquíes.
  */
 export function newMatch(map: MapData, world: CollisionWorld, opts: { seed: number; dummies: number }): MatchState {
@@ -106,8 +109,9 @@ export function newMatch(map: MapData, world: CollisionWorld, opts: { seed: numb
   const rng = createRng(opts.seed);
   const drops: MatchDrop[] = rollLoot(map.lootSpots, seedFrom(rng));
   const zone = planZone(map.bounds, n + 1, seedFrom(rng));
+  const spawns = spawnsInside(free, zone, n + 1);
   // Fisher–Yates parcial: los primeros n + 1 quedan sorteados y sin repetir.
-  const order = free.map((_, i) => i);
+  const order = spawns.map((_, i) => i);
   for (let i = 0; i <= n; i++) {
     const j = i + Math.floor(rng.next() * (order.length - i));
     [order[i], order[j]] = [order[j], order[i]];
@@ -115,15 +119,30 @@ export function newMatch(map: MapData, world: CollisionWorld, opts: { seed: numb
   const fighter = (id: string, name: string, spawn: Vec3, armor: number): Fighter =>
     ({ id, name, player: initialState(spawn), vitals: { hp: MATCH.hpMax, armor }, alive: true });
   const dummies: Fighter[] = [];
-  for (let i = 1; i <= n; i++) dummies.push(fighter(`m${i}`, `Maniquí ${i}`, free[order[i]], 25 * Math.floor(rng.next() * 3)));
+  for (let i = 1; i <= n; i++) dummies.push(fighter(`m${i}`, `Maniquí ${i}`, spawns[order[i]], 25 * Math.floor(rng.next() * 3)));
   return {
     t: 0, seed: opts.seed,
-    me: fighter('yo', 'Vos', free[order[0]], 0),
+    me: fighter('yo', 'Vos', spawns[order[0]], 0),
     inv: { slots: [null, null], active: 0, ammo: { liviana: 0, cartuchos: 0, pesada: 0 }, medkits: 0, healingUntil: null },
     dummies, drops, zone, aiming: false, events: [], over: null, kills: 0,
     nextDropId: drops.reduce((m, d) => Math.max(m, d.id), 0) + 1,
     look: { yaw: 0, pitch: 0 }, held: { fire: false, use: false }, shotSeq: 0,
   };
+}
+
+/**
+ * Los puntos de aparición de `free` que quedan adentro del primer círculo de la zona, a por lo menos spawnMargin de su
+ * borde, en el orden de `free`. Con pocos jugadores el círculo se achica (diseño general §3.1) y pueden no alcanzar
+ * para `players`: se completa con los de afuera más cercanos al centro. Si están todos adentro (la partida de 12) la
+ * lista es `free` tal cual y el sorteo es el mismo que sin este filtro.
+ */
+function spawnsInside(free: readonly Vec3[], zone: ZonePlan, players: number): Vec3[] {
+  const fromCenter = (p: Vec3): number => Math.hypot(p[0] - zone.center0[0], p[2] - zone.center0[1]);
+  const limit = zone.r0 - MATCH.spawnMargin;
+  const inside = free.filter((p) => fromCenter(p) <= limit);
+  if (inside.length >= players) return inside;
+  const nearest = free.filter((p) => fromCenter(p) > limit).sort((a, b) => fromCenter(a) - fromCenter(b)); // estable: los empates, en el orden de free
+  return [...inside, ...nearest.slice(0, players - inside.length)];
 }
 
 /** Los cuerpos a los que se puede pegar: los maniquíes vivos (el jugador nunca es blanco de sus propios tiros). */

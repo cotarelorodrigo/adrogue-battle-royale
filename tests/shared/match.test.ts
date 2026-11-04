@@ -1,4 +1,5 @@
-import { CollisionWorld } from '../../src/shared/collision.ts';
+import { readFileSync } from 'node:fs';
+import { CollisionWorld, buildCollisionWorld } from '../../src/shared/collision.ts';
 import { AMMO_BOX, AMMO_MAX, WEAPONS, newGun } from '../../src/shared/combat.ts';
 import type { WeaponId } from '../../src/shared/combat.ts';
 import { SIM_HZ } from '../../src/shared/fixed-step.ts';
@@ -8,6 +9,7 @@ import type { Building, MapData } from '../../src/shared/mapdata.ts';
 import { MATCH, hitboxes, nearestDrop, newMatch, stepMatch } from '../../src/shared/match.ts';
 import type { MatchDrop, MatchEvent, MatchInput, MatchState } from '../../src/shared/match.ts';
 import { PLAYER, initialState } from '../../src/shared/player.ts';
+import { zoneAt } from '../../src/shared/zone.ts';
 
 // Mapa mínimo: 200 × 200 m con un edificio de 6 m en x ∈ [20, 40], z ∈ [−10, 10]. El piso es y = 0.
 const bounds = { minX: -100, maxX: 100, minZ: -100, maxZ: 100 };
@@ -21,6 +23,9 @@ const map: MapData = {
 };
 const world = new CollisionWorld([{ polygon: building.footprint, minY: 0, maxY: building.height }], [], bounds);
 const open = new CollisionWorld([], [], bounds); // sin el edificio: la zona puede caer en cualquier lado
+/** El mapa generado (public/map/adrogue.map.json), con sus 64 puntos de aparición. */
+const realMap = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
+const realWorld = buildCollisionWorld(realMap);
 
 const H = 1 / SIM_HZ;
 const idle: MatchInput = { forward: 0, right: 0, jump: false, crouch: false, yaw: 0, pitch: 0, fire: false, aim: false, reload: false, use: false, heal: false, slot: null };
@@ -117,6 +122,36 @@ describe('newMatch', () => {
 
   test('sin puntos libres para todos, avisa', () => {
     expect(() => newMatch(map, world, { seed: 1, dummies: 7 })).toThrow(/puntos de aparición/);
+  });
+
+  test('en el mapa real, con 0 a 23 maniquíes, todos arrancan adentro del primer círculo', () => {
+    let some = 0; // partidas donde algún punto libre quedaba afuera del círculo: el filtro hizo falta
+    for (let n = 0; n <= 23; n++) {
+      for (const seed of [1, 7, 42, 1234, 99991]) {
+        const s = newMatch(realMap, realWorld, { seed, dummies: n });
+        const z = zoneAt(s.zone, 0);
+        for (const f of [s.me, ...s.dummies]) {
+          expect(Math.hypot(f.player.pos[0] - z.center[0], f.player.pos[2] - z.center[1]), `n = ${n}, semilla ${seed}, ${f.id}`)
+            .toBeLessThanOrEqual(z.r - MATCH.spawnMargin);
+        }
+        if (realMap.randomSpawns.some((p) => Math.hypot(p[0] - z.center[0], p[2] - z.center[1]) > z.r)) some++;
+      }
+    }
+    expect(some).toBeGreaterThan(0);
+  });
+
+  test('si adentro del círculo no entran todos, se completa con los puntos más cercanos al centro', () => {
+    // 200 × 200 m: con 3 jugadores r0 = 141,4 × 0,5 = 70,7 m. Adentro (a menos de r0 − 10) hay un solo punto.
+    const far: MapData = { ...map, buildings: [], randomSpawns: [[0, 0, 95], [20, 0, 0], [0, 0, -68], [-90, 0, 0], [65, 0, 0]] };
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 20; seed++) {
+      const s = newMatch(far, open, { seed, dummies: 2 });
+      expect(s.zone.r0).toBeCloseTo(70.71, 2);
+      const all = [s.me, ...s.dummies].map((f) => f.player.pos);
+      expect([...all].sort((a, b) => a[0] - b[0] || a[2] - b[2])).toEqual([[0, 0, -68], [20, 0, 0], [65, 0, 0]]);
+      seen.add(JSON.stringify(s.me.player.pos));
+    }
+    expect(seen.size).toBe(3); // el sorteo sigue repartiendo quién va en cada uno
   });
 });
 
