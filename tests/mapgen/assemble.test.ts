@@ -82,8 +82,9 @@ const world = buildCollisionWorld(map);
 describe('assembleMap sobre datos reales', () => {
   test('sin warnings salvo relajaciones del punto de aparición', () => expect(warnings.filter(isFatalWarning)).toEqual([]));
   test('cantidades razonables', () => {
-    // los que cruzan el borde del área también son edificios (≈ 56 más); los rellenos de huecos no cuentan
-    const real = map.buildings.filter((b) => !b.fill);
+    // los que cruzan el borde del área también son edificios (≈ 56 más); los rellenos de huecos y los lotes relevados
+    // (`front`) no cuentan: crecen con cada frente que se carga
+    const real = map.buildings.filter((b) => !b.fill && !b.front);
     expect(real.length).toBeGreaterThan(1000); expect(real.length).toBeLessThan(1350);
     expect(map.places).toHaveLength(38); expect(map.parks.length).toBeGreaterThanOrEqual(12);
     expect(map.trees.length).toBeGreaterThan(1000);
@@ -257,7 +258,7 @@ describe('assembleMap con el frente de prueba', () => {
     expect(res.warnings.some((x) => x.startsWith('banco-nacion:'))).toBe(false);
   }, 30_000);
   test('los edificios de Microsoft al otro lado de las transversales no pierden área', () => {
-    const base = assembleMap(loadRaw()).map;
+    const base = assembleMap({ ...raw, frentes: { ...raw.frentes, frentes: [] } }).map; // sin ningún frente relevado
     const area = (mm: MapData, id: string): number => mm.buildings.filter((b) => b.id === id || b.id.startsWith(`${id}-`))
       .reduce((a, b) => a + polygonArea(b.footprint), 0);
     for (const id of ['b0837', 'b0833']) expect(Math.abs(area(m, id) - area(base, id)), id).toBeLessThanOrEqual(0.5);

@@ -106,7 +106,7 @@
             {"ancho": 3.2, "usa": "galeria-ea", "colorPB": "#2b2b33", "cartel": {"texto": "HARDY", "fondo": "#1d1d2b", "letra": "#ffffff", "posicion": "alto"}},
             {"ancho": 4.5, "usa": "galeria-ea", "colorPB": "#ededeb", "cartel": {"texto": "PRÉSTAMOS PERSONALES", "fondo": "#f4f4f4", "letra": "#2f7a3e"}},
             {"ancho": 4.5, "usa": "galeria-ea", "colorPB": "#e5e5e3", "cartel": {"texto": "LÓPEZ LIBREROS", "fondo": "#1f3f8f", "letra": "#ffffff"}, "nota": "kiosco de diarios; el cartel dice «López y Ve… Libreros», el resto queda tapado"},
-            {"ancho": 12.3, "pisos": 2, "color": "#eeeeec", "colorPB": "#f4f4f2", "pb": "vidriera", "arriba": "ventanas", "puerta": "medio", "toldo": {"color": "#dcdcd9"}, "nota": "café de la esquina con Macías, con un logo «B» y dibujos de comida en la marquesina; en OSM figura Riviera Café, que no se ve"}
+            {"ancho": 12.3, "pisos": 2, "color": "#eeeeec", "colorPB": "#f4f4f2", "pb": "vidriera", "arriba": "ventanas", "puerta": "medio", "toldo": {"color": "#dcdcd9"}, "cartel": {"texto": "BEGONIA", "fondo": "#f4f4f2", "letra": "#6b4a32", "fuente": "serif"}, "nota": "bar & deli de la esquina con Macías, letras marrones sobre la marquesina blanca con dibujos de comida; en OSM figura Riviera Café, que no se ve"}
           ]
         },
         {
@@ -129,6 +129,58 @@
             {"ancho": 1.8, "usa": "chalet-ladrillo", "colorPB": "#9a9a96", "pb": "puerta"},
             {"ancho": 5.2, "pisos": 2, "color": "#cdb994", "colorPB": "#ece9e3", "pb": "vidriera", "arriba": "ciego", "cartel": {"texto": "LANAS & HILOS", "fondo": "#efefed", "letra": "#8a8a8a"}},
             {"ancho": 6.1, "pisos": 2, "color": "#cdb994", "colorPB": "#2a2a2a", "pb": "vidriera", "arriba": "vidriado", "puerta": "fin", "cartel": {"texto": "el FARO", "fondo": "#262626", "letra": "#ffffff"}, "lugar": "el-faro", "nota": "resto bar en la esquina con Macías, con terraza y baranda arriba"}
+          ]
+        },
+        {
+          "id": "ea-macias-espora-s",
+          "desde": "Benigno Macías",
+          "hasta": "Avenida Espora",
+          "vereda": "sur",
+          "fecha": "2025-08",
+          "osmAusentes": [],
+          "lotes": [
+            {"ancho": 14.0, "pisos": 2, "color": "#ececea", "colorPB": "#e30613", "pb": "banco", "arriba": "ventanas", "puerta": "inicio", "cartel": {"texto": "Santander", "fondo": "#e30613", "letra": "#ffffff"}, "lugar": "santander", "osm": "Santander", "nota": "esquina con Macías; edificio blanco con una franja roja sobre la planta baja"},
+            {"ancho": 20.5, "pisos": 4, "fondo": 45, "color": "#f2f2f0", "colorPB": "#9a9893", "pb": "acceso", "arriba": "ciego", "cartel": {"texto": "CASA MUNICIPAL DE LA CULTURA", "fondo": "#8d9096", "letra": "#ffffff", "posicion": "alto"}, "lugar": "casa-de-la-cultura", "nota": "volumen blanco con una marquesina cóncava; panel de chapa perforada gris con el nombre; planta baja de piedra gris con escalinata"},
+            {"ancho": 25.5, "pisos": 2, "retiro": 9, "fondo": 20, "color": "#e6dccb", "pb": "puerta", "arriba": "ventanas", "nota": "escuela (cartel «CFP 56») retirada detrás de una reja verde sobre un murete de ladrillo, con estacionamiento adelante; ventanas verdes"},
+            {"ancho": 35.0, "pisos": 1, "retiro": 12, "fondo": 15, "color": "#e6dccb", "pb": "pared", "nota": "ala baja de la escuela, con ventanitas altas, detrás de la misma reja"},
+            {"ancho": 30.0, "pisos": 2, "retiro": 9, "fondo": 20, "color": "#e6dccb", "pb": "puerta", "arriba": "ventanas", "nota": "cuerpo de dos pisos de la escuela, ventanas verdes, detrás de la reja"},
+            {"ancho": 24.0, "pisos": 3, "retiro": 9, "fondo": 20, "color": "#9a5a45", "material": "ladrillo", "colorPB": "#e8e6e0", "pb": "acceso", "arriba": "ventanas", "nota": "edificio de ladrillo de la escuela con pórtico blanco de columnas y nombres grabados en la pared; portones violetas"},
+            {"ancho": 14.3, "pisos": 0, "nota": "plazoleta abierta de la esquina con Espora"}
+          ]
+        },
+        {
+          "id": "ea-macias-espora-n",
+          "desde": "Benigno Macías",
+          "hasta": "Avenida Espora",
+          "vereda": "norte",
+          "fecha": "2025-08",
+          "osmAusentes": [],
+          "lotes": [
+            {"ancho": 9.0, "pisos": 2, "color": "#b9b2a6", "colorPB": "#4f7a5a", "pb": "vidriera", "arriba": "ventanas", "puerta": "inicio", "toldo": {"color": "#1a1a1a", "rayas": true}, "cartel": {"texto": "MARTA FLORENCIA", "fondo": "#d8ccb0", "letra": "#3a3a3a", "fuente": "serif"}, "nota": "esquina con Macías; salón de belleza en ladrillo pintado gris arena, mosaico verde con flores en la planta baja"},
+            {"ancho": 5.5, "pisos": 2, "color": "#8a5040", "material": "ladrillo", "colorPB": "#1a1a1a", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "OXËN", "fondo": "#f4f4f2", "letra": "#6b6b6b"}},
+            {"ancho": 2.5, "pisos": 2, "color": "#8a5040", "material": "ladrillo", "colorPB": "#6b4a32", "pb": "puerta", "arriba": "ventanas", "toldo": {"color": "#b3262b"}, "nota": "puerta de madera con un toldito rojo"},
+            {"ancho": 5.5, "pisos": 2, "color": "#f0f0ee", "colorPB": "#f4f4f2", "pb": "vidriera", "arriba": "ciego", "cartel": {"texto": "CASA ENZO", "fondo": "#f4f4f2", "letra": "#5a4a4a"}, "nota": "cartel con un conejo y una franja de arco iris: maquillaje, juguetería, regalería, librería, bazar"},
+            {"ancho": 2.7, "pisos": 2, "color": "#2f9c8f", "colorPB": "#2f9c8f", "pb": "vidriera", "arriba": "ciego", "cartel": {"texto": "Típica", "fondo": "#3aa596", "letra": "#ffffff", "fuente": "serif", "cursiva": true}, "nota": "fachada entera pintada con un mural de flores verde agua, violeta y naranja"},
+            {"ancho": 3.3, "pisos": 2, "color": "#e9e6df", "colorPB": "#7a5a3a", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "JOYAS MONTECARLO", "fondo": "#e5d6b5", "letra": "#5a3d22", "fuente": "serif", "cursiva": true}, "nota": "edificio blanco con alero de tejas y toldos naranjas arriba (centro de estética Orange en el primer piso)"},
+            {"ancho": 2.4, "pisos": 2, "color": "#e9e6df", "colorPB": "#f4c6d6", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "MODA CHICK", "fondo": "#e89ab5", "letra": "#ffffff"}},
+            {"ancho": 1.2, "pisos": 2, "color": "#e9e6df", "colorPB": "#f2f2f0", "pb": "puerta", "arriba": "ventanas"},
+            {"ancho": 10.7, "usa": "chalet-ladrillo", "toldo": {"color": "#3b4a66"}, "nota": "chalet de ladrillo con techo de tejas a dos aguas y balcón; dos locales con carteles chicos ilegibles"},
+            {"ancho": 7.9, "pisos": 2, "color": "#2b3140", "colorPB": "#2b3140", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "MULTI BAZAR", "fondo": "#1c1c1c", "letra": "#f0a030", "fuente": "condensada"}, "nota": "letras de colores (rosa, celeste, naranja) en cartel negro; persianas blancas arriba"},
+            {"ancho": 4.9, "pisos": 1, "color": "#c8bfae", "colorPB": "#5a3a28", "pb": "vidriera", "cartel": {"texto": "LA NUEVA EXPRESER", "fondo": "#1f1f1f", "letra": "#c9a85a", "fuente": "serif"}, "nota": "remisería en una casa vieja de una planta"},
+            {"ancho": 5.2, "pisos": 1, "color": "#d6cdb8", "pb": "vidriera", "nota": "casa vieja de una planta; cartel chico ilegible"},
+            {"ancho": 4.0, "pisos": 1, "color": "#6f6f73", "pb": "vidriera", "cartel": {"texto": "ONEVISION", "fondo": "#6f6f73", "letra": "#ffffff", "fuente": "condensada"}, "nota": "óptica; remate almenado"},
+            {"ancho": 3.6, "pisos": 1, "color": "#4a4a4e", "pb": "vidriera", "cartel": {"texto": "Pollo Argentino", "fondo": "#7a2a2a", "letra": "#ffffff", "fuente": "serif", "cursiva": true}},
+            {"ancho": 8.5, "pisos": 1, "color": "#efefed", "colorPB": "#2a2a2a", "pb": "vidriera", "cartel": {"texto": "MIKEY PERFUMERÍAS", "fondo": "#f2f2f0", "letra": "#2a2a2a"}, "nota": "cartel blanco enorme; detrás, un edificio beige de cuatro pisos"},
+            {"ancho": 7.6, "pisos": 2, "color": "#cbbba2", "colorPB": "#e6e2da", "pb": "vidriera", "arriba": "balcones", "puerta": "inicio", "toldo": {"color": "#1f2a5a"}, "cartel": {"texto": "Ruiloba", "fondo": "#1f2a5a", "letra": "#c9a85a", "fuente": "serif"}, "nota": "sandwichería y panadería"},
+            {"ancho": 18.3, "pisos": 3, "color": "#dcd9d2", "colorPB": "#4d535a", "pb": "vidriera", "arriba": "ventanas", "nota": "edificio de principios del siglo XX con cornisas, ventanas de arco y marquesinas de hierro; nombre del frontón ilegible"},
+            {"ancho": 19.8, "pisos": 2, "color": "#8a5040", "material": "ladrillo", "colorPB": "#4a3a32", "pb": "acceso", "arriba": "ventanas", "cartel": {"texto": "GALERIA ALTE BROWN", "fondo": "#6b3e2e", "letra": "#e9dfc8", "fuente": "serif"}, "nota": "galería con locales (perfumería Amani, Calzados La Popular); arriba, un gimnasio de pilates con carteles rojos"},
+            {"ancho": 4.6, "pisos": 2, "color": "#8a5040", "material": "ladrillo", "colorPB": "#e07a2a", "pb": "vidriera", "arriba": "ventanas", "nota": "local de ropa con cartel naranja ilegible"},
+            {"ancho": 3.2, "pisos": 3, "color": "#8a5040", "material": "ladrillo", "colorPB": "#f4f4f2", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "FOONU", "fondo": "#ffffff", "letra": "#e5317a", "fuente": "redondeada"}, "nota": "accesorios para celulares; cartel lleno de dibujitos de colores"},
+            {"ancho": 3.1, "pisos": 3, "color": "#8a5040", "material": "ladrillo", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "LADY VICTORIA", "fondo": "#f2b8c6", "letra": "#4a2a2a", "fuente": "serif"}},
+            {"ancho": 3.5, "pisos": 3, "color": "#8a5040", "material": "ladrillo", "colorPB": "#1c1c1c", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "APPLE & SERVICE", "fondo": "#1c1c1c", "letra": "#ffffff"}, "nota": "servicio técnico de celulares"},
+            {"ancho": 5.9, "pisos": 3, "color": "#8a5040", "material": "ladrillo", "colorPB": "#f2f2f0", "pb": "vidriera", "arriba": "ventanas", "cartel": {"texto": "COTILLÓN ESPORA", "fondo": "#1f3fa6", "letra": "#ffffff", "fuente": "redondeada"}, "nota": "cotillón y repostería; cartel azul con papel picado"},
+            {"ancho": 3.7, "pisos": 3, "color": "#e8e8e6", "pb": "persiana", "arriba": "ventanas", "nota": "local cerrado"},
+            {"ancho": 17.3, "pisos": 3, "color": "#8a5040", "material": "ladrillo", "colorPB": "#8e9196", "pb": "banco", "arriba": "ventanas", "puerta": "fin", "cartel": {"texto": "MACRO", "fondo": "#7fb2e5", "letra": "#1f3d7a"}, "lugar": "macro", "osm": "Macro", "nota": "esquina con Espora; planta baja de granito gris con una franja celeste"}
           ]
         }
       ]
