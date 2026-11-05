@@ -21,6 +21,8 @@ import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { GROUND_Y, MODEL_BOX, WALL_OUT } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { MIRA, ngon, rect } from './plan-util.ts';
+import type { Rect } from './plan-util.ts';
 import type { Look } from './types.ts';
 
 // ---------- materiales ----------
@@ -111,13 +113,7 @@ const PANTALLA_Y = 2.0, PANTALLA = { w: 1.0, h: 0.58, d: 0.05 } as const;
 /** La torre (afuera), en la esquina del frente y el costado sur, sobre el techo. */
 const TORRE_TOP = 7.4;
 
-type Rect = [number, number, number, number];
-const rect = ([u0, v0, u1, v1]: Rect): Vec2[] => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
 const add = (a: Vec2, b: Vec2, k = 1): Vec2 => [a[0] + b[0] * k, a[1] + b[1] * k];
-const MIRA = { V: 0, U: Math.PI / 2, menosV: Math.PI, menosU: -Math.PI / 2 } as const;
-/** Polígono regular de `n` lados alrededor de `c`, de radio `r`. */
-const ngon = (c: Vec2, r: number, n: number): Vec2[] =>
-  Array.from({ length: n }, (_, k): Vec2 => [c[0] + r * Math.cos((2 * Math.PI * k) / n), c[1] + r * Math.sin((2 * Math.PI * k) / n)]);
 
 /** Un revestimiento del piso (sin sólido), apenas arriba de la planta baja (que va a GROUND_Y). */
 const piso = (k: Kit, r: Rect, look: Look): void => k.block(rect(r), GROUND_Y, GROUND_Y + 0.006, 'none', 'otro', { top: look });

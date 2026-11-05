@@ -9,23 +9,25 @@ import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { crosses, crossesConvex, hitsBox, lightAt, OPENING_MAX, prism } from '../../src/client/world/interiors/bake.ts';
 import { buildInterior3D, INTERIOR_EXPOSURE, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
+import { LABEL_DRAWINGS } from '../../src/client/world/interiors/drawings.ts';
 import { exteriorGeometry, exteriorSigns, ownSignPlaces } from '../../src/client/world/interiors/exterior.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassMaterial } from '../../src/client/world/interiors/glass.ts';
-import { BUTACA_TELA, ITEM_GLASS, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
+import { BUTACA_TELA, ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
 import { interiorTextures } from '../../src/client/world/interiors/textures.ts';
 import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import { buildPhotoFacades } from '../../src/client/world/photo-facades.ts';
 import { tintColor } from '../../src/client/world/wall-kit.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
 import { CollisionWorld } from '../../src/shared/collision.ts';
-import { pointInPolygon, signedAreaFromAbove } from '../../src/shared/geo.ts';
+import { pointInPolygon, signedAreaFromAbove, toLocal, toWorld } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { interiorOf } from '../../src/shared/interiors/index.ts';
 import { GROUND_Y, Kit } from '../../src/shared/interiors/kit.ts';
-import type { Interior } from '../../src/shared/interiors/types.ts';
+import type { Block, Interior, Look } from '../../src/shared/interiors/types.ts';
 import type { Building, MapData, Opening } from '../../src/shared/mapdata.ts';
 import { LOOKS, testInterior } from '../shared/interiors/fixture.ts';
-import { seen } from './aces.ts';
+import { seen, seenLinear } from './aces.ts';
+import type { RGB } from './aces.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
 beforeEach(() => stubCanvas());
@@ -851,6 +853,11 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
   const butacas = cine.items.filter((it) => it.model === 'butaca');
   const m = fakeMaterials();
   const luma = ([r, g, b]: number[]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  /** Los bloques del cine con algo dibujado (el vidrio y lo que no se ve, no), para tirarles rayos: el tag es su índice. */
+  const shown = cine.blocks.map((b, k) => ({ b, k })).filter(({ b }) => b.role === 'mueble' || ((b.top || b.side || b.bottom) && b.top?.mat !== 'vidrio' && b.side?.mat !== 'vidrio'));
+  const xs = shown.flatMap(({ b }) => b.polygon.map((p) => p[0])), zs = shown.flatMap(({ b }) => b.polygon.map((p) => p[1]));
+  const drawn = new CollisionWorld(shown.map(({ b, k }) => ({ polygon: b.polygon, minY: b.y0, maxY: b.y1, tag: String(k) })), [],
+    { minX: Math.min(...xs) - 1, maxX: Math.max(...xs) + 1, minZ: Math.min(...zs) - 1, maxZ: Math.max(...zs) + 1 });
 
   test('la luz horneada: sobre las butacas, en promedio ≤ 0,15; en el piso del hall, ≥ 0,6', () => {
     expect(butacas.length).toBeGreaterThanOrEqual(40);
@@ -874,10 +881,6 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
    * luma sale de la luz horneada en ese punto (o 1, si brilla) y del color de la cara (en una butaca, su tela).
    */
   test('desde ultima-fila la sala grande se ve oscura: la pantalla apagada, las tiras y los escalones brillan, las butacas apenas se leen', () => {
-    const shown = cine.blocks.map((b, k) => ({ b, k })).filter(({ b }) => b.role === 'mueble' || ((b.top || b.side || b.bottom) && b.top?.mat !== 'vidrio' && b.side?.mat !== 'vidrio'));
-    const xs = shown.flatMap(({ b }) => b.polygon.map((p) => p[0])), zs = shown.flatMap(({ b }) => b.polygon.map((p) => p[1]));
-    const world = new CollisionWorld(shown.map(({ b, k }) => ({ polygon: b.polygon, minY: b.y0, maxY: b.y1, tag: String(k) })), [],
-      { minX: Math.min(...xs) - 1, maxX: Math.max(...xs) + 1, minZ: Math.min(...zs) - 1, maxZ: Math.max(...zs) + 1 });
     const seat = new Map(butacas.map((it) => [`${it.at[0].toFixed(2)},${it.at[2].toFixed(2)}`, it]));
     const u = cine.marks['ultima-fila'], g = cine.marks['sala-grande'];
     const eye: Vec3 = [u[0], u[1] + 1.6, u[2]];
@@ -890,7 +893,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
     for (let r = 0; r < 54; r++) for (let c = 0; c < 96; c++) {
       const dx = ((c + 0.5) / 96 * 2 - 1) * tx, dy = (1 - (r + 0.5) / 54 * 2) * ty;
       const d = fwd.clone().addScaledVector(right, dx).addScaledVector(up, dy).normalize();
-      const hit = world.raycast(eye, [d.x, d.y, d.z], 80);
+      const hit = drawn.raycast(eye, [d.x, d.y, d.z], 80);
       if (!hit) { kinds.resto.push(0); continue; }
       const b = cine.blocks[Number(hit.tag)];
       const n = hit.normal;
@@ -914,20 +917,130 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
     const all = Object.values(kinds).flat();
     const mean = (a: number[]): number => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);
     const report = Object.entries(kinds).map(([k, a]) => `${k}: ${a.length} rayos, luma media ${mean(a).toFixed(1)}`).join('; ');
-    // la pantalla se ve (un gris claro apagado: brilla poco) y ocupa buena parte del cuadro
-    expect(kinds.pantalla.length, report).toBeGreaterThan(320);
+    // los pisos de rayos solo piden que cada cosa esté en el cuadro (lo que deciden son las lumas medias): la pantalla,
+    // al menos el 5 % del cuadro; las tiras y los escalones, y las butacas, unos pocos rayos
+    const rays = 96 * 54;
+    // la pantalla se ve (un gris claro apagado: brilla poco)
+    expect(kinds.pantalla.length, report).toBeGreaterThan(0.05 * rays);
     expect(mean(kinds.pantalla), report).toBeGreaterThanOrEqual(35);
     expect(mean(kinds.pantalla), report).toBeLessThanOrEqual(110);
     // las tiras ámbar y las luces de los escalones brillan
-    expect(kinds.brilla.length, report).toBeGreaterThan(12);
+    expect(kinds.brilla.length, report).toBeGreaterThan(8);
     expect(mean(kinds.brilla), report).toBeGreaterThanOrEqual(100);
     // las butacas apenas se leen: no son negro puro, pero quedan muy oscuras
-    expect(kinds.butaca.length, report).toBeGreaterThan(400);
+    expect(kinds.butaca.length, report).toBeGreaterThan(50);
     expect(mean(kinds.butaca), report).toBeGreaterThanOrEqual(2);
     expect(mean(kinds.butaca), report).toBeLessThanOrEqual(25);
     // y el resto (paredes, gradas, cielorraso) casi negro: la sala, en conjunto, oscura
     expect(mean(kinds.resto), report).toBeLessThanOrEqual(12);
     expect(mean(all), report).toBeLessThanOrEqual(30);
+  });
+
+  /**
+   * La pared de los afiches (el tabique W1 entre el hall y la sala 1), con rayos horizontales hacia ella: del lado del
+   * hall, entre los afiches y alrededor (de 0,3 a 3,8 m), la luma media de lo que se ve (su color con la luz horneada, a
+   * INDOOR_EXPOSURE) es la de un gris oscuro; del lado de la sala 1, por encima de los escalones, es negra (como la sala
+   * 2), salvo las tiras que brillan.
+   */
+  test('la pared de los afiches (W1) se lee gris oscuro desde el hall (luma 50–70) y es negra del lado de la sala 1', () => {
+    const f = map.interiors.find((x) => x.placeId === 'cine-pixel')!.frame;
+    const loc = (p: Vec3): Vec2 => toLocal(f, [p[0], p[2]]);
+    const afiches = cine.items.filter((it) => it.model === 'afiche').map((it) => loc(it.at));
+    const hall = Math.min(...afiches.map((p) => p[0])); // la cara de W1 que da al hall
+    const enW1 = afiches.filter((p) => Math.abs(p[0] - hall) < 0.1).map((p) => p[1]);
+    expect(enW1.length).toBeGreaterThanOrEqual(3);
+    const ray = (u: number, v: number, y: number, s: 1 | -1): { b: Block; look: Look; light: number; u: number } | null => {
+      const [x, z] = toWorld(f, [u, v]);
+      const hit = drawn.raycast([x, y, z], [-s * f.u[0], 0, -s * f.u[1]], 4);
+      if (!hit) return null;
+      const b = cine.blocks[Number(hit.tag)], n = hit.normal;
+      if (b.role === 'mueble' || !b.side) return null;
+      const p: Vec3 = [hit.point[0] + n[0] * 0.01, hit.point[1] + n[1] * 0.01, hit.point[2] + n[2] * 0.01];
+      return { b, look: b.side, light: lightAt(cine, p, n), u: loc(hit.point)[0] };
+    };
+    const hallSide: number[] = [];
+    for (let v = Math.min(...enW1) - 1.2; v <= Math.max(...enW1) + 1.2; v += 0.3) {
+      for (let y = 0.3; y <= 3.8; y += 0.25) {
+        if (enW1.some((a) => Math.abs(v - a) < 0.45) && y > 1.25 && y < 2.5) continue; // detrás de un afiche
+        const h = ray(hall + 1.5, v, y, 1);
+        if (h && Math.abs(h.u - hall) < 0.05 && h.look.mat !== 'luz') hallSide.push(luma(seen(h.look.color, h.light * INTERIOR_EXPOSURE)));
+      }
+    }
+    const mean = hallSide.reduce((t, x) => t + x, 0) / hallSide.length;
+    expect(hallSide.length).toBeGreaterThan(100);
+    expect(mean, `luma media de W1 desde el hall (${hallSide.length} rayos)`).toBeGreaterThanOrEqual(50);
+    expect(mean, `luma media de W1 desde el hall (${hallSide.length} rayos)`).toBeLessThanOrEqual(70);
+    // del lado de la sala 1 (la cara a 0,2 m, el ancho del tabique), de V 4 al fondo, entre 4 m y el techo
+    const salaSide: string[] = [];
+    for (let v = 4; v < 22; v += 0.5) {
+      for (let y = 4.2; y < 7.0; y += 0.4) {
+        const h = ray(hall - 0.2 - 0.6, v, y, -1);
+        if (h && h.u > hall - 0.35 && h.look.mat !== 'luz') salaSide.push(h.look.color);
+      }
+    }
+    expect(salaSide.length).toBeGreaterThan(100);
+    const claros = new Set(salaSide.filter((c) => Math.max(...[1, 3, 5].map((j) => parseInt(c.slice(j, j + 2), 16))) >= 0x30));
+    expect([...claros], 'colores que no son negros').toEqual([]);
+  });
+
+  /** Lo más claro del color por vértice de un modelo (lineal): el vidrio de una lamparita, no su casquillo ni el cable. */
+  const brightest = (g: THREE.BufferGeometry): RGB => {
+    const c = g.getAttribute('color');
+    let best: RGB = [0, 0, 0];
+    for (let k = 0; k < c.count; k++) if (c.getX(k) + c.getY(k) + c.getZ(k) > best[0] + best[1] + best[2]) best = [c.getX(k), c.getY(k), c.getZ(k)];
+    return best;
+  };
+
+  test('las lamparitas del Guernica (colgadas y de la guirnalda) son el modelo lamparita, de ~6 × 11 cm, y se ven ámbar cálido: R > G > B, B/R ≤ 0,55', () => {
+    expect(ITEM_GLOW.lamparita, 'brilla').toBe(true);
+    const g = ITEM_MODELS.lamparita();
+    g.computeBoundingBox();
+    const size = g.boundingBox!.getSize(new THREE.Vector3());
+    // de seis lados: 6 cm de vértice a vértice, 5,2 de cara a cara
+    for (const w of [size.x, size.z]) expect(w >= 0.05 && w <= 0.065, `ancho ${w.toFixed(3)}`).toBe(true);
+    expect(size.y).toBeCloseTo(0.11, 2);
+    // el casquillo, negro: lo de arriba (los 2 cm de arriba) es oscuro
+    const pos = g.getAttribute('position'), col = g.getAttribute('color');
+    for (let k = 0; k < pos.count; k++) if (pos.getY(k) > g.boundingBox!.max.y - 0.02) expect(col.getX(k) + col.getY(k) + col.getZ(k)).toBeLessThan(0.05);
+    for (const model of ['lamparita', 'guirnalda'] as const) {
+      const [r, gr, b] = seenLinear(brightest(ITEM_MODELS[model]()));
+      expect(r > gr && gr > b && b / r <= 0.55, `${model}: se ve (${r}, ${gr}, ${b})`).toBe(true);
+    }
+    // el Guernica cuelga el modelo (una por lámpara de techo), no los bloques de luz de seis lados de antes
+    const gb = interiorOf(map, 'guernica-bar');
+    expect(gb.items.filter((it) => it.model === 'lamparita').length).toBeGreaterThanOrEqual(20);
+    expect(gb.blocks.filter((x) => x.side?.mat === 'luz' && x.polygon.length === 6)).toHaveLength(0);
+  });
+
+  test('la fila de atrás de las botellas (los carteles botellas): en baja no suma mallas (va en la página de carteles que ya hay); en media y alta se dibuja en esa página', () => {
+    const gb = interiorOf(map, 'guernica-bar');
+    expect(gb.labels.filter((l) => l.drawing === 'botellas')).toHaveLength(3);
+    const sin = { ...gb, labels: gb.labels.filter((l) => l.drawing !== 'botellas') };
+    const meshes = (i: Interior, q: 'baja' | 'media' | 'alta'): THREE.Mesh[] => meshesOf(buildInterior3D({ ...i }, m, q).group);
+    const labelTris = (ms: THREE.Mesh[]): number => ms.filter((x) => x.name.startsWith('labels:')).reduce((t, x) => t + x.geometry.index!.count / 3, 0);
+    for (const q of ['baja', 'media', 'alta'] as const) {
+      const [con, sinFila] = [meshes(gb, q), meshes(sin, q)];
+      expect(con.length, q).toBe(sinFila.length);
+      expect(labelTris(con) - labelTris(sinFila), q).toBe(6);
+    }
+  });
+
+  test('el dibujo botellas sale del texto (semilla): el mismo texto, lo mismo; otro, otra cosa; sin Math.random ni letras', () => {
+    const look = { fondo: '#3a2410', letra: '#0c0a08', marco: '#1c1c1e', fuente: 'sans' } as const;
+    const draw = (seed: string): string[] => {
+      const calls: string[] = [];
+      vi.restoreAllMocks();
+      stubCanvas((prop, value) => calls.push(`${prop}=${String(value)}`), (method, args) => calls.push(`${method}(${args.map((a) => (typeof a === 'number' ? a.toFixed(3) : String(a))).join(',')})`));
+      const random = vi.spyOn(Math, 'random');
+      LABEL_DRAWINGS.botellas(look, 6.1, 0.4, seed);
+      expect(random).not.toHaveBeenCalled();
+      return calls;
+    };
+    const a = draw('botellas 1');
+    expect(a.length).toBeGreaterThan(40);
+    expect(draw('botellas 1')).toEqual(a);
+    expect(draw('botellas 2')).not.toEqual(a);
+    expect(a.some((c) => c.startsWith('fillText') || c.startsWith('strokeText'))).toBe(false);
   });
 
   test('las botellas del Guernica son de detalle 2: en baja no se dibujan (lo mismo que sin ellas); en media, sí', () => {

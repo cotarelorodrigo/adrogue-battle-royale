@@ -409,4 +409,61 @@ function afiche(look: SignLook, width: number, height: number, seed: string): HT
   return canvas;
 }
 
-export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro, menu, zigzag, afiche };
+/** El vidrio de las botellas de atrás (lo poco que se ve de su color, en el borde que toma la luz): ya oscuro, porque
+ *  el cartel brilla. */
+const BACK_GLASS = ['#4a2e0a', '#183012', '#34342a', '#30140c', '#18223a', '#38381a'] as const;
+/** Las formas (m): el cuerpo (ancho, alto), el hombro, el cuello (ancho, alto): una de vino, una cuadrada de whisky,
+ *  una alta de licor y una petaca redonda. */
+const BOTTLE_SHAPES = [
+  { bw: 0.075, bh: 0.19, sh: 0.035, nw: 0.024, nh: 0.08 },
+  { bw: 0.09, bh: 0.16, sh: 0.015, nw: 0.03, nh: 0.05 },
+  { bw: 0.062, bh: 0.23, sh: 0.04, nw: 0.02, nh: 0.06 },
+  { bw: 0.11, bh: 0.11, sh: 0.045, nw: 0.028, nh: 0.06 },
+] as const;
+
+/**
+ * La fila de atrás de un estante de bar (el Guernica), de frente: la luz cálida del fondo (`look.fondo`, que se apaga
+ * hacia arriba en `look.marco`: la sombra del estante de arriba) y, apoyadas abajo, botellas de cuatro formas en
+ * silueta (`look.letra`), juntas, con el borde que toma la luz del color de su vidrio. Sin etiquetas ni marcas. Se
+ * dibuja en metros (el cartel no tiene la proporción del canvas: el lado corto es de al menos 64 px).
+ */
+function botellas(look: SignLook, width: number, height: number, seed: string): HTMLCanvasElement {
+  const { canvas, c, w, h } = sheet(width, height);
+  const rng = rngOf(seed);
+  const [sx, sy] = [w / width, h / height];
+  const g = c.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, look.marco);
+  g.addColorStop(0.45, look.fondo);
+  g.addColorStop(1, look.fondo);
+  c.fillStyle = g;
+  c.fillRect(0, 0, w, h);
+  for (let x = 0.02 + rng.next() * 0.03; x < width - 0.06; ) {
+    const f = any(rng, BOTTLE_SHAPES), k = 0.9 + rng.next() * 0.2;
+    const [bw, bh, sh, nw, nh] = [f.bw * k, f.bh * k, f.sh * k, f.nw * k, f.nh * k];
+    if (x + bw > width - 0.01) break;
+    const cx = (x + bw / 2) * sx, base = h;
+    const [hb, hn, ht] = [base - bh * sy, base - (bh + sh) * sy, base - (bh + sh + nh) * sy];
+    // la silueta: el cuerpo, el hombro redondeado y el cuello
+    c.fillStyle = look.letra;
+    c.beginPath();
+    c.moveTo(cx - (bw / 2) * sx, base);
+    c.lineTo(cx - (bw / 2) * sx, hb);
+    c.quadraticCurveTo(cx - (bw / 2) * sx, hn, cx - (nw / 2) * sx, hn);
+    c.lineTo(cx - (nw / 2) * sx, ht);
+    c.lineTo(cx + (nw / 2) * sx, ht);
+    c.lineTo(cx + (nw / 2) * sx, hn);
+    c.quadraticCurveTo(cx + (bw / 2) * sx, hn, cx + (bw / 2) * sx, hb);
+    c.lineTo(cx + (bw / 2) * sx, base);
+    c.closePath();
+    c.fill();
+    // el borde que toma la luz, del color del vidrio, de un lado del cuerpo y del cuello
+    const side = rng.next() < 0.5 ? -1 : 1, edge = Math.max(1, bw * 0.16 * sx);
+    c.fillStyle = any(rng, BACK_GLASS);
+    c.fillRect(side < 0 ? cx - (bw / 2) * sx + 1 : cx + (bw / 2) * sx - 1 - edge, hb + (base - hb) * 0.06, edge, (base - hb) * 0.86);
+    c.fillRect(side < 0 ? cx - (nw / 2) * sx : cx + (nw / 2) * sx - Math.max(1, edge / 2), ht + 1, Math.max(1, edge / 2), hn - ht - 1);
+    x += bw + 0.008 + rng.next() * 0.03;
+  }
+  return canvas;
+}
+
+export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro, menu, zigzag, afiche, botellas };

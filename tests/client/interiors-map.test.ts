@@ -16,6 +16,7 @@ import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.t
 import { pointInPolygon, polygonArea, signedAreaFromAbove } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import { buildInteriors } from '../../src/shared/interiors/index.ts';
+import type { Interior } from '../../src/shared/interiors/types.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
@@ -311,5 +312,78 @@ describe('el techo de la Casa de la Cultura (D13, tarea 7)', () => {
       expect(group.userData.level, `${q}: si un material más la obliga a compactar más, falla`).toBeLessThanOrEqual(today[q]);
       if (q === 'baja') expect(group.children.map((m) => m.name)).toContain('in_porcelanato');
     }
+  });
+});
+
+// Revisión de la tarea 9 (el balcón): el interior se parte en lo que cae en la planta (el edificio) y lo que cae en un
+// patio, cada uno con su caja; parado en un patio, al aire libre, cada parte se dibuja si la cámara la ve.
+describe('el edificio y el patio por separado', () => {
+  const WORLD = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
+    'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
+  const fake = Object.fromEntries(WORLD.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
+  const byId = (id: string): Interior => interiors.find((i) => i.placeId === id)!;
+  const meshesOf = (g: THREE.Object3D): THREE.Mesh[] => {
+    const out: THREE.Mesh[] = [];
+    g.traverse((o) => { if (o instanceof THREE.Mesh) out.push(o); });
+    return out;
+  };
+
+  test('el Guernica y el McDonald\'s, en dos grupos (edificio y patio, cada uno con su caja); la Casa, en uno; sin perder triángulos', () => {
+    // la Casa (sin patio): una parte, el grupo mismo
+    const casa = buildInterior3D({ ...byId('casa-de-la-cultura') }, materials, 'media');
+    expect(casa.parts.map((p) => p.name)).toEqual(['edificio']);
+    expect(casa.parts[0].group).toBe(casa.group);
+    for (const id of ['guernica-bar', 'mcdonalds'] as const) {
+      const i = byId(id);
+      for (const q of ['baja', 'media', 'alta'] as const) {
+        const built = buildInterior3D({ ...i }, materials, q);
+        expect(built.parts.map((p) => p.name), `${id}/${q}`).toEqual(['edificio', 'patio']);
+        // todas las mallas, en una parte; la suma de triángulos, la del interior sin partir (sin patios: todo al edificio)
+        const all = meshesOf(built.group);
+        expect(built.parts.flatMap((p) => meshesOf(p.group)).length, `${id}/${q}`).toBe(all.length);
+        const whole = meshesOf(buildInterior3D({ ...i, patios: [] }, materials, q).group);
+        expect(all.reduce((t, m) => t + trianglesOf(m), 0), `${id}/${q}: los triángulos`).toBe(whole.reduce((t, m) => t + trianglesOf(m), 0));
+        // la caja del edificio llega a la planta y la del patio no entra en ella (salvo el borde)
+        const [edificio, patio] = built.parts;
+        const fp = new THREE.Box3();
+        for (const [x, z] of i.footprint) fp.expandByPoint(new THREE.Vector3(x, 0, z));
+        expect(edificio.box.min.x).toBeLessThanOrEqual(fp.min.x + 0.5);
+        expect(edificio.box.max.x).toBeGreaterThanOrEqual(fp.max.x - 0.5);
+        const c = patio.box.getCenter(new THREE.Vector3());
+        expect(pointInPolygon([c.x, c.z], i.footprint), `${id}: el medio de la caja del patio`).toBe(false);
+        for (const p of built.parts) expect(p.hull.length, `${id}/${p.name}: su planta`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  }, 30_000);
+
+  test('desde el balcón del Guernica: mirando al patio, el grupo del edificio no se dibuja (el del patio, sí); mirando a la puerta, sí; desde adentro, todo', () => {
+    const gu = byId('guernica-bar');
+    const views = createInteriorViews([gu], fake, 'media', new Map());
+    const groupOf = (part: string): THREE.Object3D => views.group.getObjectByName(`interior:guernica-bar:${part}`)!;
+    const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 1000);
+    cam.rotation.order = 'YXZ';
+    const q = gu.marks.balcon, door = gu.doors.find((d) => d.level === 1)!;
+    // la normal de la puerta mira afuera; la cámara mira hacia −z girada `yaw`: hacia d, yaw = atan2(−dx, −dz)
+    const look = (d: Vec2, pitch: number): void => {
+      cam.rotation.set(pitch, Math.atan2(-d[0], -d[1]), 0);
+      views.update(cam);
+    };
+    cam.position.set(q[0], q[1] + 1.6, q[2]);
+    for (const pitch of [0, -0.4, -0.9]) {
+      look(door.normal, pitch);
+      expect(views.drawn()).toEqual(['guernica-bar']);
+      expect(groupOf('edificio').visible, `mirando al patio (pitch ${pitch})`).toBe(false);
+      expect(groupOf('patio').visible).toBe(true);
+    }
+    look([-door.normal[0], -door.normal[1]], 0);
+    expect(groupOf('edificio').visible, 'mirando a la puerta').toBe(true);
+    // adentro (bajo techo), mire a donde mire, las dos
+    const p = gu.marks['planta-alta'];
+    cam.position.set(p[0], p[1] + 1.6, p[2]);
+    look([-door.normal[0], -door.normal[1]], 0);
+    expect(groupOf('edificio').visible && groupOf('patio').visible).toBe(true);
+    look(door.normal, 0);
+    expect(groupOf('edificio').visible && groupOf('patio').visible).toBe(true);
+    views.dispose();
   });
 });

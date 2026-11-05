@@ -24,6 +24,8 @@ import type { InteriorPlan } from './index.ts';
 import { RAIL_H, TREAD, WALL_IN } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { LEVEL_H } from './openings.ts';
+import { MIRA, rect } from './plan-util.ts';
+import type { Rect } from './plan-util.ts';
 import type { Collide, Look, Role } from './types.ts';
 
 // ---------- materiales ----------
@@ -112,12 +114,9 @@ const GUARDA_GALERIA = 0.6, GUARDA_HALL = { w: 0.3, aire: 0.6 };
 /** Puertas de adentro: ancho y alto. */
 const PUERTA = { w: 1.6, h: 2.3 };
 
-type Rect = [number, number, number, number];
-const rect = ([u0, v0, u1, v1]: Rect): Vec2[] => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
 const add = (p: Vec2, d: Vec2, k = 1): Vec2 => [p[0] + d[0] * k, p[1] + d[1] * k];
 const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
 const len = (a: Vec2): number => Math.hypot(a[0], a[1]);
-const MIRA = { V: 0, U: Math.PI / 2, menosV: Math.PI, menosU: -Math.PI / 2 } as const;
 /** Polígono regular de `n` lados alrededor de `c`, de radio `r` (al vértice), girado `rot`. */
 const ngon = (c: Vec2, r: number, n: number, rot = 0): Vec2[] =>
   Array.from({ length: n }, (_, k): Vec2 => [c[0] + r * Math.cos(rot + (2 * Math.PI * k) / n), c[1] + r * Math.sin(rot + (2 * Math.PI * k) / n)]);

@@ -17,6 +17,8 @@ import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { MODEL_BOX, WALL_IN, WALL_OUT } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { MIRA, rect } from './plan-util.ts';
+import type { Rect } from './plan-util.ts';
 import type { ItemModel, Look } from './types.ts';
 
 export type Marca = 'nacion' | 'galicia' | 'bbva';
@@ -131,14 +133,11 @@ const FILA_W = 2.2, FILA_D = 0.5, FILA_PASO = 1.2, FILA_MOSTRADOR = 2.4;
  *  ningún número (H4 de la revisión), y mira a la fila. */
 const TURNERO_AIRE = 0.06;
 
-type Rect = [number, number, number, number];
-const rect = ([u0, v0, u1, v1]: Rect): Vec2[] => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
 /** El rectángulo entre dos u y dos v, en cualquier orden. */
 const span = (ua: number, ub: number, va: number, vb: number): Rect => [Math.min(ua, ub), Math.min(va, vb), Math.max(ua, ub), Math.max(va, vb)];
 /** Hacia dónde mira un ángulo local. */
 const dir = (a: number): Vec2 => [Math.sin(a), Math.cos(a)];
 const add = (p: Vec2, d: Vec2, k = 1): Vec2 => [p[0] + d[0] * k, p[1] + d[1] * k];
-const MIRA = { V: 0, U: Math.PI / 2, menosV: Math.PI, menosU: -Math.PI / 2 } as const;
 /** El ángulo local que mira hacia ±U. */
 const miraU = (s: number): number => (s > 0 ? MIRA.U : MIRA.menosU);
 

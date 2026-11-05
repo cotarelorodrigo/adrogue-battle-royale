@@ -247,8 +247,11 @@ describe('al aire libre', () => {
     const colors = (mats: WorldMaterials): THREE.BufferAttribute => {
       const { group } = buildInterior3D({ ...mcd }, mats, 'baja');
       expect(group.userData.level, 'el McDonald\'s en baja se compacta al nivel 3').toBe(3);
-      const flat = group.children.find((o): o is THREE.Mesh => o instanceof THREE.Mesh && !(o instanceof THREE.InstancedMesh) && o.name === 'in_mueble')!;
-      return flat.geometry.getAttribute('color') as THREE.BufferAttribute;
+      // la malla sin textura de cada parte (el edificio y el patio), una detrás de la otra
+      const flats: THREE.Mesh[] = [];
+      group.traverse((o) => { if (o instanceof THREE.Mesh && !(o instanceof THREE.InstancedMesh) && o.name === 'in_mueble') flats.push(o); });
+      expect(flats).toHaveLength(2);
+      return new THREE.BufferAttribute(new Float32Array(flats.flatMap((f) => [...(f.geometry.getAttribute('color').array as Float32Array)])), 3);
     };
     const [plain, withTone] = [colors(fake), colors(toned)];
     expect(withTone.count).toBe(plain.count);

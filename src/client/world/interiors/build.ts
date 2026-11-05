@@ -1,10 +1,11 @@
 // Las mallas de un interior (§2.6): una por Mat usada, con la luz horneada en el color por vértice; los muebles, una
 // InstancedMesh por modelo repetido y el resto juntos; los carteles, una malla por página de su atlas. Lo `out` no va
-// acá: lo dibuja el chunk de su edificio (exterior.ts). Nada proyecta ni recibe sombra: adentro no pega el sol.
+// acá: lo dibuja el chunk de su edificio (exterior.ts). Nada proyecta ni recibe sombra: adentro no pega el sol. Con un
+// patio, lo de la planta (el edificio) y lo del patio van en dos grupos, cada uno con sus mallas y su caja.
 import polygonClipping from 'polygon-clipping';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { clipSegment, pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
+import { clipSegment, distPointSegment, pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
 import type { Block, Interior, Item, ItemModel, Label, Look, Mat, Pane } from '../../../shared/interiors/types.ts';
 import { SIGN_H } from '../../../shared/mapdata.ts';
@@ -176,9 +177,9 @@ function paneFaces(i: Interior, panes: Pane[], builder: (mat: Mat) => Builder, l
   }
 }
 
-/** Las caras de los bloques que no son `out` y los paños, por Mat: los bloques partidos en la grilla de `step` m; todo
- *  horneado con `light`. */
-function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) => number): Map<Mat, THREE.BufferGeometry> {
+/** Las caras de los bloques `blocks` (ninguno `out`) y los paños `panes` de una parte del interior, por Mat: los bloques
+ *  partidos en la grilla de `step` m; todo horneado con `light`. Lo que tapa una cara sale de todo el interior. */
+function blockGeometries(i: Interior, blocks: Block[], panes: Pane[], step: number, light: (p: Vec3, n: Vec3) => number): Map<Mat, THREE.BufferGeometry> {
   const inGlass = (p: Vec3, n: Vec3): number => glassTone(i, p, n);
   const builders = new Map<Mat, Builder>();
   const builder = (mat: Mat): Builder => {
@@ -186,7 +187,6 @@ function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) =>
     if (!b) builders.set(mat, (b = newBuilder(true)));
     return b;
   };
-  const blocks = i.blocks.filter((b) => !b.out);
   const boxOf = (b: Block): [number, number, number, number] => {
     const xs = b.polygon.map((p) => p[0]), zs = b.polygon.map((p) => p[1]);
     return [Math.min(...xs) - 1e-3, Math.max(...xs) + 1e-3, Math.min(...zs) - 1e-3, Math.max(...zs) + 1e-3];
@@ -233,7 +233,7 @@ function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) =>
       }
     }
   }
-  paneFaces(i, i.panes, builder, light);
+  paneFaces(i, panes, builder, light);
   return new Map([...builders].map(([mat, b]) => [mat, toGeometry(b)]));
 }
 
@@ -394,78 +394,158 @@ function toned(g: THREE.BufferGeometry, tone: Vec3 | undefined): void {
   c.needsUpdate = true;
 }
 
-/** El interior para dibujar con los materiales `m` en la calidad `q`, y su caja (planta, patios y lo de adentro). Se
- *  compacta hasta entrar en min(MAX_MESHES, interiors.calls) mallas; si ni así entra, tira un error con el lugar. */
-export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): { group: THREE.Group; box: THREE.Box3 } {
+/** Una parte del interior armado: el edificio (lo que cae en la planta) o el patio (lo que cae en un patio). `box`: su
+ *  caja; `hull` (convexa, en planta) y `y0`–`y1`: el prisma que rodea lo que dibuja (con un patio, el de sus mallas; sin
+ *  patio, el de la planta y la caja), que view.ts mira contra el frustum parado en el patio. */
+export interface InteriorPart { name: Region; group: THREE.Group; box: THREE.Box3; hull: Vec2[]; y0: number; y1: number }
+type Region = 'edificio' | 'patio';
+
+/** A qué parte va lo que está en `p` (en planta): adentro de la planta, al edificio; en un patio, al patio; lo de los
+ *  bordes (un poste o un cantero que sale de un patio), a la que tenga más cerca. */
+function regionOf(i: Interior): (p: Vec2) => Region {
+  const dist = (p: Vec2, ring: Vec2[]): number => Math.min(...ring.map((q, k) => distPointSegment(p, q, ring[(k + 1) % ring.length])));
+  return (p) => {
+    if (pointInPolygon(p, i.footprint)) return 'edificio';
+    if (i.patios.some((r) => pointInPolygon(p, r))) return 'patio';
+    return Math.min(...i.patios.map((r) => dist(p, r))) < dist(p, i.footprint) ? 'patio' : 'edificio';
+  };
+}
+const middle = (ps: readonly (readonly number[])[], a: number, b: number): Vec2 =>
+  [ps.reduce((t, p) => t + p[a], 0) / ps.length, ps.reduce((t, p) => t + p[b], 0) / ps.length];
+
+/** La envolvente convexa de `ps` (cadena monótona), antihoraria vista con x a la derecha y z arriba. */
+function convexHull(ps: Vec2[]): Vec2[] {
+  const pts = [...ps].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+  const cross = (o: Vec2, a: Vec2, b: Vec2): number => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (list: Vec2[]): Vec2[] => {
+    const out: Vec2[] = [];
+    for (const p of list) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+    out.pop();
+    return out;
+  };
+  return [...half(pts), ...half([...pts].reverse())];
+}
+
+/** El prisma de lo que dibujan `meshes` (en el mundo): la envolvente de sus vértices en planta y sus altos (las copias
+ *  de una InstancedMesh, por las esquinas de la caja de su modelo). */
+function prismOf(meshes: THREE.Mesh[]): { hull: Vec2[]; y0: number; y1: number; box: THREE.Box3 } {
+  const ps: Vec2[] = [];
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3(), m = new THREE.Matrix4();
+  const add = (p: THREE.Vector3): void => {
+    ps.push([p.x, p.z]);
+    box.expandByPoint(p);
+  };
+  for (const mesh of meshes) {
+    const pos = mesh.geometry.getAttribute('position');
+    if (mesh instanceof THREE.InstancedMesh) {
+      mesh.geometry.computeBoundingBox();
+      const { min, max } = mesh.geometry.boundingBox!;
+      for (let k = 0; k < mesh.count; k++) {
+        mesh.getMatrixAt(k, m);
+        for (const x of [min.x, max.x]) for (const y of [min.y, max.y]) for (const z of [min.z, max.z]) add(v.set(x, y, z).applyMatrix4(m));
+      }
+    } else {
+      for (let k = 0; k < pos.count; k++) add(v.fromBufferAttribute(pos, k));
+    }
+  }
+  return { hull: convexHull(ps), y0: box.min.y, y1: box.max.y, box };
+}
+
+/** El interior para dibujar con los materiales `m` en la calidad `q`, y su caja (planta, patios y lo de adentro). Con
+ *  un patio, en dos partes (dos grupos dentro del suyo, cada uno con su caja: view.ts los decide por separado parado en
+ *  el patio); sin patio, una (el grupo mismo). Se compacta hasta que las mallas de todas las partes entren en
+ *  min(MAX_MESHES, interiors.calls); si ni así entran, tira un error con el lugar. */
+export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): { group: THREE.Group; box: THREE.Box3; parts: InteriorPart[] } {
   const { detail, calls } = QUALITY[q].interiors;
   const cap = Math.min(MAX_MESHES, calls);
   const light = baker(i);
-  const blocks = blockGeometries(i, BAKE_STEP[detail], light);
-  const items = i.items.filter((it) => (it.detail ?? 1) <= detail);
-  const labels = i.labels.filter((l) => !l.out);
-  const canvases = labelCanvases(labels);
-  const plan = itemPlan(items);
-  const fullPages = labels.length === 0 ? 0 : packSigns(canvases.map((c) => ({ w: c.width, h: c.height })), PAGE, LABEL_GUTTER).pages.length;
-  const opaque = [...blocks.keys()].filter((mat) => mat !== 'vidrio');
-  // el vidrio de los bloques y el de los muebles, en una malla sin uv (no tiene textura)
-  const glassParts = [...(blocks.has('vidrio') ? [blocks.get('vidrio')!] : []), ...itemGlass(i, items)];
-  for (const g of glassParts) if (g.getAttribute('uv')) g.deleteAttribute('uv');
-  const hasGlass = glassParts.length > 0 ? 1 : 0;
-  const count = (level: Level): number => {
-    const blockMeshes = level < 3 ? opaque.length + hasGlass : (opaque.length + items.length > 0 ? 1 : 0) + hasGlass;
-    const itemMeshes = level === 3 ? 0 : level === 0 ? plan.repeated.length + (plan.rest.length > 0 ? 1 : 0) : items.length > 0 ? 1 : 0;
-    const labelPages = level < 2 ? fullPages : labels.length > 0 ? 1 : 0;
+  const region = regionOf(i);
+  const xz = (p: Vec3): Vec2 => [p[0], p[2]];
+  // lo de cada parte (la del patio, si tiene algo)
+  const split = (['edificio', 'patio'] as const).map((name) => ({
+    name,
+    blocks: i.blocks.filter((b) => !b.out && region(middle(b.polygon, 0, 1)) === name),
+    panes: i.panes.filter((pn) => region(middle(pn.corners, 0, 2)) === name),
+    items: i.items.filter((it) => (it.detail ?? 1) <= detail && region(xz(it.at)) === name),
+    labels: i.labels.filter((l) => !l.out && region(xz(l.at)) === name),
+  })).filter((r) => r.name === 'edificio' || r.blocks.length + r.panes.length + r.items.length + r.labels.length > 0);
+  const prep = split.map((r) => {
+    const blocks = blockGeometries(i, r.blocks, r.panes, BAKE_STEP[detail], light);
+    const canvases = labelCanvases(r.labels);
+    const fullPages = r.labels.length === 0 ? 0 : packSigns(canvases.map((c) => ({ w: c.width, h: c.height })), PAGE, LABEL_GUTTER).pages.length;
+    const opaque = [...blocks.keys()].filter((mat) => mat !== 'vidrio');
+    // el vidrio de los bloques y el de los muebles, en una malla sin uv (no tiene textura)
+    const glassParts = [...(blocks.has('vidrio') ? [blocks.get('vidrio')!] : []), ...itemGlass(i, r.items)];
+    for (const g of glassParts) if (g.getAttribute('uv')) g.deleteAttribute('uv');
+    return { ...r, geometries: blocks, canvases, plan: itemPlan(r.items), fullPages, opaque, glassParts };
+  });
+  type Prep = (typeof prep)[number];
+  const countOf = (p: Prep, level: Level): number => {
+    const hasGlass = p.glassParts.length > 0 ? 1 : 0;
+    const blockMeshes = level < 3 ? p.opaque.length + hasGlass : (p.opaque.length + p.items.length > 0 ? 1 : 0) + hasGlass;
+    const itemMeshes = level === 3 ? 0 : level === 0 ? p.plan.repeated.length + (p.plan.rest.length > 0 ? 1 : 0) : p.items.length > 0 ? 1 : 0;
+    const labelPages = level < 2 ? p.fullPages : p.labels.length > 0 ? 1 : 0;
     return blockMeshes + itemMeshes + labelPages;
   };
+  const count = (level: Level): number => prep.reduce((t, p) => t + countOf(p, level), 0);
   const levels: Level[] = q === 'baja' ? [0, 1, 2, 3] : [0, 1, 2];
   const level = levels.find((l) => count(l) <= cap);
   if (level === undefined) {
-    for (const g of [...blocks.values(), ...glassParts]) g.dispose();
+    for (const p of prep) for (const g of [...p.geometries.values(), ...p.glassParts]) g.dispose();
     throw new Error(`${i.placeId}: no entra en ${cap} mallas en ${q}, ni compactado (${count(levels[levels.length - 1])})`);
   }
 
-  const meshes: THREE.Mesh[] = [];
-  const add = (g: THREE.BufferGeometry | null, key: InteriorKey): void => {
-    if (!g) return;
-    const mesh = new THREE.Mesh(g, m[key]);
-    mesh.name = key;
-    meshes.push(mesh);
-  };
-  add(merged(i, glassParts), 'in_vidrio');
-  if (level < 3) {
-    for (const mat of opaque) add(blocks.get(mat)!, `in_${mat}`);
-  } else {
-    // sin textura: el color por vértice ya lleva el Look y la luz; las fotos que traen su tono, también ese tono
-    const flat = opaque.map((mat) => {
-      const g = blocks.get(mat)!;
-      g.deleteAttribute('uv');
-      if (TONED.has(mat)) toned(g, (m[`in_${mat}`] as THREE.MeshBasicMaterial).map?.userData.tone as Vec3 | undefined);
-      return g;
-    });
-    add(merged(i, [...flat, ...looseGeometries(items, light)]), 'in_mueble');
-  }
-  if (level === 0) {
-    for (const mesh of instancedMeshes(plan.repeated, m.in_mueble, light)) {
-      mesh.name = 'in_mueble';
+  /** Las mallas de una parte, compactada a `level`. */
+  const meshesOf = (p: Prep): THREE.Mesh[] => {
+    const meshes: THREE.Mesh[] = [];
+    const add = (g: THREE.BufferGeometry | null, key: InteriorKey): void => {
+      if (!g) return;
+      const mesh = new THREE.Mesh(g, m[key]);
+      mesh.name = key;
       meshes.push(mesh);
+    };
+    add(merged(i, p.glassParts), 'in_vidrio');
+    if (level < 3) {
+      for (const mat of p.opaque) add(p.geometries.get(mat)!, `in_${mat}`);
+    } else {
+      // sin textura: el color por vértice ya lleva el Look y la luz; las fotos que traen su tono, también ese tono
+      const flat = p.opaque.map((mat) => {
+        const g = p.geometries.get(mat)!;
+        g.deleteAttribute('uv');
+        if (TONED.has(mat)) toned(g, (m[`in_${mat}`] as THREE.MeshBasicMaterial).map?.userData.tone as Vec3 | undefined);
+        return g;
+      });
+      add(merged(i, [...flat, ...looseGeometries(p.items, light)]), 'in_mueble');
     }
-    add(merged(i, looseGeometries(plan.rest, light)), 'in_mueble');
-  } else if (level < 3) {
-    add(merged(i, looseGeometries(items, light)), 'in_mueble');
-  }
-  if (labels.length > 0) {
-    const { canvases: cs, packed } = packLabels(canvases, level >= 2);
-    meshes.push(...labelMeshes(labels, cs, packed, light));
-  }
-  for (const mesh of meshes) {
-    mesh.castShadow = mesh.receiveShadow = false;
-    mesh.geometry.computeBoundingSphere();
-    mesh.matrixAutoUpdate = false;
-  }
+    if (level === 0) {
+      for (const mesh of instancedMeshes(p.plan.repeated, m.in_mueble, light)) {
+        mesh.name = 'in_mueble';
+        meshes.push(mesh);
+      }
+      add(merged(i, looseGeometries(p.plan.rest, light)), 'in_mueble');
+    } else if (level < 3) {
+      add(merged(i, looseGeometries(p.items, light)), 'in_mueble');
+    }
+    if (p.labels.length > 0) {
+      const { canvases: cs, packed } = packLabels(p.canvases, level >= 2);
+      meshes.push(...labelMeshes(p.labels, cs, packed, light));
+    }
+    for (const mesh of meshes) {
+      mesh.castShadow = mesh.receiveShadow = false;
+      mesh.geometry.computeBoundingSphere();
+      mesh.matrixAutoUpdate = false;
+    }
+    return meshes;
+  };
+
   const group = new THREE.Group();
   group.name = `interior:${i.placeId}`;
   group.userData.level = level; // hasta dónde se compactó (para los tests: H8 de la tarea 7)
-  group.add(...meshes);
   const box = new THREE.Box3();
   const top = Math.max(0, ...i.blocks.filter((b) => !b.out).map((b) => b.y1));
   for (const ring of [i.footprint, ...i.patios, ...i.blocks.filter((b) => !b.out).map((b) => b.polygon)]) {
@@ -473,5 +553,18 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   }
   for (const pn of i.panes) for (const p of pn.corners) box.expandByPoint(new THREE.Vector3(...p));
   for (const it of i.items) box.expandByPoint(new THREE.Vector3(...it.at));
-  return { group, box };
+  if (prep.length === 1) {
+    group.add(...meshesOf(prep[0]));
+    return { group, box, parts: [{ name: 'edificio', group, box, hull: convexHull(i.footprint), y0: box.min.y, y1: box.max.y }] };
+  }
+  const parts = prep.map((p): InteriorPart => {
+    const g = new THREE.Group();
+    g.name = `${group.name}:${p.name}`;
+    const meshes = meshesOf(p);
+    g.add(...meshes);
+    return { name: p.name, group: g, ...prismOf(meshes) };
+  });
+  group.add(...parts.map((p) => p.group));
+  for (const p of parts) box.union(p.box);
+  return { group, box, parts };
 }

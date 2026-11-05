@@ -193,8 +193,21 @@ describe('el hall y el candy bar', () => {
     const colors = new Set(i.blocks.filter((x) => { const [u0, v0, u1, v1] = boxOf(mostrador[0]); const [a0, c0, a1, c1] = boxOf(x); return a0 >= u0 - 0.1 && a1 <= u1 + 0.1 && c0 >= v0 - 0.1 && c1 <= v1 + 0.1; })
       .flatMap((x) => [x.side?.color, x.top?.color]).filter((c): c is string => !!c).map((c) => (parseInt(c.slice(1, 3), 16) > 0xd0 ? 'blanco' : parseInt(c.slice(1, 3), 16) < 0x30 ? 'negro' : 'otro')));
     expect(colors.has('blanco') && colors.has('negro')).toBe(true);
-    // la heladera de bebidas: una puerta de vidrio que brilla
-    expect(i.blocks.some((x) => x.collide === 'solid' && x.y1 >= 1.8 && x.y1 <= 2.2 && x.role === 'mueble'), 'heladera').toBe(true);
+    // la heladera de bebidas: un mueble sólido de 1,8–2,2 m con una puerta que brilla (luz) pegada a una de sus caras,
+    // de al menos la mitad de su ancho y 1,2 m de alto
+    const heladeras = i.blocks.filter((x) => x.collide === 'solid' && x.y1 >= 1.8 && x.y1 <= 2.2 && x.role === 'mueble');
+    const conPuerta = heladeras.filter((h) => {
+      const [u0, v0, u1, v1] = boxOf(h);
+      return i.blocks.some((x) => {
+        if (x.side?.mat !== 'luz' || x.y1 - x.y0 < 1.2 || x.y0 < h.y0 - 1e-6 || x.y1 > h.y1 + 1e-6) return false;
+        const [a0, c0, a1, c1] = boxOf(x);
+        // una hoja fina (≤ 6 cm) contra la cara de −V o +V (o la de −U o +U), dentro de su ancho
+        const enV = c1 - c0 <= 0.06 && (Math.abs(c1 - v0) < 0.05 || Math.abs(c0 - v1) < 0.05) && a0 >= u0 - 0.01 && a1 <= u1 + 0.01 && a1 - a0 >= (u1 - u0) / 2;
+        const enU = a1 - a0 <= 0.06 && (Math.abs(a1 - u0) < 0.05 || Math.abs(a0 - u1) < 0.05) && c0 >= v0 - 0.01 && c1 <= v1 + 0.01 && c1 - c0 >= (v1 - v0) / 2;
+        return enV || enU;
+      });
+    });
+    expect(conPuerta.length, 'la heladera con su puerta iluminada').toBeGreaterThanOrEqual(1);
   });
 });
 

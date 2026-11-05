@@ -4,9 +4,10 @@
 // madera y lamparitas.
 // - Planta baja: se entra por la punta del frente; a la izquierda sube la escalera de chapa negra con escalones de madera
 //   y pasamanos de caño; a la derecha, la barra larga de madera oscura con sus banquetas, la torre de canillas cromada en
-//   arco y, detrás, los estantes iluminados con las botellas (que brillan desde el estante: van de detalle 2). La barra de
-//   la vidriera con banquetas y mesas bajas; vigas negras a la vista, guirnaldas y lamparitas colgadas. Al fondo, los
-//   baños.
+//   arco y, detrás, los estantes iluminados con las botellas (que brillan desde el estante: van de detalle 2) y, contra
+//   el fondo, la fila de atrás dibujada (un cartel `botellas`: en baja es la única). La barra de la vidriera con
+//   banquetas, mesas bajas y, entre ellas y la barra, dos mesas altas; vigas negras a la vista, guirnaldas y lamparitas
+//   colgadas (el modelo `lamparita`). Al fondo, los baños.
 // - Planta alta (D14: techada): mesas, el rincón del escenario (una tarima con el fondo negro y sus parlantes) y, por la
 //   puerta del frente, el balcón (afuera de la planta, sobre el patio) con la baranda de caño negra.
 // - El patio de adelante (D12): baldosones, mesas bajo dos jacarandás propios (árboles del mapa, con su tronco) y guirnaldas
@@ -20,6 +21,8 @@ import type { InteriorPlan } from './index.ts';
 import { GROUND_Y } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { LEVEL_H } from './openings.ts';
+import { MIRA, ngon, rect } from './plan-util.ts';
+import type { Rect } from './plan-util.ts';
 import type { Look } from './types.ts';
 
 // ---------- materiales ----------
@@ -39,8 +42,6 @@ const ESCALON: Look = { mat: 'madera', color: '#6a4628' };
 const ESTANTE: Look = { mat: 'madera', color: '#5a3a22' };
 const ESTANTE_LUZ: Look = { mat: 'luz', color: '#8a6a3a' };
 const ACERO: Look = { mat: 'metal', color: '#9aa0a6' };
-/** Las lamparitas colgadas (brillan). */
-const LAMPARITA: Look = { mat: 'luz', color: '#f2c14e' };
 /** Las puertas de los baños y la tarima. */
 const PUERTA: Look = { mat: 'madera', color: '#4a3020' };
 const TARIMA: Look = { mat: 'madera', color: '#3a2618' };
@@ -55,6 +56,9 @@ const ONDA: Look = { mat: 'liso', color: '#3a3e42' };
 /** "GUERNICA" y las estrellas: la letra condensada ámbar del relevamiento, sobre el gris de la chapa. Brillan. */
 const CARTEL: SignLook = { fondo: '#26292b', letra: '#f2c14e', marco: '#26292b', fuente: 'condensada' };
 const ROTULO: SignLook = { fondo: '#2e2e30', letra: '#d8d0bc', marco: '#2e2e30', fuente: 'condensada' };
+/** La fila de atrás de cada estante (un cartel `botellas`, que brilla): la luz cálida del fondo, que se apaga hacia el
+ *  estante de arriba, y las siluetas de las botellas. */
+const FILA_BOTELLAS: SignLook = { fondo: '#5a3a14', letra: '#0c0a08', marco: '#2a1a0c', fuente: 'sans' };
 
 /** Los colores de los muebles (Item.color): la madera de las sillas y las banquetas, y el vidrio de las botellas (ya
  *  oscuro: brillan con el color que tendrían a la luz del estante). */
@@ -72,8 +76,14 @@ const ESCALERA = { u: 0.8, v: 5.0, ancho: 1.2 } as const;
 /** La barra: lo sólido, de 1,1 m, de V 3,0 a 10,4; detrás, el pasillo del barman, la mesada baja y los estantes. */
 const BARRA = { u0: 9.3, u1: 9.9, v0: 3.0, v1: 10.4, h: 1.1 } as const;
 const ESTANTES = { u0: 11.45, v0: 3.6, v1: 9.8, ys: [1.35, 1.8, 2.25] } as const;
+/** La fila de atrás de cada estante: el cartel, contra el fondo negro (U 11,78), de 1 cm sobre el estante a 4 cm del de
+ *  arriba. */
+const FILA = { u: 11.77, h: 0.4 } as const;
 /** La barra de la vidriera, contra el frente (de la puerta para allá): la tabla de 1,05 m y su fondo, desde el frente. */
 const VIDRIERA = { u0: 3.2, u1: 8.9, fondo: 0.55, h: 1.05 } as const;
+/** Las mesas altas de planta baja, entre las mesas bajas (U 4,4 y 6,8, de 1,2 de ancho) y las banquetas de la barra
+ *  (U 8,85). */
+const MESAS_ALTAS: Vec2[] = [[7.8, 4.2], [7.8, 7.6]];
 /** El balcón (afuera, sobre el patio), frente a la puerta del piso 1 (U 5,4–6,6). */
 const BALCON = { u0: 2.6, u1: 9.4, sale: 1.8 } as const;
 /** La chapa del cartel, arriba de las ventanas del piso 1 (llegan a 5,8): no llega a la escalera de mano de U 11,4. */
@@ -88,16 +98,12 @@ const POSTES_V = -4.2, POSTES_U = [0.4, 3.4, 6.4, 9.4, 12.4], GUIRNALDA_Y = 2.9;
 /** El largo de un tramo de guirnalda (GARLAND.len de models.ts): de poste a poste. */
 const GARLAND_L = 3.0;
 
-type Rect = [number, number, number, number];
-const rect = ([u0, v0, u1, v1]: Rect): Vec2[] => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
-const ngon = (c: Vec2, r: number, n: number): Vec2[] =>
-  Array.from({ length: n }, (_, k): Vec2 => [c[0] + r * Math.cos((2 * Math.PI * k) / n), c[1] + r * Math.sin((2 * Math.PI * k) / n)]);
-const MIRA = { V: 0, U: Math.PI / 2, menosV: Math.PI, menosU: -Math.PI / 2 } as const;
-
-/** Una lamparita colgada en `p` con el foco a `y` (su cable sube hasta el techo `techo`) y su lámpara. */
+/** Lo que cuelga una lamparita (el modelo de models.ts, que brilla): del gancho a la punta. */
+const LAMPARITA_H = 0.11;
+/** Una lamparita colgada en `p` con la punta a `y` (su cable sube hasta el techo `techo`) y su lámpara. */
 function lamparita(k: Kit, p: Vec2, y: number, techo: number): void {
-  k.block(ngon(p, 0.045, 6), y, y + 0.09, 'none', 'otro', { side: LAMPARITA, bottom: LAMPARITA, top: LAMPARITA });
-  k.block(rect([p[0] - 0.006, p[1] - 0.006, p[0] + 0.006, p[1] + 0.006]), y + 0.09, techo, 'none', 'otro', { side: NEGRO });
+  k.furniture('lamparita', p, y + LAMPARITA_H, 0);
+  k.block(rect([p[0] - 0.006, p[1] - 0.006, p[0] + 0.006, p[1] + 0.006]), y + LAMPARITA_H, techo, 'none', 'otro', { side: NEGRO });
   k.lamp(p, y, FOCO.r, FOCO.p);
 }
 /** Las vigas negras a la vista bajo el techo `techo`, a lo ancho (U), cada 2 m, menos sobre el hueco de la escalera. */
@@ -110,11 +116,12 @@ function mesa(k: Kit, c: Vec2, y: number): void {
   k.furniture('silla', [c[0], c[1] - 0.65], y, MIRA.V, MADERA);
   k.furniture('silla', [c[0], c[1] + 0.65], y, MIRA.menosV, MADERA);
 }
-/** Una mesa alta con dos banquetas. */
-function mesaAlta(k: Kit, c: Vec2, y: number): void {
+/** Una mesa alta con dos banquetas enfrentadas a lo largo de U (o de V, con `eje` 'V'). */
+function mesaAlta(k: Kit, c: Vec2, y: number, eje: 'U' | 'V' = 'U'): void {
   k.furniture('mesa-alta', c, y, 0);
-  k.furniture('banqueta', [c[0] - 0.55, c[1]], y, MIRA.U, MADERA);
-  k.furniture('banqueta', [c[0] + 0.55, c[1]], y, MIRA.menosU, MADERA);
+  const [du, dv] = eje === 'U' ? [0.55, 0] : [0, 0.55];
+  k.furniture('banqueta', [c[0] - du, c[1] - dv], y, eje === 'U' ? MIRA.U : MIRA.V, MADERA);
+  k.furniture('banqueta', [c[0] + du, c[1] + dv], y, eje === 'U' ? MIRA.menosU : MIRA.menosV, MADERA);
 }
 
 /** La planta baja: la barra con los estantes y las botellas, las mesas, los baños, las vigas y las luces. */
@@ -134,6 +141,9 @@ function plantaBaja(k: Kit): void {
     for (let n = 0, v = ESTANTES.v0 + 0.15; v < ESTANTES.v1 - 0.1; v += 0.34, n++) {
       k.furniture('botella', [11.62, v], y, 0, BOTELLAS[(n * 5 + j * 2) % BOTELLAS.length], 2);
     }
+    // detrás, la fila de atrás dibujada (en baja, la única: las botellas son de detalle 2)
+    k.label(`botellas ${j + 1}`, [FILA.u, (ESTANTES.v0 + ESTANTES.v1) / 2], y + 0.01 + FILA.h / 2, [-1, 0], ESTANTES.v1 - ESTANTES.v0 - 0.1, FILA.h, FILA_BOTELLAS,
+      { glow: true, drawing: 'botellas' });
   });
   // la barra de la vidriera (una tabla con su frente, a 1,05 m, con cuatro banquetas mirando a la calle) y las mesas
   // bajas en el medio
@@ -142,6 +152,9 @@ function plantaBaja(k: Kit): void {
   k.block(rect([a0, 0.2, a1, fondo]), ah - 0.05, ah, 'none', 'otro', { top: BARRA_TAPA, side: BARRA_TAPA, bottom: BARRA_TAPA });
   for (let u = a0 + 0.6; u < a1 - 0.3; u += 1.4) k.furniture('banqueta', [u, fondo + 0.4], 0, MIRA.menosV, MADERA);
   for (const c of [[4.4, 6.0], [6.8, 6.0], [4.4, 9.2], [6.8, 9.2], [5.6, 12.6]] as Vec2[]) mesa(k, c, 0);
+  // entre las mesas bajas y las banquetas de la barra, dos mesas altas (en los huecos entre las filas de mesas), con
+  // las banquetas a lo largo de la barra para no cerrar el paso
+  for (const c of MESAS_ALTAS) mesaAlta(k, c, 0, 'V');
   // los baños, al fondo: dos puertas cerradas con su cartel
   for (const [u, n] of [[2.6, 'DAMAS'], [4.4, 'CABALLEROS']] as const) {
     k.block(rect([u - 0.45, 15.77, u + 0.45, 15.8]), 0, 2.1, 'none', 'otro', { side: PUERTA, top: PUERTA });

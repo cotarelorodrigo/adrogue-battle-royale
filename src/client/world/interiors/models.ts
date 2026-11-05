@@ -119,27 +119,61 @@ const BUTACA_ARMAZON = '#6a6a70', CASTER = '#2a2a2e';
 const POP_RED = '#b3202a', POP_TRIM = '#e8c547', POPCORN = '#f3dc8a', POP_KETTLE = '#9aa0a6';
 const POSTER_FRAME = '#1c1c1e';
 const CHROME = '#c9ccd0', TAP_HANDLE = '#1c1c1c', DRIP = '#8d9196';
-// la guirnalda brilla (ITEM_GLOW): el cable ya oscuro, las lamparitas de su color
-const GARLAND_CABLE = '#121212', GARLAND_BULB = '#e8b45a';
+// la guirnalda y la lamparita brillan (ITEM_GLOW): el cable y el casquillo ya oscuros; el vidrio, un ámbar que la ACES
+// no lleva al crema (a INDOOR_EXPOSURE se ve ~(241, 189, 87): tests/client/interiors.test.ts, "las lamparitas")
+const GARLAND_CABLE = '#121212', BULB_GLASS = '#b06a20', BULB_SOCKET = '#121212';
 const IRON = '#1e1e20', BAR_TOP = '#5a3a22';
 /** La guirnalda: un tramo de GARLAND.len m hacia +x desde el origen (el gancho de la punta), que cuelga `sag` m en el
  *  medio, con `bulbs` lamparitas. */
-export const GARLAND = { len: 3.0, sag: 0.35, bulbs: 8 } as const;
-/** Una caja de w × h × d con el medio en `c`, girada `rz` sobre z: un tramo del cable de la guirnalda. */
+export const GARLAND = { len: 3.0, sag: 0.35, bulbs: 6 } as const;
+/** Una caja de w × h × d con el medio en `c`, girada `rz` sobre z, sin las tapas de las puntas (±x: las tapa el tramo
+ *  de al lado o el gancho): un tramo del cable de la guirnalda, de 8 triángulos. */
 const tilted = (w: number, h: number, d: number, c: Vec3, rz: number, color: string): THREE.BufferGeometry => {
   const g = new THREE.BoxGeometry(w, h, d).rotateZ(rz);
+  g.setIndex([...g.getIndex()!.array].slice(12)); // las caras de BoxGeometry van +x, −x, +y, −y, +z, −z: seis índices cada una
   return paint(g, c, color);
 };
 /** El cable de la guirnalda, en `n` tramos rectos sobre la parábola (de 0 en las puntas a −sag en el medio). */
 const garlandY = (x: number): number => -GARLAND.sag * (1 - ((2 * x) / GARLAND.len - 1) ** 2);
-/** Una lamparita de la guirnalda: un octaedro estirado (8 triángulos; con índice, como las cajas: si no, no se juntan)
- *  con el medio en `c`. */
-const bulb = (c: Vec3): THREE.BufferGeometry => {
-  const g = new THREE.OctahedronGeometry(0.034, 0).scale(0.85, 1.25, 0.85);
-  g.setIndex([...Array(g.getAttribute('position').count).keys()]);
-  return paint(g, c, GARLAND_BULB);
-};
-/** 112 triángulos por tramo (hay catorce en el Guernica): el cable en cuatro tramos rectos y las lamparitas colgando. */
+/**
+ * Un sólido de revolución sin tapas, con el eje vertical por `at`: el perfil `[r, y]` (de arriba a abajo) girado en
+ * `segments` lados, y cada tramo (de un punto del perfil al siguiente) del color `colors[k]`. Donde el radio es 0 cierra
+ * en punta, sin triángulos degenerados; con índice, como las cajas (si no, no se juntan).
+ */
+function lathe(profile: readonly (readonly [number, number])[], colors: readonly string[], segments: number, at: Vec3): THREE.BufferGeometry {
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], idx: number[] = [];
+  for (let k = 0; k + 1 < profile.length; k++) {
+    const [[ra, ya], [rb, yb]] = [profile[k], profile[k + 1]];
+    const c = new THREE.Color(colors[k]), first = pos.length / 3;
+    for (let s = 0; s < segments; s++) {
+      const a = (2 * Math.PI * s) / segments, [cx, sz] = [Math.cos(a), Math.sin(a)];
+      for (const [r, y] of [[ra, ya], [rb, yb]]) {
+        pos.push(at[0] + r * cx, at[1] + y, at[2] + r * sz);
+        nor.push(cx, 0, sz);
+        col.push(c.r, c.g, c.b);
+      }
+    }
+    // a0, a1: arriba (en s y s + 1); b0, b1: abajo. Antihorarios vistos desde afuera
+    for (let s = 0; s < segments; s++) {
+      const [a0, b0, a1, b1] = [first + 2 * s, first + 2 * s + 1, first + 2 * ((s + 1) % segments), first + 2 * ((s + 1) % segments) + 1];
+      if (ra > 0) idx.push(a0, a1, b0);
+      if (rb > 0) idx.push(a1, b1, b0);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  return g;
+}
+/** La lamparita (colgada y de la guirnalda), desde el gancho (y = 0) hacia abajo: el casquillo negro y la ampolla
+ *  alargada, de 6 × 11 cm, que se angosta en punta. */
+const BULB: readonly (readonly [number, number])[] = [[0.013, 0], [0.013, -0.025], [0.03, -0.07], [0, -0.11]];
+/** 30 triángulos con seis lados (la colgada); 20 con cuatro (las de la guirnalda). */
+const bulb = (at: Vec3, segments: number): THREE.BufferGeometry => lathe(BULB, [BULB_SOCKET, BULB_GLASS, BULB_GLASS], segments, at);
+/** 152 triángulos por tramo (hay catorce en el Guernica): el cable en cuatro tramos rectos (32) y las seis lamparitas
+ *  colgando (120). */
 const garland = (): THREE.BufferGeometry[] => {
   const n = 4, parts: THREE.BufferGeometry[] = [];
   for (let k = 0; k < n; k++) {
@@ -150,7 +184,7 @@ const garland = (): THREE.BufferGeometry[] => {
   }
   for (let k = 0; k < GARLAND.bulbs; k++) {
     const x = ((k + 0.5) * GARLAND.len) / GARLAND.bulbs, y = garlandY(x);
-    parts.push(bulb([x, y - 0.05, 0]));
+    parts.push(bulb([x, y - 0.012, 0], 4));
   }
   return parts;
 };
@@ -300,6 +334,8 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
     box(0.7, 0.02, 0.16, [0, 0, 0.12], DRIP)),
   // un tramo de guirnalda de lamparitas (brilla; origen: el gancho de una punta): GARLAND.len m hacia +x, colgando
   guirnalda: () => model(...garland()),
+  // una lamparita colgada de su cable (brilla; origen: el gancho, arriba del casquillo): cuelga 0,11 m
+  lamparita: () => bulb([0, 0, 0], 6),
   // la mesa alta de bar (MODEL_BOX: 0,6 × 0,6 × 1,05): la tapa de madera, el pie de hierro, el apoyapiés y la base
   'mesa-alta': () => model(cyl(0.3, 0.04, [0, 1.01, 0], BAR_TOP, 12), cyl(0.035, 1.0, [0, 0.01, 0], IRON, 6),
     cyl(0.2, 0.02, [0, 0.3, 0], IRON, 8), cyl(0.24, 0.02, [0, 0, 0], IRON, 10)),
@@ -307,7 +343,7 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
 
 /** Los que brillan: van con su color pleno, sin la luz horneada. */
 export const ITEM_GLOW: Partial<Record<ItemModel, true>> = { lampara: true, cajero: true, turnero: true, pantalla: true, 'balde-helado': true,
-  guirnalda: true, botella: true };
+  guirnalda: true, botella: true, lamparita: true };
 
 /** Las partes de vidrio de un modelo, en su marco: van en la malla de in_vidrio del interior (con su material
  *  transparente), no en la de los muebles. El color lo pone el interior (es el lado de la cara, glass.ts). */

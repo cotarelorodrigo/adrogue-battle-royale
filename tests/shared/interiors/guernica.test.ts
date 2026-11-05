@@ -106,15 +106,65 @@ describe('planta baja', () => {
     expect(i.items.filter((it) => it.model === 'canillas').length).toBeGreaterThanOrEqual(1);
     // los estantes brillan: hay luz debajo de cada uno
     expect(i.blocks.filter((x) => x.bottom?.mat === 'luz' || x.side?.mat === 'luz').length).toBeGreaterThanOrEqual(3);
-    // y la barra frena: caminando hacia ella no se pasa
-    const [bu0, bv0, bu1, bv1] = boxOf(barra[0]);
-    expect(bv1 - bv0 > 5 || bu1 - bu0 > 5).toBe(true);
+    // y la barra frena: caminando 3 s desde la marca barra hacia ella (+U, el pasillo del barman), no se pasa
+    const [bu0, bv0, , bv1] = boxOf(barra[0]);
+    const q = mark('barra'), [qu, qv] = local(xz(q));
+    expect(qu < bu0 && qv > bv0 && qv < bv1, 'la marca, del lado de los clientes').toBe(true);
+    const far = walkTo(world, q, [q[0] + frame.u[0] * 4, q[2] + frame.u[1] * 4], 3);
+    const [fu] = local(xz(far.pos));
+    expect(fu, `termina en ${fmt(far.pos)} (u = ${fu.toFixed(2)})`).toBeLessThan(bu0);
+    expect(fu, 'llegó a la barra').toBeGreaterThan(bu0 - 0.6);
+  });
+
+  test('detrás de las botellas de cada estante, la fila de atrás: un cartel botellas que brilla, entre las botellas y el fondo negro, a lo largo del estante', () => {
+    const fila = i.labels.filter((l) => l.drawing === 'botellas');
+    const botellas = i.items.filter((it) => it.model === 'botella');
+    const ys = [...new Set(botellas.map((it) => it.at[1]))].sort((a, c) => a - c);
+    expect(ys).toHaveLength(3);
+    expect(fila).toHaveLength(3);
+    const fondo = i.blocks.filter((x) => x.side && parseInt(x.side.color.slice(1, 3), 16) < 0x30 && x.y0 <= ys[0] && x.y1 >= ys[2] + 0.4 && boxOf(x)[2] - boxOf(x)[0] < 0.05);
+    expect(fondo.length, 'el fondo negro de los estantes').toBeGreaterThanOrEqual(1);
+    const panel = boxOf(fondo[0])[0];
+    for (const [j, y] of ys.entries()) {
+      const l = fila.find((x) => x.at[1] - x.height / 2 >= y - 1e-6 && x.at[1] - x.height / 2 < y + 0.05);
+      expect(l, `el cartel del estante ${j + 1} (y = ${y})`).toBeDefined();
+      expect(l!.glow && !l!.out).toBe(true);
+      expect(l!.at[1] + l!.height / 2, 'no llega al estante de arriba').toBeLessThanOrEqual((ys[j + 1] ?? y + 0.45) - 0.03 + 1e-6);
+      const [u, v] = local(xz(l!.at));
+      const del = botellas.filter((it) => it.at[1] === y).map((it) => local(xz(it.at)));
+      expect(u > Math.max(...del.map((p) => p[0])) + 0.04 && u < panel, `entre las botellas y el fondo: u = ${u.toFixed(3)}`).toBe(true);
+      // mira a la barra (−U) y cubre todas las botellas de su estante
+      const n = local([frame.origin[0] + l!.normal[0], frame.origin[1] + l!.normal[1]]);
+      expect(n[0]).toBeCloseTo(-1, 6);
+      for (const p of del) expect(Math.abs(p[1] - v), 'a lo ancho del cartel').toBeLessThanOrEqual(l!.width / 2);
+    }
   });
 
   test('mesas altas (MODEL_BOX) y bajas, banquetas en la barra', () => {
     expect(i.items.filter((it) => it.model === 'mesa-alta').length).toBeGreaterThanOrEqual(3);
     expect(i.items.filter((it) => it.model === 'mesa' && it.at[1] === 0).length).toBeGreaterThanOrEqual(2);
     expect(i.items.filter((it) => it.model === 'banqueta').length).toBeGreaterThanOrEqual(8);
+  });
+
+  test('en planta baja (y = 0 y adentro de la planta: el patio también está a 0), mesas altas entre la barra y las mesas bajas, con sus banquetas; la barra de la vidriera sigue', () => {
+    const abajo = (p: Vec3): boolean => p[1] === 0 && pointInPolygon(xz(p), b.footprint);
+    const altas = i.items.filter((it) => it.model === 'mesa-alta' && abajo(it.at));
+    const bajas = i.items.filter((it) => it.model === 'mesa' && abajo(it.at));
+    expect(altas.length, 'mesas altas en planta baja').toBeGreaterThanOrEqual(1);
+    expect(altas.length).toBeLessThanOrEqual(2);
+    const barra = i.blocks.find((x) => x.role === 'mueble' && x.collide === 'solid' && x.y0 === 0 && x.y1 >= 1.0 && x.y1 <= 1.2 && boxOf(x)[3] - boxOf(x)[1] > 5)!;
+    const [bu0, bv0, , bv1] = boxOf(barra);
+    const masAllaDeLasBajas = Math.max(...bajas.map((it) => local(xz(it.at))[0]));
+    const banquetas = i.items.filter((it) => it.model === 'banqueta' && abajo(it.at));
+    for (const it of altas) {
+      const [u, v] = local(xz(it.at));
+      expect(u > masAllaDeLasBajas && u < bu0, `entre las mesas bajas y la barra: u = ${u.toFixed(2)}`).toBe(true);
+      expect(v > bv0 && v < bv1, `a lo largo de la barra: v = ${v.toFixed(2)}`).toBe(true);
+      expect(banquetas.filter((s) => Math.hypot(s.at[0] - it.at[0], s.at[2] - it.at[2]) < 0.8).length, 'sus banquetas').toBeGreaterThanOrEqual(2);
+    }
+    // la barra de la vidriera: el mueble sólido de ~1 m contra el frente, con sus banquetas mirando a la calle
+    const vidriera = i.blocks.filter((x) => x.role === 'mueble' && x.collide === 'solid' && x.y0 === 0 && x.y1 >= 0.95 && x.y1 <= 1.05 && boxOf(x)[1] < 0.5 && boxOf(x)[2] - boxOf(x)[0] > 4);
+    expect(vidriera).toHaveLength(1);
   });
 });
 

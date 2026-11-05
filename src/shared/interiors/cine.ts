@@ -20,6 +20,8 @@ import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { GROUND_Y, MODEL_BOX, RISER_MAX, TREAD } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { MIRA, ngon, rect } from './plan-util.ts';
+import type { Rect } from './plan-util.ts';
 import type { Look } from './types.ts';
 
 // ---------- materiales ----------
@@ -38,11 +40,13 @@ const AMBAR_ESCALON: Look = { mat: 'luz', color: '#6e4a16' };
 const PROYECTOR: Look = { mat: 'luz', color: '#3a3a3c' };
 /** Los caños de los pasamanos. */
 const CAÑO: Look = { mat: 'metal', color: '#2a2a2c' };
-/** El hall: el porcelanato beige y sus bandas gris oscuro, las paredes blancas, la gris oscura y el cielorraso blanco. */
+/** El hall: el porcelanato beige y sus bandas gris oscuro, las paredes blancas, la gris oscura y el cielorraso blanco.
+ *  La gris oscura es la de los afiches (W1): con la luz que le llega (~0,6) se lee gris oscuro, luma ~60 (calibrada con
+ *  la ACES a INDOOR_EXPOSURE: tests/client/interiors.test.ts, "la pared de los afiches"); más oscura se ve negra. */
 const PORCELANATO: Look = { mat: 'porcelanato', color: '#d8ccb4' };
 const BANDA: Look = { mat: 'porcelanato', color: '#4a4a4e' };
 const BLANCO: Look = { mat: 'liso', color: '#ecebe8' };
-const GRIS_OSCURO: Look = { mat: 'liso', color: '#47474c' };
+const GRIS_OSCURO: Look = { mat: 'liso', color: '#8e8e94' };
 const CIELO: Look = { mat: 'liso', color: '#f2f2f0' };
 /** El cajón del cielorraso: el LED azul (brilla) y los spots. */
 const LED_AZUL: Look = { mat: 'luz', color: '#1e64dc' };
@@ -99,12 +103,6 @@ const ATRAS = { u0: 22.6, u1: 32.0, v0: 15.3, v1: FONDO_HALL, h: 0.92 } as const
 const MENU_Y = 2.9, MENU_W = 1.0, MENU_H = 0.58, MENU_D = 0.05;
 /** La marquesina, sobre los vidrios (que llegan a 3,0). */
 const MARQ = { u0: 17.0, u1: 33.3, sale: 2.4, y0: 3.05, y1: 3.95 } as const;
-
-type Rect = [number, number, number, number];
-const rect = ([u0, v0, u1, v1]: Rect): Vec2[] => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
-const ngon = (c: Vec2, r: number, n: number): Vec2[] =>
-  Array.from({ length: n }, (_, k): Vec2 => [c[0] + r * Math.cos((2 * Math.PI * k) / n), c[1] + r * Math.sin((2 * Math.PI * k) / n)]);
-const MIRA = { V: 0, U: Math.PI / 2, menosV: Math.PI, menosU: -Math.PI / 2 } as const;
 
 const piso = (k: Kit, r: Rect, look: Look): void => k.block(rect(r), GROUND_Y, GROUND_Y + 0.006, 'none', 'otro', { top: look });
 /** Un revestimiento de pared (sin sólido) de 1 cm. */
@@ -262,11 +260,14 @@ export const cinePlan: InteriorPlan = (k) => {
   k.wall([W2, V0], [W2, FONDO_SALA2], { t: 0.2, look: BLANCO, gaps: puerta });
   k.block(rect([W1 + 0.1, FONDO_HALL, W2 - 0.1, V1]), 0, TECHO, 'solid', 'otro', { side: BLANCO }, { hide: [1, 2, 3] });
   k.block(rect([W2 - 0.1, FONDO_SALA2, U1, V1]), 0, TECHO, 'solid', 'otro', { side: NEGRO }, { hide: [1, 2, 3] });
-  // la sala 2, por adentro, negra: el revestimiento del tabique blanco, alrededor de la puerta
-  const s2 = W2 + 0.1;
-  revestir(k, [s2, V0, s2 + 0.01, PUERTA.v - PUERTA.ancho / 2], 0, TECHO, NEGRO);
-  revestir(k, [s2, PUERTA.v + PUERTA.ancho / 2, s2 + 0.01, FONDO_SALA2], 0, TECHO, NEGRO);
-  revestir(k, [s2, PUERTA.v - PUERTA.ancho / 2, s2 + 0.01, PUERTA.v + PUERTA.ancho / 2], PUERTA.alto, TECHO, NEGRO);
+  // las salas, por adentro, negras: el revestimiento de los tabiques (el gris de W1 y el blanco de W2), alrededor de la
+  // puerta
+  const s1 = W1 - 0.1, s2 = W2 + 0.1;
+  for (const [a, b, fondo] of [[s1 - 0.01, s1, V1], [s2, s2 + 0.01, FONDO_SALA2]] as const) {
+    revestir(k, [a, V0, b, PUERTA.v - PUERTA.ancho / 2], 0, TECHO, NEGRO);
+    revestir(k, [a, PUERTA.v + PUERTA.ancho / 2, b, fondo], 0, TECHO, NEGRO);
+    revestir(k, [a, PUERTA.v - PUERTA.ancho / 2, b, PUERTA.v + PUERTA.ancho / 2], PUERTA.alto, TECHO, NEGRO);
+  }
 
   const g = sala(k, { u0: U0, u1: W1 - 0.1, fondo: V1, filas: 10, pie: 4.4, pantalla: { w: 16.0, y0: 1.0, y1: 6.9 }, tiras: [6.5, 10, 13.5, 17, 20.5], cabina: 21.6 });
   const c = sala(k, { u0: s2 + 0.01, u1: U1, fondo: FONDO_SALA2, filas: 7, pie: 4.8, pantalla: { w: 11.0, y0: 1.2, y1: 5.8 }, tiras: [7, 10.5, 14] });

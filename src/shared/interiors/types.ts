@@ -38,15 +38,15 @@ export type ItemModel = 'silla' | 'banqueta' | 'lampara' | 'mesa' | 'sillon' | '
   | 'cajero' | 'escritorio' | 'turnero' | 'puesto-caja' | 'sillas-espera'
   | 'plafon' | 'silla-auditorio' | 'panel-muestra'
   | 'mesa-redonda' | 'freidora' | 'heladera' | 'pantalla' | 'mesa-picnic' | 'sombrilla' | 'silla-director' | 'metegol' | 'balde-helado'
-  | 'butaca' | 'pochoclera' | 'afiche' | 'botella' | 'canillas' | 'guirnalda' | 'mesa-alta';
+  | 'butaca' | 'pochoclera' | 'afiche' | 'botella' | 'canillas' | 'guirnalda' | 'mesa-alta' | 'lamparita';
 /** yaw: rotación three.js sobre +Y, como Prop.rotation. detail 2: no se dibuja en baja. */
 export interface Item { model: ItemModel; at: Vec3; yaw: number; color?: string; detail?: 2 }
 /** Lo que un cartel puede llevar dibujado en vez de su texto (el cliente lo dibuja en canvas): la puerta redonda del
  *  tesoro de un banco (tarea 6); la cara pintada del plafón y un cuadro abstracto de una muestra (tarea 7), que salen
  *  del texto del cartel como semilla; el menú de una pantalla (genérico: fotos de colores y precios, sin marcas) y el
  *  tapizado en zigzag blanco y negro de un sillón (tarea 8); el afiche de una película inventada (tarea 9: sin títulos ni
- *  marcas, del texto como semilla). */
-export type LabelDrawing = 'tesoro' | 'plafon' | 'cuadro' | 'menu' | 'zigzag' | 'afiche';
+ *  marcas, del texto como semilla) y la fila de atrás de un estante de bar (botellas a contraluz, sin marcas). */
+export type LabelDrawing = 'tesoro' | 'plafon' | 'cuadro' | 'menu' | 'zigzag' | 'afiche' | 'botellas';
 /** Cartel: `normal` apunta hacia quien lo lee. Uno `out` se vuelve un Sign del mapa (alto SIGN_H). Con `drawing`, en vez
  *  del texto va ese dibujo (el texto queda para nombrarlo y es su semilla). `down`: acostado, con la cara hacia abajo
  *  (`normal` es hacia dónde queda el borde de arriba del dibujo); `round`: un disco de diámetro `width`, el círculo

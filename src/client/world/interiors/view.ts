@@ -9,13 +9,15 @@ import { QUALITY } from '../../render/quality.ts';
 import type { Quality } from '../../render/quality.ts';
 import type { InteriorKey, WorldMaterials } from '../types.ts';
 import { buildInterior3D } from './build.ts';
+import type { InteriorPart } from './build.ts';
 
 export interface InteriorViews {
   readonly group: THREE.Group;
-  /** Adentro de un interior (la cámara sobre su planta o un patio, por debajo del techo): ese solo. Si no: los que están
-   *  a < radius de la cámara (a su caja) y con la caja en el frustum, del más cercano al más lejano, hasta `max` y
-   *  mientras la suma de sus mallas entre en `calls` (D7, H3). Las tapas de los que no se dibujan quedan visibles; las
-   *  de los que se dibujan, no. */
+  /** Adentro de un interior (la cámara sobre su planta o un patio, por debajo del techo): ese solo; parada en un patio
+   *  (al aire libre), de sus partes (el edificio y el patio) solo las que la cámara ve. Si no: los que están a < radius
+   *  de la cámara (a su caja) y con la caja en el frustum, del más cercano al más lejano, hasta `max` y mientras la suma
+   *  de sus mallas entre en `calls` (D7, H3). Las tapas de los que no se dibujan quedan visibles; las de los que se
+   *  dibujan, no. */
   update(camera: THREE.PerspectiveCamera): void;
   /** Las tapas que llegan después (las de las fotos). */
   addTapas(placeId: string, meshes: THREE.Mesh[]): void;
@@ -27,8 +29,32 @@ export interface InteriorViews {
   dispose(): void;
 }
 
-/** `meshes`: los draw calls del interior armado. */
-interface View { i: Interior; group: THREE.Group; box: THREE.Box3; tapas: THREE.Mesh[]; top: number; meshes: number }
+/** `meshes`: los draw calls del interior armado; `parts`: el edificio y el patio (con uno solo, es el grupo mismo). */
+interface View { i: Interior; group: THREE.Group; box: THREE.Box3; parts: InteriorPart[]; tapas: THREE.Mesh[]; top: number; meshes: number }
+
+/**
+ * Si la cámara puede ver algo del prisma de una parte (su envolvente en planta, de y0 a y1): no, si un plano del frustum
+ * deja todas las esquinas del prisma afuera o si una cara del prisma (el piso, el techo o un costado) deja afuera las
+ * ocho esquinas del frustum. La caja alineada a los ejes no alcanza: la de un edificio girado (el Guernica, 36°) se
+ * come la vereda de enfrente y el balcón. Sin los ejes de las aristas cruzadas, a veces dice que sí cuando no; nunca al
+ * revés.
+ */
+const probe = new THREE.Vector3();
+function sees(frustum: THREE.Frustum, corners: THREE.Vector3[], p: InteriorPart): boolean {
+  for (const pl of frustum.planes) {
+    if (p.hull.every(([x, z]) => pl.distanceToPoint(probe.set(x, p.y0, z)) < 0 && pl.distanceToPoint(probe.set(x, p.y1, z)) < 0)) return false;
+  }
+  if (corners.every((c) => c.y > p.y1) || corners.every((c) => c.y < p.y0)) return false;
+  const n = p.hull.length;
+  const [cx, cz] = [p.hull.reduce((t, h) => t + h[0], 0) / n, p.hull.reduce((t, h) => t + h[1], 0) / n];
+  for (let k = 0; k < n; k++) {
+    const [a, b] = [p.hull[k], p.hull[(k + 1) % n]];
+    let [nx, nz] = [b[1] - a[1], a[0] - b[0]];
+    if (nx * (cx - a[0]) + nz * (cz - a[1]) > 0) [nx, nz] = [-nx, -nz]; // hacia afuera
+    if (corners.every((c) => nx * (c.x - a[0]) + nz * (c.z - a[1]) > 0)) return false;
+  }
+  return true;
+}
 
 const isKey = (k: string): k is InteriorKey => k.startsWith('in_');
 
@@ -72,7 +98,7 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
     hidden.visible = false;
     // lo de arriba del techo (`sky`: el lucernario y su estructura) no cuenta: parado encima no se está adentro
     const top = Math.max(0, ...i.blocks.filter((b) => !b.out && !b.sky).map((b) => b.y1));
-    return { i, group: hidden, box: new THREE.Box3(), tapas: [...(tapas.get(i.placeId) ?? [])], top, meshes: 0 };
+    return { i, group: hidden, box: new THREE.Box3(), parts: [], tapas: [...(tapas.get(i.placeId) ?? [])], top, meshes: 0 };
   });
   /** Arma (o vuelve a armar) un interior con los materiales de ahora, y queda a la vista si lo estaba. */
   const build = (v: View): void => {
@@ -82,6 +108,7 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
     release(v.group);
     v.group = built.group;
     v.box = built.box;
+    v.parts = built.parts;
     v.meshes = 0;
     built.group.traverse((o) => { if (o instanceof THREE.Mesh) v.meshes++; });
     group.add(v.group);
@@ -99,6 +126,10 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
   const frustum = new THREE.Frustum();
   const viewProj = new THREE.Matrix4();
   const eye = new THREE.Vector3();
+  /** Las ocho esquinas del frustum de la cámara, en el mundo. */
+  const corners = Array.from({ length: 8 }, () => new THREE.Vector3());
+  const cornersOf = (camera: THREE.PerspectiveCamera): THREE.Vector3[] =>
+    corners.map((c, k) => c.set(k & 1 ? 1 : -1, k & 2 ? 1 : -1, k & 4 ? 1 : -1).unproject(camera));
 
   return {
     group,
@@ -124,7 +155,13 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
           calls += v.meshes;
         }
       }
-      for (const v of views) show(v, last.includes(v));
+      // en un patio, al aire libre (el balcón del Guernica, el patio del McDonald's): cada parte, si la cámara la ve
+      const patio = here !== undefined && !within ? here : undefined;
+      if (patio) cornersOf(camera);
+      for (const v of views) {
+        show(v, last.includes(v));
+        if (v.parts.length > 1) for (const p of v.parts) p.group.visible = v !== patio || (frustum.intersectsBox(p.box) && sees(frustum, corners, p));
+      }
     },
     addTapas(placeId, meshes) {
       const v = views.find((x) => x.i.placeId === placeId);

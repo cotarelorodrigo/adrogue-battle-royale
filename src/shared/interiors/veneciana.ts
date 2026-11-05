@@ -16,7 +16,7 @@ import { ensureCCW, insetRing } from '../geo.ts';
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
-import { GROUND_Y, RAIL_H, RAIL_T, TREAD } from './kit.ts';
+import { GROUND_Y, RAIL_T } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Look } from './types.ts';
 
