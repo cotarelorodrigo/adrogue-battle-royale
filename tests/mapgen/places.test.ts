@@ -150,6 +150,13 @@ test('fixed: el lugar toma el edificio y el cartel dados, sin buscar ni aplicar 
   expect(res.buildings.find((b) => b.id === 'b0001')).toMatchObject({ floors: 2, tint: '#fff', wall: 'plaster' });
 });
 
+test('fixed: una estación relevada (la planta de la boletería) sale con kind station', () => {
+  const sign = { text: 'ADROGUÉ', anchor: [1, 2] as Vec2, normal: [0, -1] as Vec2, width: 3, bottomY: 2.35 };
+  const res = matchPlaces([inp('est', 'station', [70, -14])], buildings, [], roads, new Map([['est', { buildingId: 'b0001', sign }]]));
+  expect(res.places[0].buildingId).toBe('b0001');
+  expect(res.buildings.find((b) => b.id === 'b0001')!.kind).toBe('station');
+});
+
 test('un lugar sin enlace que cae en un lote relevado no le pisa pisos, tinte ni material', () => {
   const lot: Building = { ...buildings[0], id: 'lote', front: { edges: [], corner: [], pb: 'vidriera', arriba: 'ventanas', puerta: 'medio' } };
   const res = matchPlaces([inp('x', 'bank', [10, -14], { floors: 5, tint: '#123456', wall: 'brick' })], [lot], [], roads);

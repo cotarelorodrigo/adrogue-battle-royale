@@ -4,10 +4,11 @@
 // horneado) de cada uno, para seguir el costo a medida que las tareas suman planes y muebles.
 // Y sus edificios: los huecos de las aberturas con sus tapas (H4) y la sombra sin manchas de sol por las aberturas (H1).
 import { readFileSync } from 'node:fs';
+import polygonClipping from 'polygon-clipping';
 import * as THREE from 'three';
 import { QUALITY } from '../../src/client/render/quality.ts';
 import { SUN_DIR } from '../../src/client/render/scene.ts';
-import { buildChunks } from '../../src/client/world/chunks.ts';
+import { buildChunks, Y_PATH } from '../../src/client/world/chunks.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { buildInterior3D, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
 import { roofCut } from '../../src/client/world/interiors/exterior.ts';
@@ -385,5 +386,42 @@ describe('el edificio y el patio por separado', () => {
     look(door.normal, 0);
     expect(groupOf('edificio').visible && groupOf('patio').visible).toBe(true);
     views.dispose();
+  });
+});
+
+// H2 de la revisión de la tarea 10: las sendas de OSM (footway y pedestrian, en la vereda a Y_PATH) no se dibujan
+// sobre los patios de los interiores: la diagonal de la estación entraba por abajo de la baranda a la zona paga
+describe('las sendas no pisan los patios (H2)', () => {
+  const WORLD = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
+    'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
+  const fake = Object.fromEntries(WORLD.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
+
+  test('ningún triángulo de senda cae adentro del polígono de un patio; afuera, la senda sigue entera', () => {
+    const sendas = buildChunks(map, fake, interiors).groups
+      .flatMap((g) => g.children.filter((m): m is THREE.Mesh => m instanceof THREE.Mesh && m.name === 'sidewalk'))
+      .flatMap((m) => triangles(m.geometry))
+      .filter((t) => [t.a, t.b, t.c].every((p) => Math.abs(p.y - Y_PATH) < 1e-4));
+    const patios = interiors.flatMap((i) => i.patios.map((ring) => ({ id: i.placeId, ring })));
+    const bad: string[] = [];
+    for (const { id, ring } of patios) {
+      let pisa = 0;
+      for (const t of sendas) {
+        const tri: [number, number][] = [[t.a.x, t.a.z], [t.b.x, t.b.z], [t.c.x, t.c.z]];
+        const xs = ring.map((p) => p[0]), zs = ring.map((p) => p[1]);
+        if (Math.max(...tri.map((p) => p[0])) < Math.min(...xs) || Math.min(...tri.map((p) => p[0])) > Math.max(...xs)) continue;
+        if (Math.max(...tri.map((p) => p[1])) < Math.min(...zs) || Math.min(...tri.map((p) => p[1])) > Math.max(...zs)) continue;
+        const inter = polygonClipping.intersection([[...tri, tri[0]]], [ring.map((p): [number, number] => [p[0], p[1]])]);
+        pisa += inter.reduce((s, poly) => s + poly.reduce((a, r, k) => a + (k === 0 ? 1 : -1) * polygonArea(r.slice(0, -1) as Vec2[]), 0), 0);
+      }
+      if (pisa > 1e-3) bad.push(`${id}: ${pisa.toFixed(2)} m² de senda sobre el patio`);
+    }
+    expect(bad).toEqual([]);
+    // la estación: el túnel peatonal y la diagonal siguen afuera del patio (no se borró la senda entera)
+    const est = interiors.find((i) => i.placeId === 'estacion-adrogue')!;
+    const cerca = sendas.filter((t) => {
+      const c: Vec2 = [(t.a.x + t.b.x + t.c.x) / 3, (t.a.z + t.b.z + t.c.z) / 3];
+      return est.patios.some((r) => r.some((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < 12));
+    });
+    expect(areaOf(cerca), 'm² de senda a menos de 12 m de las esquinas del patio').toBeGreaterThan(20);
   });
 });

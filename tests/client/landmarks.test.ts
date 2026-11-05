@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import * as THREE from 'three';
+import { OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
+import { SKY_LIGHT } from '../../src/client/render/sun.ts';
 import { buildMonuments, buildStation } from '../../src/client/world/landmarks.ts';
 import type { WorldMaterials } from '../../src/client/world/types.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { MapData, Prop } from '../../src/shared/mapdata.ts';
 import { stationPosts } from '../../src/shared/station.ts';
-import { stubCanvas } from './canvas-stub.ts';
+import { linear, seenLinear } from './aces.ts';
+import type { RGB } from './aces.ts';
+import { canvasFill, canvasTextFills, stubCanvas } from './canvas-stub.ts';
 
 // Las mallas se arman al recolectar los tests (fuera de beforeEach): el canvas falso se instala antes.
 stubCanvas();
@@ -149,20 +153,50 @@ describe('estación', () => {
     }
   });
 
+  // H8 de la revisión: el jugador lo ve casi siempre desde abajo, y la cara de abajo (sin sol: el suelo marrón de la
+  // HemisphereLight por la chapa oscura) se veía negra
+  test('la cara de abajo del alero se lee verde oscuro con la luz de sombra (seen, exposición de la calle), en la misma malla', () => {
+    const canopy = meshes.filter((m) => m.name === 'canopy');
+    expect(canopy, 'una sola malla: sin draw calls nuevos').toHaveLength(1);
+    const g = canopy[0].geometry, mat = canopy[0].material as THREE.MeshLambertMaterial;
+    const nor = g.getAttribute('normal'), col = g.getAttribute('color');
+    expect(mat.vertexColors && col, 'color por vértice').toBeTruthy();
+    // la textura acanalada: su promedio lineal (la pinta con columnas grises)
+    const tex = mat.map!.image as HTMLCanvasElement;
+    const T = Array.from({ length: tex.width }, (_, x) => linear(Number(/\d+/.exec(canvasFill(tex, x, 0)!)![0]) / 255)).reduce((a, b) => a + b, 0) / tex.width;
+    const [sky, ground] = [new THREE.Color(SKY_LIGHT.sky), new THREE.Color(SKY_LIGHT.ground)];
+    const under: number[] = [];
+    for (let k = 0; k < nor.count; k++) {
+      const ny = nor.getY(k);
+      if (ny > 0) { expect([col.getX(k), col.getY(k), col.getZ(k)], 'la de arriba, sin tocar').toEqual([1, 1, 1]); continue; }
+      under.push(k);
+      // lo que le llega sin sol: la HemisphereLight en su normal, sobre π (Lambert), por el tinte, la textura y el vértice
+      const w = 0.5 * ny + 0.5, light = (j: 'r' | 'g' | 'b'): number => ((ground[j] + (sky[j] - ground[j]) * w) * SKY_LIGHT.intensity) / Math.PI;
+      const lin = (['r', 'g', 'b'] as const).map((j, n) => mat.color[j] * T * light(j) * col.getComponent(k, n)) as RGB;
+      const [r, gg, b] = seenLinear(lin, OUTDOOR_EXPOSURE);
+      const say = `visto (${r}, ${gg}, ${b})`, luma = 0.2126 * r + 0.7152 * gg + 0.0722 * b;
+      expect(gg > r && gg > b, `${say}: verde`).toBe(true);
+      expect(luma, `${say}: se lee (no negro)`).toBeGreaterThanOrEqual(40);
+      expect(luma, `${say}: oscuro`).toBeLessThan(80);
+      expect((Math.max(r, gg, b) - Math.min(r, gg, b)) / (Math.max(r, gg, b) + Math.min(r, gg, b)), `${say}: apagado, no flúo`).toBeLessThan(0.5);
+    }
+    expect(under.length, 'la cara de abajo de cada faldón').toBeGreaterThan(0);
+  });
+
+  // H6 de la revisión: se lee el canvas del cartel (el de la textura de su malla), no el orden de los fillStyle
   test('los carteles ADROGUÉ: fondo azul, marco azul y letras blancas', () => {
-    const fills: string[] = [];
-    stubCanvas((prop, value) => { if (prop === 'fillStyle') fills.push(String(value)); });
-    buildStation(map, materials);
-    // signTexture pinta el marco, el fondo y las letras, en ese orden (es lo último que se pinta de la estación)
-    const k = fills.lastIndexOf('#ffffff');
-    expect(k).toBeGreaterThanOrEqual(2);
-    const azul = (hex: string): boolean => {
+    const signs = meshes.find((m) => m.name === 'stationSigns')!;
+    const canvas = ((signs.material as THREE.MeshLambertMaterial).map as THREE.CanvasTexture).image as HTMLCanvasElement;
+    const azul = (hex: string | undefined): boolean => {
       const c = new THREE.Color(hex);
       return c.b > c.r && c.b > c.g && c.getHSL({ h: 0, s: 0, l: 0 }, THREE.SRGBColorSpace).l < 0.45;
     };
-    const [marco, fondo] = [fills[k - 2], fills[k - 1]];
-    expect(azul(fondo), `fondo ${fondo}`).toBe(true);
+    // el marco, en la punta; el fondo, al lado del borde del marco, a media altura (ahí no llegan las letras)
+    const marco = canvasFill(canvas, 0, 0), fondo = canvasFill(canvas, Math.round(canvas.height * 0.2), Math.round(canvas.height / 2));
     expect(azul(marco), `marco ${marco}`).toBe(true);
+    expect(azul(fondo), `fondo ${fondo}`).toBe(true);
+    expect(fondo).not.toBe(marco);
+    expect(canvasTextFills(canvas), 'las letras').toEqual(['#ffffff']);
   });
 
   test('la franja amarilla táctil del borde: una textura con los botones, recortada (alphaTest), sin draw calls nuevos', () => {

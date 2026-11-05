@@ -1,5 +1,5 @@
-// Lo de un interior que se ve siempre, con su edificio (`out`): los bloques van con el material `parapet` del chunk
-// (revoque teñido por vértice, con sol: sin draw calls nuevos) y los carteles, como un Sign más del mapa. Los muebles
+// Lo de un interior que se ve siempre, con su edificio (`out`): los bloques y los paños van con el material `parapet`
+// del chunk (revoque teñido por vértice, con sol: sin draw calls nuevos) y los carteles, como un Sign más del mapa. Los muebles
 // de afuera no: se dibujan con el interior, de cerca.
 import * as THREE from 'three';
 import { signedAreaFromAbove } from '../../../shared/geo.ts';
@@ -7,12 +7,12 @@ import type { Interior } from '../../../shared/interiors/types.ts';
 import type { Sign } from '../../../shared/mapdata.ts';
 import { triangulateUp } from '../geometry.ts';
 import type { RoofCut } from '../geometry.ts';
-import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from '../wall-kit.ts';
+import { BAY_W, facing, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from '../wall-kit.ts';
 
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
 const PLANAR_UV = 4;
 
-/** Los bloques `out` del interior, en una geometría para el merge `parapet` de su chunk. */
+/** Los bloques y los paños `out` del interior, en una geometría para el merge `parapet` de su chunk. */
 export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
   const b = newBuilder(true);
   for (const block of i.blocks) {
@@ -42,6 +42,17 @@ export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
       const [v0, v1] = [block.y0 / FLOOR_H, block.y1 / FLOOR_H];
       quad(b, [[p[0], block.y0, p[1]], [q[0], block.y0, q[1]], [q[0], block.y1, q[1]], [p[0], block.y1, p[1]]],
         [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], [-ez, 0, ex], c);
+    }
+  }
+  // los paños out (el pasamanos de una escalera out): de frente hacia su normal, con uv en metros del mundo
+  for (const p of i.panes) {
+    if (!p.out) continue;
+    const cs = facing(p.corners, p.normal), c = tintColor(p.look.color);
+    const uv = (q: [number, number, number]): [number, number] => [(q[0] + q[2]) / BAY_W, q[1] / FLOOR_H];
+    if (cs.length === 4) quad(b, cs, cs.map(uv), p.normal, c);
+    else {
+      const k = cs.map((q) => vert(b, q, p.normal, uv(q), c));
+      b.idx.push(k[0], k[1], k[2]);
     }
   }
   return toGeometry(b);

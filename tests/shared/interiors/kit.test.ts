@@ -441,6 +441,25 @@ describe('tramo adentro de un nivel, con descansos (gradas)', () => {
     expect(validateInterior(sinEscalon).join('\n')).toMatch(/contrahuella de 0,4/);
   });
 
+  // H3 de la revisión de la T10: la escalera `out` (se ve siempre, con el edificio) lleva sus barandas y su pasamanos
+  // también `out`; railStyle.out solo (el de las barandas de hueco, La Veneciana) no cambia el pasamanos
+  test('una escalera out: las barandas, los parantes y las barras del pasamanos también son out; railStyle.out solo, no', () => {
+    const { interior: i } = grada({ rail: CAÑO, railStyle: { caño: true }, handrail: 'ambos', out: true });
+    const barandas = i.blocks.filter((x) => x.role === 'baranda');
+    expect(barandas.length).toBeGreaterThan(0);
+    for (const x of barandas) expect(x.out).toBe(true);
+    const posts = i.blocks.filter((x) => x.collide === 'none' && x.side?.color === CAÑO.color);
+    expect(posts.length).toBeGreaterThan(0);
+    for (const x of posts) expect(x.out).toBe(true);
+    const bars = i.panes.filter((p) => p.look.color === CAÑO.color);
+    expect(bars.length).toBeGreaterThan(0);
+    for (const p of bars) expect(p.out).toBe(true);
+    expect(validateInterior(i)).toEqual([]);
+    const soloRail = grada({ rail: CAÑO, railStyle: { caño: true, out: true }, handrail: 'izq' }).interior;
+    expect(soloRail.blocks.filter((x) => x.role === 'baranda').some((x) => x.out)).toBe(false);
+    expect(soloRail.panes.some((p) => p.out)).toBe(false);
+  });
+
   test('el pasamanos sigue la pendiente media del tramo (de la primera nariz a la llegada), con un paño por escalón y por descanso', () => {
     const { interior: i } = grada({ rail: CAÑO, railStyle: { caño: true }, handrail: 'izq' });
     const panes = i.blocks.filter((x) => x.role === 'baranda');

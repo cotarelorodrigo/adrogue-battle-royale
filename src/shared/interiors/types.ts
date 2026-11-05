@@ -21,8 +21,9 @@ export interface Block { polygon: Vec2[]; y0: number; y1: number; collide: Colli
 /** Un paño plano que solo se dibuja (no choca ni tapa la luz): 3 o 4 esquinas en un plano (mundo) y la normal (unitaria)
  *  de su frente. Es lo que va inclinado: el vidrio y la estructura de un lucernario, el pasamanos de una escalera (H1 de
  *  la tarea 7); lo que se pisa o frena va aparte, en bloques. `back`: también se ve de atrás. `sky`: está arriba del
- *  techo, sobre un hueco (D13): su frente da al cielo y su espalda, al interior. */
-export interface Pane { corners: Vec3[]; normal: Vec3; look: Look; back?: true; sky?: true }
+ *  techo, sobre un hueco (D13): su frente da al cielo y su espalda, al interior. `out`: se dibuja siempre, con el
+ *  edificio (exteriorGeometry), como un bloque `out`: el pasamanos de una escalera `out` (H3 de la revisión de la T10). */
+export interface Pane { corners: Vec3[]; normal: Vec3; look: Look; back?: true; sky?: true; out?: true }
 /** Base; cada tarea de interior suma los suyos. Bancos (tarea 6): el cajero automático, el escritorio con sus dos sillas,
  *  el turnero colgado, el puesto de caja (su tramo de mostrador, con el cajero sentado detrás) y una fila de 4 sillas de
  *  espera unidas. Casa de la Cultura (tarea 7): el plafón colgado bajo el lucernario (su cara pintada es un cartel), la

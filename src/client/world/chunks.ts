@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import polygonClipping from 'polygon-clipping';
 import { clipSegment, MARGIN_M, pointInPolygon } from '../../shared/geo.ts';
 import type { Vec2 } from '../../shared/geo.ts';
 import type { Interior } from '../../shared/interiors/types.ts';
@@ -23,6 +24,52 @@ export function isParkFootway(r: Road, parks: Park[]): boolean {
   const k = Math.floor((r.points.length - 1) / 2);
   const mid: Vec2 = [(r.points[k][0] + r.points[k + 1][0]) / 2, (r.points[k][1] + r.points[k + 1][1]) / 2];
   return parks.some((p) => pointInPolygon(mid, p.polygon));
+}
+
+/** La malla plana `g` (una cinta de senda, indexada, con uv) menos los polígonos `holes` (los patios de los interiores):
+ *  los triángulos que no tocan la caja de ninguno quedan como están; los otros se recortan con polygon-clipping y se
+ *  vuelven a triangular, con la uv interpolada en el triángulo de origen y su mismo giro (la normal sigue para arriba). */
+function withoutHoles(g: THREE.BufferGeometry, holes: Vec2[][]): THREE.BufferGeometry {
+  const boxes = holes.map((h) => ({ h, x0: Math.min(...h.map((p) => p[0])), x1: Math.max(...h.map((p) => p[0])), z0: Math.min(...h.map((p) => p[1])), z1: Math.max(...h.map((p) => p[1])) }));
+  const pos = g.getAttribute('position'), uv = g.getAttribute('uv'), idx = g.index!;
+  const touch = (t: number[]) => boxes.filter((b) => {
+    const xs = t.map((k) => pos.getX(k)), zs = t.map((k) => pos.getZ(k));
+    return Math.max(...xs) > b.x0 && Math.min(...xs) < b.x1 && Math.max(...zs) > b.z0 && Math.min(...zs) < b.z1;
+  });
+  const tris: number[][] = [];
+  for (let k = 0; k < idx.count; k += 3) tris.push([idx.getX(k), idx.getX(k + 1), idx.getX(k + 2)]);
+  if (tris.every((t) => touch(t).length === 0)) return g;
+  const P: number[] = [], N: number[] = [], U: number[] = [], I: number[] = [];
+  const put = (x: number, y: number, z: number, u: number, v: number): number => { P.push(x, y, z); N.push(0, 1, 0); U.push(u, v); return P.length / 3 - 1; };
+  const cross = (a: Vec2, b: Vec2, c: Vec2): number => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  for (const t of tris) {
+    const near = touch(t);
+    if (near.length === 0) { I.push(...t.map((k) => put(pos.getX(k), pos.getY(k), pos.getZ(k), uv.getX(k), uv.getY(k)))); continue; }
+    const [a, b, c] = t.map((k): Vec2 => [pos.getX(k), pos.getZ(k)]), y = pos.getY(t[0]), area = cross(a, b, c);
+    if (Math.abs(area) < 1e-12) continue;
+    // polygon-clipping modifica los puntos de entrada: siempre se le pasan copias
+    const rest = polygonClipping.difference([[[...a], [...b], [...c], [...a]]], ...near.map((n) => [n.h.map((p): [number, number] => [p[0], p[1]])]));
+    const uvAt = (p: Vec2): [number, number] => {
+      const wa = cross(p, b, c) / area, wb = cross(a, p, c) / area, wc = 1 - wa - wb;
+      return [0, 1].map((j) => wa * uv.getComponent(t[0], j) + wb * uv.getComponent(t[1], j) + wc * uv.getComponent(t[2], j)) as [number, number];
+    };
+    for (const poly of rest) {
+      const rings = poly.map((r) => r.slice(0, -1).map(([x, z]) => new THREE.Vector2(x, z)));
+      const flat = rings.flat();
+      for (const f of THREE.ShapeUtils.triangulateShape(rings[0], rings.slice(1))) {
+        const q = f.map((k): Vec2 => [flat[k].x, flat[k].y]);
+        const o = Math.sign(cross(q[0], q[1], q[2])) === Math.sign(area) ? q : [q[0], q[2], q[1]];
+        I.push(...o.map((p) => put(p[0], y, p[1], ...uvAt(p))));
+      }
+    }
+  }
+  g.dispose();
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  out.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+  out.setIndex(I);
+  return out;
 }
 
 /** Un edificio se asigna a un chunk como si su centroide estuviera al menos a esto del borde del área (m). */
@@ -94,13 +141,16 @@ export function buildChunks(map: MapData, materials: WorldMaterials, interiors: 
 
   // Calles: se recortan al suelo (bounds + margen) y se parten en corridas de segmentos
   // consecutivos del mismo chunk (por punto medio).
-  const addRibbonRuns = (r: Road, width: number, y: number, mat: keyof WorldMaterials): void => {
+  // las sendas (footway, pedestrian) no pisan los patios de los interiores: la del túnel y la diagonal de la estación
+  // cruzan el suyo, y a Y_PATH (con su polygonOffset) le ganan a las baldosas y a la zona paga
+  const patios = interiors.flatMap((i) => i.patios);
+  const addRibbonRuns = (r: Road, width: number, y: number, mat: keyof WorldMaterials, holes: Vec2[][] = []): void => {
     let run: Vec2[] = [];
     let runIj: [number, number] | null = null;
     let runV = 0;
     let travelled = 0; // metros del polilínea original antes del segmento actual
     const flush = (): void => {
-      if (runIj && run.length >= 2) add(runIj, mat, ribbon(run, width, y, runV));
+      if (runIj && run.length >= 2) add(runIj, mat, holes.length ? withoutHoles(ribbon(run, width, y, runV), holes) : ribbon(run, width, y, runV));
       run = []; runIj = null;
     };
     for (let k = 0; k < r.points.length - 1; k++) {
@@ -127,9 +177,9 @@ export function buildChunks(map: MapData, materials: WorldMaterials, interiors: 
     if (r.points.length < 2) continue;
     if (r.kind === 'footway') {
       if (isParkFootway(r, map.parks)) continue; // lo dibuja buildParks
-      addRibbonRuns(r, r.width, Y_PATH, 'sidewalk');
+      addRibbonRuns(r, r.width, Y_PATH, 'sidewalk', patios);
     } else if (r.kind === 'pedestrian') {
-      addRibbonRuns(r, r.width, Y_PATH, 'sidewalk');
+      addRibbonRuns(r, r.width, Y_PATH, 'sidewalk', patios);
     } else {
       addRibbonRuns(r, r.width, Y_ASPHALT, r.surface === 'sett' ? 'cobble' : 'asphalt');
       if (r.sidewalk > 0) addRibbonRuns(r, r.width + 2 * r.sidewalk, Y_SIDEWALK, 'sidewalk');

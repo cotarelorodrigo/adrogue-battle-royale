@@ -38,30 +38,34 @@ const NEUTRO = {
   ceiling: { mat: 'liso', color: '#f4f2ee' },
 } as const satisfies Record<string, Look>;
 
-/** El interior de un lugar: el de su plan o, si todavía no tiene, la caja de §2.1 (un piso público, sin muebles). */
-export function buildInterior(b: Building, input: InteriorInput): Interior {
-  const k = new Kit(b, input);
+/** Lo del mapa que arma los interiores: los edificios y sus InteriorInput, y los andenes (los usa la estación). */
+export type InteriorsMap = Pick<MapData, 'buildings' | 'interiors'> & { platforms?: MapData['platforms'] };
+
+/** El interior de un lugar: el de su plan o, si todavía no tiene, la caja de §2.1 (un piso público, sin muebles).
+ *  `platforms`: los andenes del mapa (Kit.platforms). */
+export function buildInterior(b: Building, input: InteriorInput, platforms: MapData['platforms'] = []): Interior {
+  const k = new Kit(b, input, platforms);
   const plan = Object.hasOwn(INTERIOR_PLANS, input.placeId) ? INTERIOR_PLANS[input.placeId] : undefined;
   if (plan) return plan(k);
   k.shell({ publicFloors: 1, ...NEUTRO });
   return k.done(0.8);
 }
 
-export function buildInteriors(map: Pick<MapData, 'buildings' | 'interiors'>): Interior[] {
+export function buildInteriors(map: InteriorsMap): Interior[] {
   const byId = new Map(map.buildings.map((b) => [b.id, b]));
   return map.interiors.map((input) => {
     const b = byId.get(input.buildingId);
     if (!b) throw new Error(`${input.placeId}: el edificio ${input.buildingId} del interior no está en el mapa`);
-    return buildInterior(b, input);
+    return buildInterior(b, input, map.platforms);
   });
 }
 
-export function interiorOf(map: Pick<MapData, 'buildings' | 'interiors'>, placeId: string): Interior {
+export function interiorOf(map: InteriorsMap, placeId: string): Interior {
   const input = map.interiors.find((i) => i.placeId === placeId);
   if (!input) throw new Error(`${placeId}: el lugar no tiene interior en el mapa`);
   const b = map.buildings.find((x) => x.id === input.buildingId);
   if (!b) throw new Error(`${placeId}: el edificio ${input.buildingId} del interior no está en el mapa`);
-  return buildInterior(b, input);
+  return buildInterior(b, input, map.platforms);
 }
 
 /** Lo que cuenta para el botín (D11): el piso techado de los pisos públicos más la terraza. */
@@ -91,7 +95,7 @@ const closed = (r: Vec2[]): [[number, number][]] => [[...r, r[0]].map((p): [numb
  * - dinteles a ≥ LINTEL_MIN de su piso; barandas de RAIL_H ± 0,01;
  * - paredes de WALL_OUT ± 0,01 y tabiques de WALL_IN ± 0,01;
  * - cada mueble de MODEL_BOX con su caja `mueble`;
- * - todo bloque que no es `out`, y todo paño, adentro de la planta o de un patio.
+ * - todo bloque y todo paño que no son `out`, adentro de la planta o de un patio.
  */
 export function validateInterior(i: Interior): string[] {
   const out: string[] = [];
@@ -130,6 +134,7 @@ export function validateInterior(i: Interior): string[] {
     if (off > 1e-3) say(`un bloque (${b.role}) sale de la planta ${where(centroid(b.polygon))}: ${fmt(off)} m² afuera`);
   }
   for (const p of i.panes) {
+    if (p.out) continue;
     // una esquina sobre el borde cuenta como adentro: se mira un poco hacia el medio del paño
     const c = centroid(p.corners.map((q): Vec2 => [q[0], q[2]]));
     const off = p.corners.find((q) => {

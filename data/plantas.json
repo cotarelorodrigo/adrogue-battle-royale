@@ -896,6 +896,7 @@
         }
       ],
       "vidrios": [],
+      "escalera": { "arista": 3, "centro": 3.2 },
       "color": "#dfe5cf",
       "colorPB": "#dfe5cf",
       "pb": "puerta",

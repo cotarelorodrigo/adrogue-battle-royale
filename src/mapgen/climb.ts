@@ -41,8 +41,10 @@ const FACES_ROAD_PAD = 6;
 /** Punta de la corrida principal de un lote: `inicio` es la de `desde`, `fin` la de `hasta`. */
 export type Punta = 'inicio' | 'fin';
 /** Un lote relevado, para las ayudas: su fachada sobre la planta (de `desde` a `hasta`) y las puntas donde puede ir una
- *  ayuda, en orden de preferencia. */
-export interface LotFront { line: Vec2[]; puntas: Punta[] }
+ *  ayuda, en orden de preferencia. `aid`: la escalera relevada de una planta (plantas.json, `escalera`), con su medio
+ *  sobre la cara, la normal hacia afuera y la tangente: va ahí y en ninguna otra arista, aunque esa cara no dé a una
+ *  calle (alcanza con que se llegue: opensToStreet). */
+export interface LotFront { line: Vec2[]; puntas: Punta[]; aid?: { mid: Vec2; n: Vec2; d: Vec2 } }
 /** Por lote: cuántos metros de la corrida principal ocupa una ayuda desde cada punta, con su margen; el cartel y el toldo
  *  dejan ese tramo libre. */
 export type AidSlots = Map<string, Partial<Record<Punta, number>>>;
@@ -185,6 +187,12 @@ function edgesOf(ctx: Ctx, bi: number): Edge[] {
   const fp = b.footprint;
   const lot = ctx.lots.get(b.id);
   const out: Edge[] = [];
+  if (lot?.aid) {
+    const { mid, n, d } = lot.aid;
+    out.push({ bi, i: -1, len: LADDER_W, mid, n, d, street: opensToStreet(ctx, bi, mid, n) });
+    ctx.edges.set(bi, out);
+    return out;
+  }
   for (let i = 0; i < fp.length; i++) {
     const a = fp[i];
     const c = fp[(i + 1) % fp.length];

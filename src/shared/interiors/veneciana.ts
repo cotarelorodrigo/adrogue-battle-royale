@@ -18,6 +18,7 @@ import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { GROUND_Y, RAIL_T } from './kit.ts';
 import type { Kit } from './kit.ts';
+import { add } from './plan-util.ts';
 import type { Look } from './types.ts';
 
 // ---------- materiales ----------
@@ -82,7 +83,6 @@ const TOLDO_M = { y: 2.78, vuelo: 0.9, t: 0.06, faldon: 0.3 } as const;
 /** El marco del salón: el rincón del frente y el costado sur (S0), D a lo largo, P de través, el ancho W y el largo L de
  *  los costados; la esquina redonda tiene el centro en (L, W / 2) y radio W / 2. */
 interface Marco { S0: Vec2; D: Vec2; P: Vec2; W: number; L: number; frente: number }
-const add = (a: Vec2, b: Vec2, k = 1): Vec2 => [a[0] + b[0] * k, a[1] + b[1] * k];
 const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
 const dot = (a: Vec2, b: Vec2): number => a[0] * b[0] + a[1] * b[1];
 const unit = (a: Vec2): Vec2 => [a[0] / Math.hypot(a[0], a[1]), a[1] / Math.hypot(a[0], a[1])];

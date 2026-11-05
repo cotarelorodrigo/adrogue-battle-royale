@@ -657,7 +657,7 @@ export function collisionPrisms(map: CollisionMap): { prisms: Prism[]; ladders: 
   const inside = new Map((map.interiors ?? []).map((i) => [i.buildingId, i]));
   for (const b of map.buildings) {
     const input = inside.get(b.id);
-    if (input) prisms.push(...interiorPrisms(buildInterior(b, input)));
+    if (input) prisms.push(...interiorPrisms(buildInterior(b, input, map.platforms)));
     else prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
     if (b.fill) continue; // un relleno de hueco es un parche entre vecinos: sin pretil
     for (const e of parapetEdges(ensureCCW(b.footprint))) {

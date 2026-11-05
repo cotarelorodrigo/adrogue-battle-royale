@@ -68,6 +68,17 @@ describe('validatePlantas', () => {
     expect(() => check({ ...ok(), despeje: [despeje] })).toThrow(/^x: planta de guernica-bar: campo desconocido "despeje" \(van lugar, fecha, marco, planta, patios, despejes, /);
   });
 
+  test('escalera: la escalera de mano relevada, en una cara sin frente, sin pisar una puerta', () => {
+    expect(check(ok())[0].escalera).toBeUndefined();
+    expect(check({ ...ok(), escalera: { arista: 1, centro: 8 } })[0].escalera).toEqual({ arista: 1, centro: 8 });
+    expect(() => check({ ...ok(), escalera: { arista: 0, centro: 8 } })).toThrow(/^x: planta de guernica-bar: la escalera va en la arista 0, que es del frente: ahí la ayuda va sola en una punta; escalera es para una cara sin frente$/);
+    expect(() => check({ ...ok(), escalera: { arista: 1, centro: 0.3 } })).toThrow(/^x: planta de guernica-bar: la escalera no entra en la arista 1: va de -0,1 a 0,7 m y la arista mide 17 m, con 0,1 m libres en cada punta$/);
+    const conPuerta = { ...ok(), puertas: [puerta(), puerta({ arista: 1, centro: 8, ancho: 1, piso: 0 })] };
+    expect(() => check({ ...conPuerta, escalera: { arista: 1, centro: 8.6 } })).toThrow(/^x: planta de guernica-bar: la escalera se pisa con la puerta 2 \(misma arista\)$/);
+    expect(() => check({ ...ok(), escalera: { arista: 1, centro: 8, lado: 'este' } })).toThrow(/^x: planta de guernica-bar: escalera: campo desconocido "lado"/);
+    expect(() => check({ ...ok(), escalera: 3 })).toThrow(/^x: planta de guernica-bar: escalera tiene que ser \{ arista, centro \}$/);
+  });
+
   test('el fixture y data/plantas.json son válidos', () => {
     expect(loadPlantas(NO_FRENTES, FIXTURE).map((p) => p.lugar)).toEqual(['guernica-bar', 'mcdonalds']);
     expect(loadPlantas(NO_FRENTES, FIXTURE)[0].lote.alto).toBe(7.5);
@@ -256,6 +267,26 @@ describe('applyFrentes: recorte de una planta girada', () => {
   });
 });
 
+describe('applyFrentes: la escalera relevada va a climb', () => {
+  test('con escalera, el lote de la planta lleva su lugar en el mundo (sobre la arista, mirando afuera); sin, no', () => {
+    const plantas = loadPlantas(NO_FRENTES, FIXTURE);
+    const g = plantas[1];
+    const con: PlantaInput = { ...g, escalera: { arista: 1, centro: 2 } };
+    const [shape] = placePlantas([con], roads);
+    const res = applyFrentes(NO_FRENTES, roads, [], [], [], [shape]);
+    const aid = res.climb.get(shape.id)!.aid!;
+    const [a, b] = [toWorld(shape.frame, g.planta[1]), toWorld(shape.frame, g.planta[2])];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    expect(aid.mid[0]).toBeCloseTo(a[0] + ((b[0] - a[0]) / l) * 2, 6);
+    expect(aid.mid[1]).toBeCloseTo(a[1] + ((b[1] - a[1]) / l) * 2, 6);
+    // la normal, hacia afuera: un poco afuera de la arista ya no es planta
+    expect(pointInPolygon([aid.mid[0] + aid.n[0] * 0.05, aid.mid[1] + aid.n[1] * 0.05], shape.footprint)).toBe(false);
+    expect(Math.abs(aid.d[0] * aid.n[0] + aid.d[1] * aid.n[1])).toBeLessThan(1e-9);
+    const [sin] = placePlantas([g], roads);
+    expect(applyFrentes(NO_FRENTES, roads, [], [], [], [sin]).climb.get(sin.id)!.aid).toBeUndefined();
+  });
+});
+
 describe('assembleMap con plantas', () => {
   const osm = mini as unknown;
   const ms = JSON.parse(readFileSync('tests/fixtures/buildings-mini.geojson', 'utf8')) as GeoJSONFeatureCollection;
@@ -325,12 +356,13 @@ describe('assembleMap con plantas', () => {
     expect(m.front!.edges).toHaveLength(1);
   });
 
-  test('la planta de un lugar de tipo station sale con kind station; las otras, con la del lote', () => {
+  // el kind station de un lote relevado lo prueba places.test ('fixed: una estación relevada…'): acá, con la planta de
+  // otro lugar, el plan de la estación no la acepta (H11 de la revisión de la T10: un error, no un hall vacío)
+  test('las plantas salen con el kind del lote; la de la estación tiene que ser la relevada: si no, el plan la frena', () => {
     expect(byId(con.map, 'pl-mcdonalds')!.kind).toBe('shop');
-    const estacion = run(with_((ps) => { ps[1].lugar = 'estacion-adrogue'; ps[1].lote.lugar = 'estacion-adrogue'; })).map;
-    expect(estacion.places.find((p) => p.id === 'estacion-adrogue')!.buildingId).toBe('pl-estacion-adrogue');
-    expect(byId(estacion, 'pl-estacion-adrogue')!.kind).toBe('station');
-    expect(byId(estacion, 'pl-guernica-bar')!.kind).toBe('shop');
+    expect(byId(con.map, 'pl-guernica-bar')!.kind).toBe('shop');
+    expect(() => run(with_((ps) => { ps[1].lugar = 'estacion-adrogue'; ps[1].lote.lugar = 'estacion-adrogue'; })))
+      .toThrow(/^estacion-adrogue: la planta no es la relevada: el hall va de cara a cara 7,60 m \(9,6\)/);
   });
 
   test('el lugar queda con ese edificio y el cartel del archivo', () => {

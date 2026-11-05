@@ -24,7 +24,7 @@ import type { InteriorPlan } from './index.ts';
 import { RAIL_H, TREAD, WALL_IN } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { LEVEL_H } from './openings.ts';
-import { MIRA, rect } from './plan-util.ts';
+import { add, MIRA, rect } from './plan-util.ts';
 import type { Rect } from './plan-util.ts';
 import type { Collide, Look, Role } from './types.ts';
 
@@ -114,7 +114,6 @@ const GUARDA_GALERIA = 0.6, GUARDA_HALL = { w: 0.3, aire: 0.6 };
 /** Puertas de adentro: ancho y alto. */
 const PUERTA = { w: 1.6, h: 2.3 };
 
-const add = (p: Vec2, d: Vec2, k = 1): Vec2 => [p[0] + d[0] * k, p[1] + d[1] * k];
 const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
 const len = (a: Vec2): number => Math.hypot(a[0], a[1]);
 /** Polígono regular de `n` lados alrededor de `c`, de radio `r` (al vértice), girado `rot`. */

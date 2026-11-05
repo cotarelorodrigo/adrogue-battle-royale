@@ -101,6 +101,21 @@ export function plantaDoors(s: PlantaShape): { k: number; piso: number; center: 
   });
 }
 
+/** La escalera de mano relevada en el mundo (para climb.ts): su medio sobre la cara exterior, la normal hacia afuera y
+ *  la tangente de la arista; null si la planta no la trae. */
+export function plantaLadder(s: PlantaShape): { mid: Vec2; n: Vec2; d: Vec2 } | null {
+  const e = s.planta.escalera;
+  if (!e) return null;
+  const pl = s.planta.planta;
+  const [a, b] = [toWorld(s.frame, pl[e.arista]), toWorld(s.frame, pl[(e.arista + 1) % pl.length])];
+  const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const d: Vec2 = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  const mid: Vec2 = [a[0] + d[0] * e.centro, a[1] + d[1] * e.centro];
+  const left: Vec2 = [-d[1], d[0]];
+  const n: Vec2 = pointInPolygon([mid[0] + left[0] * 0.05, mid[1] + left[1] * 0.05], s.footprint) ? [d[1], -d[0]] : left;
+  return { mid, n, d };
+}
+
 const ringsArea = (m: polygonClipping.MultiPolygon): number =>
   m.reduce((t, pg) => t + pg.reduce((a, r, i) => a + (i === 0 ? 1 : -1) * polygonArea(r.slice(0, -1) as Vec2[]), 0), 0);
 

@@ -15,9 +15,9 @@ import { pointInPolygon, polygonArea } from '../geo.ts';
 import type { Vec2 } from '../geo.ts';
 import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
-import { MODEL_BOX, WALL_IN, WALL_OUT } from './kit.ts';
+import { MODEL_BOX, WALL_IN } from './kit.ts';
 import type { Kit } from './kit.ts';
-import { MIRA, rect } from './plan-util.ts';
+import { add, MIRA, rect, zocalo } from './plan-util.ts';
 import type { Rect } from './plan-util.ts';
 import type { ItemModel, Look } from './types.ts';
 
@@ -137,7 +137,6 @@ const TURNERO_AIRE = 0.06;
 const span = (ua: number, ub: number, va: number, vb: number): Rect => [Math.min(ua, ub), Math.min(va, vb), Math.max(ua, ub), Math.max(va, vb)];
 /** Hacia dónde mira un ángulo local. */
 const dir = (a: number): Vec2 => [Math.sin(a), Math.cos(a)];
-const add = (p: Vec2, d: Vec2, k = 1): Vec2 => [p[0] + d[0] * k, p[1] + d[1] * k];
 /** El ángulo local que mira hacia ±U. */
 const miraU = (s: number): number => (s > 0 ? MIRA.U : MIRA.menosU);
 
@@ -150,30 +149,6 @@ function caras(k: Kit): Caras {
 }
 
 // ---------- piezas ----------
-
-/** El zócalo contra las paredes de afuera, salvo en el hueco de la puerta de la calle. */
-function zocalo(k: Kit, look: Look): void {
-  const r = k.inside, n = r.length;
-  const mid: Vec2 = [r.reduce((s, p) => s + p[0], 0) / n, r.reduce((s, p) => s + p[1], 0) / n];
-  const doors = k.openings.filter((o) => o.kind === 'puerta');
-  for (let i = 0; i < n; i++) {
-    const [p, q] = [r[i], r[(i + 1) % n]];
-    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-    const e: Vec2 = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
-    let nrm: Vec2 = [-e[1], e[0]];
-    if ((mid[0] - p[0]) * nrm[0] + (mid[1] - p[1]) * nrm[1] < 0) nrm = [-nrm[0], -nrm[1]];
-    const along = (x: Vec2): number => (x[0] - p[0]) * e[0] + (x[1] - p[1]) * e[1];
-    const across = (x: Vec2): number => Math.abs((x[0] - p[0]) * nrm[0] + (x[1] - p[1]) * nrm[1]);
-    // los huecos de las puertas de esta pared (sus puntas, en la cara de afuera: a WALL_OUT de la de adentro)
-    const gaps = doors.filter((o) => across(o.a) < WALL_OUT + 0.1 && across(o.c) < WALL_OUT + 0.1)
-      .map((o) => [Math.min(along(o.a), along(o.c)), Math.max(along(o.a), along(o.c))]).sort((a, b) => a[0] - b[0]);
-    let s = 0;
-    for (const [g0, g1] of [...gaps, [len, len]]) {
-      if (g0 - s > 0.05) k.block([add(p, e, s), add(p, e, g0), add(add(p, e, g0), nrm, ZOCALO_T), add(add(p, e, s), nrm, ZOCALO_T)], 0, ZOCALO_H, 'none', 'otro', { side: look, top: look });
-      s = Math.max(s, g1);
-    }
-  }
-}
 
 /** Paneles de luz de 0,6 × 1,2 m en grilla de ~PASO m en el cielorraso de la zona, cada uno con su lámpara; los que no
  *  caen enteros en la planta, no van. */
@@ -473,7 +448,7 @@ export function bancoPlan(marca: Marca): InteriorPlan {
   return (k) => {
     const e = ESTILOS[marca];
     k.shell({ publicFloors: 1, wall: PARED, floor: PISO, ceiling: TECHO });
-    zocalo(k, e.zocalo);
+    zocalo(k, e.zocalo, { h: ZOCALO_H, t: ZOCALO_T });
     const m = medir(k, e);
     if (m) sucursal(k, e, m);
     else {

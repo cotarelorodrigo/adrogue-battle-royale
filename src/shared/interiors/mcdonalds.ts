@@ -21,7 +21,7 @@ import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { GROUND_Y, MODEL_BOX, WALL_OUT } from './kit.ts';
 import type { Kit } from './kit.ts';
-import { MIRA, ngon, rect } from './plan-util.ts';
+import { add, MIRA, ngon, rect } from './plan-util.ts';
 import type { Rect } from './plan-util.ts';
 import type { Look } from './types.ts';
 
@@ -113,7 +113,6 @@ const PANTALLA_Y = 2.0, PANTALLA = { w: 1.0, h: 0.58, d: 0.05 } as const;
 /** La torre (afuera), en la esquina del frente y el costado sur, sobre el techo. */
 const TORRE_TOP = 7.4;
 
-const add = (a: Vec2, b: Vec2, k = 1): Vec2 => [a[0] + b[0] * k, a[1] + b[1] * k];
 
 /** Un revestimiento del piso (sin sólido), apenas arriba de la planta baja (que va a GROUND_Y). */
 const piso = (k: Kit, r: Rect, look: Look): void => k.block(rect(r), GROUND_Y, GROUND_Y + 0.006, 'none', 'otro', { top: look });

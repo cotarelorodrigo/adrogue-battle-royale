@@ -12,7 +12,7 @@ import type { LotShape } from './lots.ts';
 import type { OsmPoi } from './osm.ts';
 import { normalizeName } from './places.ts';
 import type { PlaceInput } from './places-input.ts';
-import { streetWarnings } from './plantas.ts';
+import { plantaLadder, streetWarnings } from './plantas.ts';
 import type { PlantaShape } from './plantas.ts';
 
 const ADENTRO_MIN = -6;
@@ -209,7 +209,9 @@ export function applyFrentes(
   res.buildings = [...carveLots(kept, lots.flatMap((l) => l.claim)), ...lots.flatMap((l) => lotBuilding(l) ?? [])];
   for (const l of lots) {
     res.fronts.set(l.id, { front: l.front, cornerRings: l.cornerRings });
-    if (l.footprint) res.climb.set(l.id, { line: l.front, puntas: aidEnds(l) });
+    if (!l.footprint) continue;
+    const aid = 'planta' in l ? plantaLadder(l as PlantaShape) : null;
+    res.climb.set(l.id, { line: l.front, puntas: aidEnds(l), ...(aid ? { aid } : {}) });
   }
   const signs = lotSigns(res, new Map(), res.warnings);
   res.signs = signs.signs;

@@ -50,19 +50,25 @@ class Builder {
   pos: number[] = [];
   nor: number[] = [];
   uv: number[] = [];
+  col: number[] = [];
   idx: number[] = [];
+  /** Si algún quad trajo color: build() suma el atributo (los demás, blancos). */
+  private colored = false;
 
-  /** a, b, c, d en orden alrededor; la cara mira hacia `n` (se da vuelta el orden si hace falta). */
-  quad(vs: V3[], n: V3, uvs: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]]): void {
+  /** a, b, c, d en orden alrededor; la cara mira hacia `n` (se da vuelta el orden si hace falta); `c`, su color por
+   *  vértice (lineal; multiplica el del material). */
+  quad(vs: V3[], n: V3, uvs: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]], color?: V3): void {
     const [a, b, c] = vs;
     const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
     const cross = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
     const flip = cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] < 0;
     const base = this.pos.length / 3;
+    if (color) this.colored = true;
     vs.forEach((v, k) => {
       this.pos.push(...v);
       this.nor.push(...n);
       this.uv.push(...uvs[k]);
+      this.col.push(...(color ?? [1, 1, 1]));
     });
     if (flip) this.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
     else this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -73,6 +79,7 @@ class Builder {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    if (this.colored) g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
     g.setIndex(this.idx);
     return g;
   }
@@ -275,7 +282,13 @@ function post({ at: p, r, y0, y1 }: StationPost): THREE.BufferGeometry {
   return g;
 }
 
-/** Techo a dos aguas: cada faldón con su cara de arriba y la de abajo (se ve desde el andén). */
+/** La cara de abajo del alero, por vértice (H8 de la revisión de la T10). Sin sol, solo le llega el suelo de la
+ *  HemisphereLight (marrón) por la chapa verde oscura, y se veía negra: (1, 6, 1) con seen() a la exposición de la calle.
+ *  Esto es la luz que le rebota del andén y de las paredes, que la escena no tiene, un poco menos en el verde (el suelo
+ *  de la HemisphereLight es cálido; el rebote, no tanto): se lee (31, 54, 21), verde oscuro, en la misma malla. */
+const CANOPY_UNDER: V3 = [9, 6.5, 8];
+
+/** Techo a dos aguas: cada faldón con su cara de arriba y la de abajo (se ve desde el andén, con CANOPY_UNDER). */
 function canopyRoof(b: Builder, ax: Axis, sa: number, sb: number): void {
   const yR = PLATFORM_H + CANOPY_RIDGE, yE = PLATFORM_H + CANOPY_EAVE, half = ax.width / 2 + CANOPY_OVERHANG;
   for (const side of [-1, 1]) {
@@ -285,8 +298,8 @@ function canopyRoof(b: Builder, ax: Axis, sa: number, sb: number): void {
     const slope = Math.hypot(half, yR - yE);
     const up = new THREE.Vector3(ax.w[0] * side * (yR - yE), half, ax.w[1] * side * (yR - yE)).normalize();
     const uv: [number, number][] = [[sa / CORRUGATION_REPEAT, 0], [sb / CORRUGATION_REPEAT, 0], [sb / CORRUGATION_REPEAT, slope], [sa / CORRUGATION_REPEAT, slope]];
-    b.quad(vs, [up.x, up.y, up.z], uv);
-    b.quad(vs, [-up.x, -up.y, -up.z], uv);
+    b.quad(vs, [up.x, up.y, up.z], uv, [1, 1, 1]);
+    b.quad(vs, [-up.x, -up.y, -up.z], uv, CANOPY_UNDER);
   }
 }
 
@@ -355,7 +368,7 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
     // el alero de los ferrocarriles: chapa y estructura pintadas de verde inglés, oscuro y apagado (la textura de la
     // chapa acanalada lo oscurece todavía: 150–220 de 255); los postes y vigas, un verde más oscuro
     const roofMap = corrugatedTexture();
-    group.add(mesh('canopy', roof.build(), new THREE.MeshLambertMaterial({ map: roofMap, color: '#4a8558' }), true));
+    group.add(mesh('canopy', roof.build(), new THREE.MeshLambertMaterial({ map: roofMap, color: '#4a8558', vertexColors: true }), true));
     group.add(mesh('steel', merge(steel, 'postes'), new THREE.MeshLambertMaterial({ color: '#2f5a3f' })));
     group.add(mesh('stationSigns', merge(signs, 'carteles'), signMaterial(signTexture('ADROGUÉ', TYPE_LOOK.station, STATION_SIGN_W))));
   }

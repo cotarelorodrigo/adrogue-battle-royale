@@ -1,6 +1,6 @@
 // Plantas relevadas (data/plantas.json): los lugares que caen en bloques fusionados de Microsoft y no tienen lote en
 // data/frentes.json. Cada una es un lote suelto: la planta real en un marco local, sus patios y despejes, sus puertas y
-// vidrios, y el aspecto con los mismos campos que un lote. Un patio es parte del lugar sin losa ni techo (lo amuebla el
+// vidrios, dónde va su escalera de mano si no es en el frente, y el aspecto con los mismos campos que un lote. Un patio es parte del lugar sin losa ni techo (lo amuebla el
 // interior); un despeje es suelo que solo se le saca a los bloques de Microsoft (una vereda o un pasillo que tapaban),
 // sin ser parte del interior.
 import { readFileSync } from 'node:fs';
@@ -22,6 +22,9 @@ export type Marco = { calle: string; vereda: 'norte' | 'sur' | 'este' | 'oeste';
 export interface PuertaInput { arista: number; centro: number; ancho: number; alto: number; piso: number }
 /** `desde` y `hasta`: metros desde el vértice `arista`; `abajo` y `arriba`: alturas desde el piso de `piso`. */
 export interface VidrioInput { arista: number; desde: number; hasta: number; abajo: number; arriba: number; piso: number }
+/** La escalera de mano relevada (climb.ts): sobre la arista `arista` (que no es del frente), con su medio a `centro` m
+ *  del vértice `arista`. Sin esto la ayuda va en una punta del frente (aidEnds). */
+export interface EscaleraInput { arista: number; centro: number }
 export interface PlantaInput {
   lugar: string; fecha: string; marco: Marco;
   /** Puntos (u, v) en metros: u a lo largo del frente, v hacia adentro. */
@@ -38,6 +41,7 @@ export interface PlantaInput {
   /** La primera es la principal (D10). */
   puertas: PuertaInput[];
   vidrios: VidrioInput[];
+  escalera?: EscaleraInput;
   lote: LoteInput;
 }
 
@@ -45,11 +49,14 @@ const VEREDAS: readonly string[] = ['norte', 'sur', 'este', 'oeste'];
 const PUERTAS: readonly Puerta[] = ['inicio', 'medio', 'fin'];
 /** Los campos de aspecto, sueltos como en un lote (los valida validateLote). */
 const ASPECTO = ['pisos', 'alto', 'color', 'colorPB', 'material', 'pb', 'arriba', 'puerta', 'toldo', 'cartel', 'nota'];
-const PLANTA_KEYS = ['lugar', 'fecha', 'marco', 'planta', 'patios', 'despejes', 'frente', 'reemplaza', 'puertas', 'vidrios', ...ASPECTO];
+const PLANTA_KEYS = ['lugar', 'fecha', 'marco', 'planta', 'patios', 'despejes', 'frente', 'reemplaza', 'puertas', 'vidrios', 'escalera', ...ASPECTO];
 const MARCO_FRENTE_KEYS = ['calle', 'vereda', 'desde', 'hasta', 's'];
 const MARCO_GEO_KEYS = ['lat', 'lon', 'rumbo'];
 const PUERTA_KEYS = ['arista', 'centro', 'ancho', 'alto', 'piso'];
 const VIDRIO_KEYS = ['arista', 'desde', 'hasta', 'abajo', 'arriba', 'piso'];
+const ESCALERA_KEYS = ['arista', 'centro'];
+/** La escalera de mano: su ancho (el volumen de climb.ts) y lo libre que deja en cada punta de su arista (m). */
+const ESCALERA_W = 0.8, ESCALERA_MARGEN = 0.1;
 const RAIZ_KEYS = ['plantas'];
 const ID_MICROSOFT = /^b\d+$/;
 /** Lo más lejos del origen que puede ir un punto de la planta (m). */
@@ -148,6 +155,7 @@ function checkUnknownFields(where: string, e: Obj): void {
     const xs = e[field];
     if (Array.isArray(xs)) xs.forEach((x: unknown, k) => { if (isObj(x)) unknownField(`${where}, ${name} ${k + 1}`, x, keys); });
   }
+  if (isObj(e.escalera)) unknownField(`${where}: escalera`, e.escalera, ESCALERA_KEYS);
   checkSubFields(where, e);
 }
 
@@ -253,6 +261,24 @@ function validatePlanta(e: Obj, where: string, frentes: FrentesInput, seen: Set<
     return { arista, desde, hasta, abajo, arriba, piso };
   });
 
+  let escalera: EscaleraInput | undefined;
+  if (e.escalera !== undefined) {
+    const x = e.escalera, ew = `${where}: escalera`;
+    if (!isObj(x)) throw new Error(`${where}: escalera tiene que ser { arista, centro }`);
+    const arista = num(ew, 'arista', x.arista, 0, n - 1, { int: true });
+    const centro = num(ew, 'centro', x.centro, 0, MAX_LOCAL);
+    if (frente.includes(arista)) {
+      throw new Error(`${where}: la escalera va en la arista ${arista}, que es del frente: ahí la ayuda va sola en una punta; escalera es para una cara sin frente`);
+    }
+    const [a, b, l] = [centro - ESCALERA_W / 2, centro + ESCALERA_W / 2, edgeLen(planta, arista)];
+    if (a < ESCALERA_MARGEN - EPS || b > l - ESCALERA_MARGEN + EPS) {
+      throw new Error(`${where}: la escalera no entra en la arista ${arista}: va de ${m2(a)} a ${m2(b)} m y la arista mide ${m2(l)} m, con ${dec(ESCALERA_MARGEN)} m libres en cada punta`);
+    }
+    const j = puertas.findIndex((p) => p.arista === arista && Math.min(b, p.centro + p.ancho / 2) - Math.max(a, p.centro - p.ancho / 2) > EPS);
+    if (j >= 0) throw new Error(`${where}: la escalera se pisa con la puerta ${j + 1} (misma arista)`);
+    escalera = { arista, centro };
+  }
+
   // "puerta" es la bahía donde el atlas pinta la puerta: tiene que ser la de la puerta principal, si está en el frente
   const main = puertas[0];
   const edge = run.edges.find((x) => x.i === main.arista);
@@ -266,7 +292,7 @@ function validatePlanta(e: Obj, where: string, frentes: FrentesInput, seen: Set<
         + (fits ? `usá "${fits}"` : 'ninguna de inicio, medio y fin cae ahí: corré la puerta'));
     }
   }
-  return { lugar, fecha: e.fecha, marco, planta, patios, despejes, frente, reemplaza: reemplaza as string[], puertas, vidrios, lote };
+  return { lugar, fecha: e.fecha, marco, planta, patios, despejes, frente, reemplaza: reemplaza as string[], puertas, vidrios, ...(escalera ? { escalera } : {}), lote };
 }
 
 /** Valida data/plantas.json (`source`: de dónde vino, para el mensaje) contra los lotes de `frentes`, completa los valores

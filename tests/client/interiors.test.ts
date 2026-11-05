@@ -212,6 +212,22 @@ describe('buildInterior3D', () => {
     expect(Object.keys(out.attributes).sort()).toEqual(['color', 'normal', 'position', 'uv']);
   });
 
+  test('un paño out (el pasamanos de una escalera out) va con el edificio: en exteriorGeometry, con su color, y no en el interior', () => {
+    const caño = { mat: 'metal', color: '#2c4a36' } as const;
+    const { interior: i } = testInterior({ extra: (k) => k.pane([[1, 1, -1], [3, 1, -1], [3, 2, -1], [1, 2, -1]], [0, 0, -1], caño, { out: true }) });
+    expect(i.panes.filter((p) => p.out)).toHaveLength(1);
+    const out = exteriorGeometry(i);
+    const ts = triangles(out);
+    expect(areaOf(ts)).toBeCloseTo(2, 4);
+    // de frente hacia −z, como su normal
+    for (const t of ts) expect(t.getNormal(new THREE.Vector3()).z).toBeCloseTo(-1, 6);
+    const c = tintColor(caño.color), col = out.getAttribute('color');
+    expect([col.getX(0), col.getY(0), col.getZ(0)].map((x) => +x.toFixed(4))).toEqual([c.r, c.g, c.b].map((x) => +x.toFixed(4)));
+    for (const x of meshesOf(buildInterior3D(i, m, 'media').group).filter((y) => !(y instanceof THREE.InstancedMesh))) {
+      for (const t of triangles(x.geometry)) expect(Math.max(t.a.z, t.b.z, t.c.z)).toBeGreaterThan(-0.5);
+    }
+  });
+
   test('un cartel out que brilla pasa el glow al Sign; uno con placeSign hace que el del lote de su lugar no se dibuje', () => {
     const look = { fondo: '#26292b', letra: '#f2c14e', marco: '#26292b', fuente: 'condensada' as const };
     const { interior: i } = testInterior({ extra: (k) => {

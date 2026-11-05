@@ -470,7 +470,7 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   const split = (['edificio', 'patio'] as const).map((name) => ({
     name,
     blocks: i.blocks.filter((b) => !b.out && region(middle(b.polygon, 0, 1)) === name),
-    panes: i.panes.filter((pn) => region(middle(pn.corners, 0, 2)) === name),
+    panes: i.panes.filter((pn) => !pn.out && region(middle(pn.corners, 0, 2)) === name),
     items: i.items.filter((it) => (it.detail ?? 1) <= detail && region(xz(it.at)) === name),
     labels: i.labels.filter((l) => !l.out && region(xz(l.at)) === name),
   })).filter((r) => r.name === 'edificio' || r.blocks.length + r.panes.length + r.items.length + r.labels.length > 0);
@@ -551,7 +551,7 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   for (const ring of [i.footprint, ...i.patios, ...i.blocks.filter((b) => !b.out).map((b) => b.polygon)]) {
     for (const [x, z] of ring) box.expandByPoint(new THREE.Vector3(x, 0, z)).expandByPoint(new THREE.Vector3(x, top, z));
   }
-  for (const pn of i.panes) for (const p of pn.corners) box.expandByPoint(new THREE.Vector3(...p));
+  for (const pn of i.panes.filter((x) => !x.out)) for (const p of pn.corners) box.expandByPoint(new THREE.Vector3(...p));
   for (const it of i.items) box.expandByPoint(new THREE.Vector3(...it.at));
   if (prep.length === 1) {
     group.add(...meshesOf(prep[0]));

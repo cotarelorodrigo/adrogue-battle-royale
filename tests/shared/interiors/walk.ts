@@ -23,7 +23,7 @@ const SETTLE = 0.5;
 interface Gait { sprint?: boolean; crouch?: boolean }
 
 /** yaw que mira hacia `d` (adelante = (−sin yaw, −cos yaw)). */
-const yawToward = (d: Vec2): number => Math.atan2(-d[0], -d[1]);
+export const yawToward = (d: Vec2): number => Math.atan2(-d[0], -d[1]);
 const press = (yaw: number, g: Gait, forward: 0 | 1 = 1): PlayerInput =>
   ({ forward, right: 0, jump: false, crouch: g.crouch === true, yaw, pitch: 0, sprint: g.sprint === true });
 
@@ -79,6 +79,13 @@ export function enterDoor(
 export function walkTo(world: CollisionWorld, from: Vec3, to: Vec2 | readonly Vec2[], seconds = 10): PlayerState {
   const pts: readonly Vec2[] = typeof to[0] === 'number' ? [to as Vec2] : (to as readonly Vec2[]);
   return walkPath(world, initialState(from), pts, seconds, {});
+}
+
+/** Desde `from`, W con el yaw fijo (sin girar nunca), hasta que se cumple `until` o pasan `seconds`; después frena. */
+export function walkStraight(world: CollisionWorld, from: Vec3, yaw: number, seconds: number, until: (s: PlayerState) => boolean = () => false): PlayerState {
+  let s = initialState(from);
+  for (let k = 0; k < seconds * SIM_HZ && !until(s); k++) s = stepPlayer(s, press(yaw, {}), world, H);
+  return settle(world, s, yaw, {});
 }
 
 /** Sube la escalera de `foot` a `top` (o la baja, con `down`) con W, mirando a lo largo de ella; con Shift si se pide. */

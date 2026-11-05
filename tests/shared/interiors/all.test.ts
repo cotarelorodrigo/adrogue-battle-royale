@@ -143,6 +143,42 @@ test('ningún relleno pisa una planta de interior más de 0,05 m², y ninguna es
   }
 });
 
+// Lo que se dibuja de una escalera de mano (props.ts): los largueros, con su espalda a 2,5 cm de la pared (WALL_GAP −
+// RAIL_T / 2), los peldaños entre ellos y las manijas 0,8 m arriba del techo, en 0,8 m de ancho y LADDER_D (0,6) de
+// fondo. La base está redondeada al cm: la caja arranca a 3 cm. Nada de un interior que se dibuje afuera (un bloque
+// `out`, sólido o no) ni ningún paño puede meterse ahí: se cruzaría con los largueros o los peldaños.
+test('ningún bloque `out` ni ningún paño de un interior toca una escalera de mano del mapa', () => {
+  const ladders = map.props.flatMap((p) => {
+    if (p.kind !== 'ladder') return [];
+    const len = Math.hypot(p.normal[0], p.normal[1]);
+    const [nx, nz] = [p.normal[0] / len, p.normal[1] / len];
+    const at = (t: number, w: number): Vec2 => [p.base[0] - nz * t + nx * w, p.base[1] + nx * t + nz * w];
+    return [{ what: `escalera de ${p.buildingId} en ${p.base.join(', ')}`, poly: [at(-0.4, 0.03), at(0.4, 0.03), at(0.4, 0.6), at(-0.4, 0.6)], y1: p.topY + 0.8 }];
+  });
+  const touches = (poly: Vec2[], y0: number, y1: number, l: (typeof ladders)[number]): boolean =>
+    y1 > 0 && y0 < l.y1 && area(polygonClipping.intersection(closed(ensureCCW(poly)), closed(ensureCCW(l.poly)))) > 1e-6;
+  /** La planta de un paño: la de sus esquinas si es horizontal o inclinado; si es vertical, su recta engordada 1 mm. */
+  const paneFoot = (c: [number, number, number][]): Vec2[] => {
+    const q = c.map((r): Vec2 => [r[0], r[2]]);
+    if (Math.abs(polygonArea(q)) > 1e-6) return q;
+    const [a, b] = q.reduce<[Vec2, Vec2]>((m, x) => (Math.hypot(x[0] - m[0][0], x[1] - m[0][1]) > Math.hypot(m[1][0] - m[0][0], m[1][1] - m[0][1]) ? [m[0], x] : m), [q[0], q[1]]);
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, e: Vec2 = [(-(b[1] - a[1]) / l) * 0.001, ((b[0] - a[0]) / l) * 0.001];
+    return [[a[0] - e[0], a[1] - e[1]], [b[0] - e[0], b[1] - e[1]], [b[0] + e[0], b[1] + e[1]], [a[0] + e[0], a[1] + e[1]]];
+  };
+  const bad: string[] = [];
+  for (const i of interiors) {
+    const mine = ladders.filter((l) => l.what.includes(` ${i.buildingId} `));
+    for (const l of mine) {
+      for (const x of i.blocks.filter((y) => y.out)) if (touches(x.polygon, x.y0, x.y1, l)) bad.push(`${i.placeId}: un bloque out (${x.role}, y ${fmt(x.y0)}–${fmt(x.y1)}) toca la ${l.what}`);
+      for (const p of i.panes) {
+        const ys = p.corners.map((r) => r[1]);
+        if (touches(paneFoot(p.corners), Math.min(...ys), Math.max(...ys), l)) bad.push(`${i.placeId}: un paño (${p.look.mat}) toca la ${l.what}`);
+      }
+    }
+  }
+  expect(bad).toEqual([]);
+});
+
 test('ningún prop (contenedor, escalera, banco) se pisa con un bloque sólido de un interior, ni con uno `out`', () => {
   const props: { what: string; poly: Vec2[]; y0: number; y1: number }[] = [];
   for (const p of map.props) {

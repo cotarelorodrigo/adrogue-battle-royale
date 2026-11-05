@@ -203,6 +203,18 @@ describe('lotes relevados: la ayuda no tapa la fachada', () => {
     expect(a.base).toEqual([expect.closeTo(20 - LADDER_AT, 6), expect.closeTo(0, 6)]);
     expect(slots.get('m')).toEqual({ fin: expect.closeTo(LADDER_AT + 0.6, 6) });
   });
+  test('una escalera relevada (LotFront.aid) va ahí, aunque esa cara no dé a una calle, y la fachada queda entera', () => {
+    const m = front(box('m', 10, 0, 20, 10, 2));
+    // el costado este, libre y sin calle: sin el dato la ayuda iría a la punta de la fachada (test de arriba)
+    const aid = { mid: [20, 5] as Vec2, n: [1, 0] as Vec2, d: [0, 1] as Vec2 };
+    const { props, slots } = placeClimbAidsWithStats([m, vecinos[0]], roads, new Map([['m', { line, puntas: ['fin' as const], aid }]]));
+    const a = props.filter((p) => p.kind === 'ladder' && p.buildingId === 'm');
+    expect(a).toHaveLength(1);
+    if (a[0]?.kind !== 'ladder') throw new Error('esperaba ladder');
+    expect(a[0].base).toEqual([20, 5]);
+    expect(a[0].normal).toEqual([1, 0]);
+    expect(slots.has('m')).toBe(false);
+  });
   test('sin el lote en el mapa de lotes, sigue yendo al medio de la arista', () => {
     const m = front(box('m', 10, 0, 20, 10, 2));
     const a = ayudaDe(placeClimbAidsWithStats([m, ...vecinos], roads).props, 'm');

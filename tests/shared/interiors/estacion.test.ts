@@ -10,12 +10,13 @@ import { buildCollisionWorld } from '../../../src/shared/collision.ts';
 import { hitscan } from '../../../src/shared/combat.ts';
 import { distPointSegment, ensureCCW, pointInPolygon, polygonArea, toLocal } from '../../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
+import { muralColors, muralSeed } from '../../../src/shared/interiors/estacion.ts';
 import { INTERIOR_PLANS, interiorOf, publicFloorArea } from '../../../src/shared/interiors/index.ts';
 import { MODEL_BOX, SOLID_MIN_H } from '../../../src/shared/interiors/kit.ts';
 import type { Block } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { PLATFORM_H, railRuns, stationLayout } from '../../../src/shared/station.ts';
-import { enterDoor, insideOf, walkTo } from './walk.ts';
+import { enterDoor, insideOf, walkStraight, walkTo, yawToward } from './walk.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -32,6 +33,7 @@ const areaOf = (m: polygonClipping.MultiPolygon): number => m.reduce((t, pg) => 
 const overlap = (p: Vec2[], q: Vec2[]): number => areaOf(polygonClipping.intersection(closed(ensureCCW(p)), closed(ensureCCW(q))));
 const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
+const centroidOf = (ps: Vec2[]): Vec2 => [ps.reduce((t, q) => t + q[0], 0) / ps.length, ps.reduce((t, q) => t + q[1], 0) / ps.length];
 const local = (p: Vec2): Vec2 => toLocal(frame, p);
 /** Un vector local (U, V) en el mundo. */
 const vec = ([a, c]: Vec2): Vec2 => [a * frame.u[0] + c * frame.v[0], a * frame.u[1] + c * frame.v[1]];
@@ -241,6 +243,24 @@ describe('el hall', () => {
     expect(same / total, 'simétrico a lo ancho (al menos 3 de cada 4 pares)').toBeGreaterThanOrEqual(0.75);
   });
 
+  // H6 de la revisión: armarlo dos veces con el mismo mapa no prueba que la semilla salga de la posición
+  test('la semilla del mural sale de su posición: en el mismo lugar, el mismo mural; corrido 1 m, otro patrón', () => {
+    const tiles = i.panes.filter((p) => p.look.mat === 'ceramico');
+    // la esquina de abajo del primer azulejo, sin los 4 mm que sale de la pared
+    const n = tiles[0].normal, p: Vec2 = [tiles[0].corners[0][0] - n[0] * 0.004, tiles[0].corners[0][2] - n[2] * 0.004];
+    const seed = muralSeed(p);
+    expect(muralSeed([p[0], p[1]])).toBe(seed);
+    expect(muralColors(seed)).toEqual(muralColors(seed));
+    // el plan usa esa semilla: los colores de los azulejos, columna por columna, son los de muralColors
+    expect(tiles.map((t) => t.look.color)).toEqual(muralColors(seed).flat());
+    // corrido 1 m a lo largo de la pared y hacia cada lado en el mundo: otra semilla y otro patrón
+    for (const d of [vec([0, 1]), vec([0, -1]), [1, 0], [-1, 0], [0, 1], [0, -1]] as Vec2[]) {
+      const q: Vec2 = [p[0] + d[0], p[1] + d[1]];
+      expect(muralSeed(q), `corrido ${fmt(d)}`).not.toBe(seed);
+      expect(muralColors(muralSeed(q)), `corrido ${fmt(d)}`).not.toEqual(muralColors(seed));
+    }
+  });
+
   test('la puerta del baño, cerrada: un cartel en relieve sobre la hoja y, detrás, pared', () => {
     const l = i.labels.find((x) => /BAÑO/.test(x.text));
     expect(l).toBeDefined();
@@ -285,6 +305,45 @@ describe('afuera (out)', () => {
     expect(barras.length).toBeGreaterThanOrEqual(12);
   });
 
+  // H4 de la revisión: desde el andén (donde más se juega) y desde los costados, la pared no es un paño liso
+  test('ventanas con reja verde también en la pared del andén (arriba de PLATFORM_H) y en los dos costados', () => {
+    const vidrios = i.blocks.filter((x) => x.out && x.side?.color === '#3d4b55');
+    const cara = (x: Block): string => {
+      const [u0, v0, u1, v1] = boxOf(x);
+      return v1 <= 0.01 ? 'frente' : v0 >= 6.38 ? 'andén' : u1 <= 0.01 ? 'U 0' : u0 >= 9.99 ? 'U 10' : `¿${fmt([u0, v0, u1, v1])}?`;
+    };
+    const por = (c: string): Block[] => vidrios.filter((x) => cara(x) === c);
+    expect(vidrios.map(cara).filter((c) => c.startsWith('¿'))).toEqual([]);
+    expect(por('frente')).toHaveLength(2);
+    expect(por('andén').length, 'en la pared del andén').toBeGreaterThanOrEqual(1);
+    expect(por('U 0').length, 'en el costado de U 0').toBeGreaterThanOrEqual(1);
+    expect(por('U 10').length, 'en el costado del patio').toBeGreaterThanOrEqual(1);
+    for (const x of por('andén')) expect(x.y0, 'arriba del andén y de su zócalo').toBeGreaterThanOrEqual(PLATFORM_H + 1.2 - 1e-6);
+    // cada vidrio con su reja: barrotes verdes finos, out, delante de él (más afuera) y a su altura
+    for (const x of vidrios) {
+      const [u0, v0, u1, v1] = boxOf(x), along = cara(x) === 'frente' || cara(x) === 'andén' ? 0 : 1;
+      const reja = i.blocks.filter((y) => {
+        if (!y.out || y.side?.color !== '#2c4a36' || y.y0 < x.y0 - 1e-6 || y.y1 > x.y1 + 1e-6 || y.y1 - y.y0 < 0.5 * (x.y1 - x.y0)) return false;
+        const [a0, b0, a1, b1] = boxOf(y), lo = along === 0 ? a0 : b0, hi = along === 0 ? a1 : b1;
+        const fuera = cara(x) === 'frente' ? b1 <= v0 + 1e-6 : cara(x) === 'andén' ? b0 >= v1 - 1e-6 : cara(x) === 'U 0' ? a1 <= u0 + 1e-6 : a0 >= u1 - 1e-6;
+        return fuera && hi - lo < 0.04 && lo >= (along === 0 ? u0 : v0) - 1e-6 && hi <= (along === 0 ? u1 : v1) + 1e-6;
+      });
+      expect(reja.length, `la reja de la ventana de ${cara(x)} en ${fmt(boxOf(x))}`).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  // H3 de la revisión: la herrería del patio se ve de lejos, con el edificio (los molinetes no: son muebles)
+  test('la herrería del patio es out: los caños de las barandas, la hoja abierta y las barras de los pasamanos', () => {
+    const fuera = (q: Vec2): boolean => !pointInPolygon(q, b.footprint);
+    const caños = i.blocks.filter((x) => x.collide === 'none' && x.side && fuera(centroidOf(x.polygon)) && x.y1 > 0.5 && x.role === 'otro'
+      && !rojo(x.side.color) && !amarillo(x.side.color));
+    expect(caños.length).toBeGreaterThan(20);
+    for (const x of caños) expect(x.out, `${x.side!.color} en ${fmt(boxOf(x))}`).toBe(true);
+    const barras = i.panes.filter((p) => fuera([p.corners[0][0], p.corners[0][2]]));
+    expect(barras.length).toBeGreaterThan(0);
+    for (const p of barras) expect(p.out).toBe(true);
+  });
+
   test('la escalera de acceso (out): baldosas rojas en las huellas y una nariz amarilla en cada escalón', () => {
     const esc = i.blocks.filter((x) => x.role === 'escalon');
     expect(esc.length).toBeGreaterThanOrEqual(4);
@@ -294,6 +353,44 @@ describe('afuera (out)', () => {
     }
     const narices = i.blocks.filter((x) => x.out && x.top && amarillo(x.top.color) && esc.some((e) => Math.abs(x.y0 - e.y1) < 0.01));
     expect(narices.length).toBeGreaterThanOrEqual(esc.length);
+  });
+});
+
+// H11 de la revisión: la escalera llega al andén que está (no a un número copiado de OSM), y si el plan no puede ubicar
+// algo, lo dice en vez de dejar un hall vacío
+describe('lo que el plan ubica', () => {
+  const con = (f: (x: MapData['interiors'][number]) => MapData['interiors'][number], m: Partial<MapData> = {}): MapData =>
+    ({ ...map, ...m, interiors: map.interiors.map((x) => (x.placeId === ID ? f(x) : x)) });
+  test('la escalera termina en el borde de atrás del andén, el que da al edificio (a lo sumo 5 mm antes y sin pisarlo)', () => {
+    const top = i.stairs.find((s) => s.top[1] > PLATFORM_H - 1e-6)!;
+    const anden = map.platforms.find((p) => pointInPolygon(xz(mark('anden')), p))!;
+    // el descanso de arriba: el bloque rojo, sólido, de PLATFORM_H de alto, que arranca en el último escalón
+    const descanso = i.blocks.find((x) => x.collide === 'solid' && Math.abs(x.y1 - PLATFORM_H) < 1e-6 && x.top && rojo(x.top.color) && x.out)!;
+    expect(descanso, 'el descanso').toBeDefined();
+    const [, , , v1] = boxOf(descanso);
+    // donde la recta del medio de la escalera (su U) cruza el anillo del andén, del lado del edificio
+    const u = local(xz(top.foot))[0], r = anden.map(local);
+    const borde = Math.min(...r.flatMap((q, k) => {
+      const w = r[(k + 1) % r.length];
+      if ((q[0] - u) * (w[0] - u) > 0 || q[0] === w[0]) return [];
+      return [q[1] + ((w[1] - q[1]) * (u - q[0])) / (w[0] - q[0])];
+    }));
+    expect(borde - v1, `descanso hasta V ${v1.toFixed(4)}, andén desde V ${borde.toFixed(4)}`).toBeGreaterThanOrEqual(0);
+    expect(borde - v1).toBeLessThan(0.005);
+    // si el andén se corre 10 cm para el lado de la vía, el descanso lo sigue; 10 cm hacia el edificio, pisaría el
+    // último escalón: la escalera no entra, y lo dice
+    const corrido = (dv: number): MapData => con((x) => x, { platforms: map.platforms.map((p) => (p === anden ? p.map((q): Vec2 => [q[0] + vec([0, dv])[0], q[1] + vec([0, dv])[1]]) : p)) });
+    const d2 = interiorOf(corrido(0.1), ID).blocks.find((x) => x.collide === 'solid' && Math.abs(x.y1 - PLATFORM_H) < 1e-6 && x.top && rojo(x.top.color) && x.out)!;
+    expect(boxOf(d2)[3] - v1).toBeCloseTo(0.1, 3);
+    expect(() => interiorOf(corrido(-0.1), ID)).toThrow(/estacion-adrogue: la escalera no entra/);
+  });
+
+  test('sin patio, sin la puerta del patio, sin andén o con otra planta: un error que dice qué falta, no un hall vacío', () => {
+    expect(() => interiorOf(con((x) => ({ ...x, patios: [] })), ID)).toThrow(/estacion-adrogue: .*patio/);
+    expect(() => interiorOf(con((x) => ({ ...x, openings: x.openings.filter((o) => o.edge !== 1) })), ID)).toThrow(/estacion-adrogue: .*puerta del patio/);
+    expect(() => interiorOf(con((x) => x, { platforms: [] }), ID)).toThrow(/estacion-adrogue: .*andén/);
+    const angosto = con((x) => x, { buildings: map.buildings.map((y) => (y.id === b.id ? { ...y, height: 3.5 } : y)) });
+    expect(() => interiorOf(angosto, ID)).toThrow(/estacion-adrogue: .*relevad/);
   });
 });
 
@@ -335,10 +432,11 @@ describe('dónde está', () => {
 
   test('de place.spawn, derecho con W hacia la puerta, se entra a la planta (la T11: teleport y W)', () => {
     const d = calle();
-    const target: Vec2 = [d.at[0] - d.normal[0] * 2, d.at[1] - d.normal[1] * 2];
-    const end = walkTo(world, place.spawn, target, 10);
+    // como el e2e de la T11: el yaw fijo, del spawn a la puerta, y W sin girar
+    const yaw = yawToward([d.at[0] - place.spawn[0], d.at[1] - place.spawn[2]]);
+    const end = walkStraight(world, place.spawn, yaw, 10, (s) => insideOf(b, s.pos) && Math.hypot(s.pos[0] - d.at[0], s.pos[2] - d.at[1]) > 1.5);
     expect(insideOf(b, end.pos), `termina en ${fmt(end.pos)}`).toBe(true);
-    // y es una recta: el spawn mira a la puerta (la T11 aprieta W sin girar)
+    // y es una recta: el spawn mira a la puerta de frente (en su U, a lo sumo 0,2 m del medio de la puerta)
     const [su] = local(xz(place.spawn)), [du] = local(d.at);
     expect(Math.abs(su - du)).toBeLessThan(0.2);
   });

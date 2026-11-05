@@ -8,6 +8,7 @@ import { ensureCCW, insetRing, pointInPolygon, polygonArea, signedAreaFromAbove,
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { Building, InteriorInput, Opening, SignLook, Tree } from '../mapdata.ts';
 import { LEVEL_H, LINTEL_MIN, doorsOf } from './openings.ts';
+import { add } from './plan-util.ts';
 import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, LabelDrawing, Lamp, Look, Pane, Role, StairRun, Viewpoint } from './types.ts';
 
 /** Espesores (m): pared de afuera, tabique, losa entre pisos y techo. */
@@ -123,7 +124,6 @@ const RAIL_PIECE = 0.5, RAIL_PROBE = 0.15;
 const EPS = 1e-9;
 
 type Ring = [number, number][];
-const add = (a: Vec2, b: Vec2, k = 1): Vec2 => [a[0] + b[0] * k, a[1] + b[1] * k];
 const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
 const dist = (a: Vec2, b: Vec2): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const unit = (a: Vec2): Vec2 => {
@@ -158,12 +158,18 @@ export class Kit {
   get patios(): Vec2[][] {
     return this.input.patios.map((r) => r.map((p) => toLocal(this.input.frame, p)));
   }
+  /** Los andenes del mapa (MapData.platforms: los anillos de stationLayout) en el marco local; [] si no vinieron. Para
+   *  lo que llega a un andén, como la escalera de la estación. */
+  get platforms(): Vec2[][] {
+    return this.platformRings.map((r) => r.map((p) => toLocal(this.input.frame, p)));
+  }
   /** El alto del edificio: el del techo (y el de la terraza). */
   get height(): number {
     return this.b.height;
   }
   private readonly b: Building;
   private readonly input: InteriorInput;
+  private readonly platformRings: Vec2[][];
   /** La planta antihoraria (mundo) y, por cada arista suya, sus aberturas. */
   private readonly fp: Vec2[];
   private readonly cuts: Cut[][];
@@ -183,11 +189,13 @@ export class Kit {
   /** El hueco (marco local) que abre cada escalera en las losas de los niveles from + 1 … to, y la baranda de su borde. */
   private readonly stairHoles: { from: number; to: number; poly: Vec2[]; rail: Look; style: RailStyle }[] = [];
   /** Los pasamanos de las escaleras: se arman en done(), cuando ya están todos los huecos. */
-  private readonly handrails: { from: number; to: number; foot: Vec2; d: Vec2; side: Vec2; w: number; treads: [number, number][]; y0: number; y1: number; rail: Look; look: Look; style: RailStyle }[] = [];
+  /** Los pasamanos de las escaleras (StairOpts.handrail), que se arman en done(); `out`, el de la escalera. */
+  private readonly handrails: { from: number; to: number; foot: Vec2; d: Vec2; side: Vec2; w: number; treads: [number, number][]; y0: number; y1: number; rail: Look; look: Look; style: RailStyle; out?: true }[] = [];
 
-  constructor(b: Building, input: InteriorInput) {
+  constructor(b: Building, input: InteriorInput, platforms: Vec2[][] = []) {
     this.b = b;
     this.input = input;
+    this.platformRings = platforms;
     const stored = b.footprint, n = stored.length;
     const ccw = signedAreaFromAbove(stored) > 0;
     this.fp = ccw ? stored.map((p): Vec2 => [p[0], p[1]]) : [...stored].reverse().map((p): Vec2 => [p[0], p[1]]);
@@ -298,7 +306,9 @@ export class Kit {
       const left: Vec2 = sx * dz - sz * dx > 0 ? side : [-side[0], -side[1]];
       const sides: Vec2[] = o.handrail === 'izq' ? [left] : o.handrail === 'der' ? [[-left[0], -left[1]]] : [left, [-left[0], -left[1]]];
       const rail = o.rail ?? o.look;
-      for (const s of sides) this.handrails.push({ from: o.from, to: o.to, foot: o.foot, d, side: s, w, treads, y0, y1, rail, look: o.handrailLook ?? rail, style: o.railStyle ?? {} });
+      for (const s of sides) {
+        this.handrails.push({ from: o.from, to: o.to, foot: o.foot, d, side: s, w, treads, y0, y1, rail, look: o.handrailLook ?? rail, style: o.railStyle ?? {}, ...(o.out ? { out: true as const } : {}) });
+      }
     }
     const [f, t] = [this.at(add(o.foot, d, -STAIR_REACH)), this.at(add(o.foot, d, run + STAIR_REACH))];
     this.runs.push({ from: o.from, to: o.to, foot: [f[0], y0, f[1]], top: [t[0], y1, t[1]], yaw: this.yawToward(d) });
@@ -345,8 +355,9 @@ export class Kit {
 
   /** Una barra que solo se dibuja (paños): de `a` a `b` (marco local, [u, y, v]: el medio de su cara de arriba en cada
    *  punta), de `width` de través (horizontal) y `height` hacia abajo, de canto a a → b; para lo inclinado (un cabio, un
-   *  pasamanos). Con `ends`, también las tapas de las puntas. a → b no puede ser vertical. */
-  bar(a: Vec3, b: Vec3, width: number, height: number, look: Look, o: { sky?: true; ends?: true } = {}): void {
+   *  pasamanos). Con `ends`, también las tapas de las puntas; con `out`, se dibuja con el edificio (Pane.out). a → b no
+   *  puede ser vertical. */
+  bar(a: Vec3, b: Vec3, width: number, height: number, look: Look, o: { sky?: true; ends?: true; out?: true } = {}): void {
     const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     const l = Math.hypot(...d), h = Math.hypot(d[0], d[2]);
     const e: Vec3 = [d[0] / l, d[1] / l, d[2] / l], t: Vec3 = [-d[2] / h, 0, d[0] / h];
@@ -355,7 +366,7 @@ export class Kit {
     const up: Vec3 = c[1] >= 0 ? c : [-c[0], -c[1], -c[2]];
     const at = (p: Vec3, s: number, y: number): Vec3 => [p[0] + t[0] * s - up[0] * y, p[1] - up[1] * y, p[2] + t[2] * s - up[2] * y];
     const neg = (v: Vec3): Vec3 => [-v[0], -v[1], -v[2]];
-    const w = width / 2, f = o.sky ? { sky: true as const } : {};
+    const w = width / 2, f = { ...(o.sky ? { sky: true as const } : {}), ...(o.out ? { out: true as const } : {}) };
     this.pane([at(a, -w, 0), at(b, -w, 0), at(b, w, 0), at(a, w, 0)], up, look, f);
     this.pane([at(a, -w, height), at(a, w, height), at(b, w, height), at(b, -w, height)], neg(up), look, f);
     this.pane([at(a, w, 0), at(b, w, 0), at(b, w, height), at(a, w, height)], t, look, f);
@@ -381,7 +392,7 @@ export class Kit {
 
   /** Un paño que solo se dibuja (Pane): sus 3 o 4 esquinas y la normal de su frente en el marco local, como [u, y, v].
    *  `back`: se ve también de atrás; `sky`: arriba del techo, sobre un hueco (D13). */
-  pane(corners: Vec3[], normal: Vec3, look: Look, o: { back?: true; sky?: true } = {}): void {
+  pane(corners: Vec3[], normal: Vec3, look: Look, o: { back?: true; sky?: true; out?: true } = {}): void {
     this.open();
     if (corners.length < 3 || corners.length > 4) throw new Error(`${this.input.placeId}: un paño lleva 3 o 4 esquinas (tiene ${corners.length})`);
     const world = corners.map(([u, y, v]): Vec3 => {
@@ -390,7 +401,8 @@ export class Kit {
     });
     const [nx, nz] = this.vec([normal[0], normal[2]]), l = Math.hypot(nx, normal[1], nz);
     if (l < EPS) throw new Error(`${this.input.placeId}: un paño necesita la normal de su frente`);
-    this.panes.push({ corners: world, normal: [nx / l, normal[1] / l, nz / l], look, ...(o.back ? { back: true as const } : {}), ...(o.sky ? { sky: true as const } : {}) });
+    this.panes.push({ corners: world, normal: [nx / l, normal[1] / l, nz / l], look, ...(o.back ? { back: true as const } : {}), ...(o.sky ? { sky: true as const } : {}),
+      ...(o.out ? { out: true as const } : {}) });
   }
 
   /** Un mueble en `p` sobre el piso `y`, mirando hacia `yaw` (local): su frente (el +z del modelo) va hacia ahí. Y su
@@ -675,9 +687,11 @@ export class Kit {
   }
 
   /** El pasamanos de un costado de una escalera (StairOpts.handrail): `side` (unitario, marco local) apunta a ese costado
-   *  y `w` es el medio ancho. */
+   *  y `w` es el medio ancho. Si la escalera es `out` (se ve siempre, con el edificio), sus paños, parantes y barras
+   *  también (H3 de la revisión de la T10); el `out` de railStyle (el de las barandas de hueco) no lo toca. */
   private stairHandrail(h: Kit['handrails'][number]): void {
     const { foot, d, side, w, treads, y0, y1, rail, look } = h;
+    const out = h.out ? { out: true as const } : undefined;
     if (treads.length === 0) return;
     const caño = h.style.caño === true, P = caño ? HANDRAIL.caño : HANDRAIL.vidrio;
     const t = RAIL_T / 2, q = w - t, p = P.post / 2, r = (y1 - y0) / (treads.length + 1);
@@ -689,14 +703,14 @@ export class Kit {
     treads.forEach(([s0, s1], k) => {
       const i = k + 1, y = y0 + i * r, m = (s0 + Math.min(s1, s0 + TREAD)) / 2;
       if (y + RAIL_H <= this.ceilingBeside(at((s0 + s1) / 2, w + RAIL_PROBE), h.from, h.to, y) + 1e-6) {
-        this.block([at(s0 - t, q - t), at(s1 + t, q - t), at(s1 + t, q + t), at(s0 - t, q + t)], y, y + RAIL_H, 'glass', 'baranda', caño ? {} : { side: rail, top: rail });
+        this.block([at(s0 - t, q - t), at(s1 + t, q - t), at(s1 + t, q + t), at(s0 - t, q + t)], y, y + RAIL_H, 'glass', 'baranda', caño ? {} : { side: rail, top: rail }, out);
       }
       if ((i - 1) % 3 === 0 || i === treads.length) {
-        this.block([at(m - p, q - p), at(m + p, q - p), at(m + p, q + p), at(m - p, q + p)], y, nose(m) + P.postTop, 'none', 'otro', P.postCap ? { side: look, top: look } : { side: look });
+        this.block([at(m - p, q - p), at(m + p, q - p), at(m + p, q + p), at(m - p, q + p)], y, nose(m) + P.postTop, 'none', 'otro', P.postCap ? { side: look, top: look } : { side: look }, out);
       }
     });
     const [a, b] = [at(0, q), at(fin, q)];
-    for (const [top, width, height] of P.bars) this.bar([a[0], nose(0) + top, a[1]], [b[0], nose(fin) + top, b[1]], width, height, look, { ends: true });
+    for (const [top, width, height] of P.bars) this.bar([a[0], nose(0) + top, a[1]], [b[0], nose(fin) + top, b[1]], width, height, look, { ends: true, ...out });
   }
 
   /** El cielorraso al lado de una escalera en `p` (marco local), sobre un escalón a y: la cara de abajo de la losa más baja
