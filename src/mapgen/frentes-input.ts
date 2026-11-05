@@ -22,7 +22,7 @@ export interface FrentesInput { frentes: FrenteInput[]; calzadas: Record<string,
 
 const PB: readonly string[] = ['vidriera', 'persiana', 'porton', 'puerta', 'banco', 'acceso', 'pared'];
 const ARRIBA: readonly string[] = ['ventanas', 'balcones', 'vidriado', 'ciego'];
-const FUENTES: readonly string[] = ['sans', 'serif', 'condensada', 'redondeada'];
+const FUENTES: readonly string[] = ['sans', 'serif', 'condensada', 'redondeada', 'script'];
 const PUERTAS: readonly string[] = ['inicio', 'medio', 'fin'];
 const MATERIALES: readonly string[] = ['revoque', 'ladrillo'];
 const POSICIONES: readonly string[] = ['frente', 'alto', 'bandera'];

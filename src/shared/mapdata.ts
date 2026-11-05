@@ -51,7 +51,8 @@ export interface MapData { version: 1; origin: { lat: number; lon: number }; bou
 
 export type PlantaBaja = 'vidriera' | 'persiana' | 'porton' | 'puerta' | 'banco' | 'acceso' | 'pared';
 export type Arriba = 'ventanas' | 'balcones' | 'vidriado' | 'ciego';
-export type Fuente = 'sans' | 'serif' | 'condensada' | 'redondeada';
+/** La letra de un cartel; `script`, la manuscrita de una heladería (fuentes del sistema: signs.ts). */
+export type Fuente = 'sans' | 'serif' | 'condensada' | 'redondeada' | 'script';
 export type Puerta = 'inicio' | 'medio' | 'fin';
 /** Frente relevado de un lote. `edges`: aristas de `footprint` sobre la línea de edificación, de `desde` a `hasta`;
  *  `corner`: aristas sobre la línea de la calle transversal (lotes de esquina). */

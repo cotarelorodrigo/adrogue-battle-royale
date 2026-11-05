@@ -14,7 +14,7 @@ import { PAGE, packSigns, signTexture } from '../signs.ts';
 import type { InteriorKey, WorldMaterials } from '../types.ts';
 import { cutRect, facing, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
 import type { Builder, Rect } from '../wall-kit.ts';
-import { lightAt, outdoorLight, outdoors } from './bake.ts';
+import { lightAt, outdoorLightAt, outdoors } from './bake.ts';
 import { LABEL_DRAWINGS } from './drawings.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassTone } from './glass.ts';
 import { ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
@@ -44,15 +44,14 @@ const unit = (x: number, z: number): Vec2 => {
 };
 
 /** El horneado de un interior: la luz de cada punto (con memoria: las celdas vecinas comparten vértices). Lo que está al
- *  aire libre (outdoors: la terraza, el patio, la vereda) lleva la luz de afuera (outdoorLight), dividida por
- *  INTERIOR_EXPOSURE, que después la multiplica. */
+ *  aire libre (outdoors: la terraza, el patio, la vereda) lleva la luz de afuera, con la sombra de lo macizo del propio
+ *  interior (outdoorLightAt), dividida por INTERIOR_EXPOSURE, que después la multiplica. */
 function baker(i: Interior): (p: Vec3, n: Vec3) => number {
   const memo = new Map<string, number>();
   return (p, n) => {
-    if (outdoors(i, p)) return outdoorLight(n) / INTERIOR_EXPOSURE;
     const key = `${p.map((v) => v.toFixed(3)).join(',')}|${n.map((v) => v.toFixed(2)).join(',')}`;
     let v = memo.get(key);
-    if (v === undefined) memo.set(key, (v = lightAt(i, p, n)));
+    if (v === undefined) memo.set(key, (v = outdoors(i, p) ? outdoorLightAt(i, p, n) / INTERIOR_EXPOSURE : lightAt(i, p, n)));
     return v;
   };
 }
@@ -383,6 +382,18 @@ function labelMeshes(labels: Label[], canvases: HTMLCanvasElement[], packed: Ret
  */
 type Level = 0 | 1 | 2 | 3;
 
+/** Los Mat cuya textura trae el color (la foto del ladrillo: su tinte es claro, H2 de la tarea 8). Las demás son claras y
+ *  casi grises, y el nivel 3 las dibuja con el tinte solo, como siempre. */
+const TONED: ReadonlySet<string> = new Set(['ladrillo']);
+
+/** Multiplica el color por vértice de `g` por `tone` (el color medio, lineal, de la textura que se le saca). */
+function toned(g: THREE.BufferGeometry, tone: Vec3 | undefined): void {
+  if (!tone) return;
+  const c = g.getAttribute('color') as THREE.BufferAttribute;
+  for (let k = 0; k < c.count; k++) c.setXYZ(k, c.getX(k) * tone[0], c.getY(k) * tone[1], c.getZ(k) * tone[2]);
+  c.needsUpdate = true;
+}
+
 /** El interior para dibujar con los materiales `m` en la calidad `q`, y su caja (planta, patios y lo de adentro). Se
  *  compacta hasta entrar en min(MAX_MESHES, interiors.calls) mallas; si ni así entra, tira un error con el lugar. */
 export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): { group: THREE.Group; box: THREE.Box3 } {
@@ -424,10 +435,11 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   if (level < 3) {
     for (const mat of opaque) add(blocks.get(mat)!, `in_${mat}`);
   } else {
-    // sin textura: el color por vértice ya lleva el Look y la luz
+    // sin textura: el color por vértice ya lleva el Look y la luz; las fotos que traen su tono, también ese tono
     const flat = opaque.map((mat) => {
       const g = blocks.get(mat)!;
       g.deleteAttribute('uv');
+      if (TONED.has(mat)) toned(g, (m[`in_${mat}`] as THREE.MeshBasicMaterial).map?.userData.tone as Vec3 | undefined);
       return g;
     });
     add(merged(i, [...flat, ...looseGeometries(items, light)]), 'in_mueble');

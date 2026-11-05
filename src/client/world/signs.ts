@@ -26,7 +26,11 @@ const SANS = '"Helvetica Neue", Helvetica, Arial, sans-serif';
 const SERIF = 'Georgia, "Times New Roman", Times, serif';
 const CONDENSED = '"Arial Narrow", "Helvetica Neue", Arial, sans-serif';
 const ROUNDED = '"Trebuchet MS", Verdana, sans-serif';
-const FAMILY: Record<Fuente, string> = { sans: SANS, serif: SERIF, condensada: CONDENSED, redondeada: ROUNDED };
+/** La manuscrita, con fuentes que ya traen los sistemas: Snell Roundhand, Brush Script MT y Apple Chancery (macOS),
+ *  Segoe Script (Windows) y Bradley Hand; si no hay ninguna, una serif. Sin el genérico `cursive`: en Windows es la
+ *  Comic Sans. Ya es inclinada: no lleva `cursiva`. */
+const SCRIPT = '"Snell Roundhand", "Brush Script MT", "Apple Chancery", "Segoe Script", "Bradley Hand", serif';
+const FAMILY: Record<Fuente, string> = { sans: SANS, serif: SERIF, condensada: CONDENSED, redondeada: ROUNDED, script: SCRIPT };
 
 /** Por tipo de lugar, para los carteles que no vienen del relevamiento: los colores y las letras sugieren el rubro sin copiar ningún logo. */
 export const TYPE_LOOK: Record<PlaceType, SignLook & { weight: Weight }> = {

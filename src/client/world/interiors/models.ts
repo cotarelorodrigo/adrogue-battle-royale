@@ -106,21 +106,32 @@ const foosRod = (z: number, n: number, team: string): THREE.BufferGeometry[] => 
   ...Array.from({ length: n }, (_, k) => box(0.03, 0.08, 0.025, [((k - (n - 1) / 2) * 0.6) / Math.max(1, n), 0.818, z], team)),
 ];
 
+/** Los muebles, en su marco: el frente mira a +z (Item.yaw lo gira) y, si no se dice otra cosa, el origen va en el piso,
+ *  en el medio de su planta (la caja de MODEL_BOX, si la tiene, lo rodea). Los colgados lo dicen en su comentario:
+ *  `lampara` (el borde de abajo de la campana), `pantalla` (el medio de su borde de abajo), `plafon` (el medio de su cara
+ *  de abajo) y `turnero` (en el piso: la caja cuelga a 2,3 m). En los que se tiñen (Item.color), lo blanco (#ffffff) es lo
+ *  que toma el color. Varios interiores comparten estos modelos: antes de poner uno, mirá acá qué dibuja y dónde tiene el
+ *  origen (contexto-comun.md). */
 export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
-  // la silla de cuatro patas negras: el asiento y el respaldo se tiñen (de madera, amarillos)
+  // la silla de cuatro patas negras (origen: el piso, bajo el medio del asiento; el respaldo, del lado de −z): el
+  // asiento y el respaldo se tiñen (de madera, amarillos); sin color, blancos
   silla: () => model(box(0.42, 0.04, 0.42, [0, 0.43, 0], '#ffffff'), box(0.42, 0.3, 0.03, [0, 0.59, -0.195], '#ffffff'),
     box(0.03, 0.16, 0.03, [-0.195, 0.47, -0.195], FRAME_BLACK), box(0.03, 0.16, 0.03, [0.195, 0.47, -0.195], FRAME_BLACK),
     ...legs(0.42, 0.42, 0.43, 0.03, FRAME_BLACK)),
-  // la banqueta alta de la barra: el asiento se tiñe; el caño, el apoyapiés y la base, negros
+  // la banqueta alta de la barra (origen: el piso, en el medio de la base): el asiento se tiñe; el caño, el apoyapiés y
+  // la base, negros
   banqueta: () => model(cyl(0.18, 0.05, [0, 0.7, 0], '#ffffff', 14), cyl(0.025, 0.7, [0, 0, 0], FRAME_BLACK, 6),
     cyl(0.2, 0.02, [0, 0, 0], FRAME_BLACK, 14), cyl(0.15, 0.02, [0, 0.32, 0], FRAME_BLACK, 10)),
-  // la lámpara campana colgada (brilla): la campana blanca, el cable y el florón
+  // la lámpara campana colgada (brilla; desde la tarea 8 ya no es la de pie): la campana blanca, el cable y el florón. El
+  // origen es el medio del borde de abajo de la campana: Item.at[1] es el alto de ese borde (el cable sube BELL_DROP)
   lampara: () => model(cone(0.05, 0.17, 0.22, [0, 0, 0], BELL, 16), cyl(0.045, 0.05, [0, 0.22, 0], BELL, 10),
     cyl(0.006, BELL_DROP - 0.3, [0, 0.27, 0], BELL_CABLE, 4), cyl(0.06, 0.03, [0, BELL_DROP - 0.03, 0], BELL, 10)),
-  // la mesa de cuatro patas: la tapa se tiñe (de madera)
+  // la mesa de cuatro patas de 1,2 × 0,8 (origen: el piso, bajo el medio de la tapa): la tapa se tiñe (de madera); sin
+  // color, blanca
   mesa: () => model(box(1.2, 0.04, 0.8, [0, 0.71, 0], '#ffffff'), box(1.1, 0.08, 0.7, [0, 0.63, 0], '#d8d8d8'), ...legs(1.2, 0.8, 0.71, 0.05, FRAME_BLACK)),
-  // un módulo de sillón corrido (el del McDonald's): el zócalo negro, el almohadón y el respaldo (el zigzag del tapizado
-  // es un cartel del plan sobre el respaldo y el frente)
+  // un módulo de sillón corrido de 0,85 m (el del McDonald's; origen: el piso, en el medio del módulo; el respaldo, del
+  // lado de −z): el zócalo negro, el almohadón y el respaldo (el zigzag del tapizado es un cartel del plan sobre el
+  // respaldo y el frente). Se ponen en fila, uno al lado del otro
   sillon: () => model(box(0.85, 0.1, 0.8, [0, 0, 0.025], PLINTH), box(0.85, 0.34, 0.72, [0, 0.1, 0.065], CUSHION),
     box(0.85, 0.8, 0.13, [0, 0, -0.36], CUSHION), box(0.85, 0.03, 0.14, [0, 0.77, -0.355], PLINTH)),
   // la hoja de vidrio abierta (D10): acá, el marco; el paño va en ITEM_GLASS
@@ -163,7 +174,7 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   // el panel de una muestra (MODEL_BOX: 1,6 × 0,12 × 2,2): el tablero blanco sobre dos pies; los cuadros son carteles
   'panel-muestra': () => model(box(1.6, 2.1, 0.08, [0, 0.1, 0], PANEL_FACE), box(1.62, 0.03, 0.1, [0, 2.17, 0], PANEL_FOOT),
     ...[-0.62, 0.62].flatMap((x) => [box(0.08, 0.12, 0.5, [x, 0, 0], PANEL_FOOT), box(0.05, 0.1, 0.05, [x, 0.08, 0], PANEL_FOOT)])),
-  // la mesa redonda blanca de 0,7 m con pie negro (MODEL_BOX)
+  // la mesa redonda blanca de 0,7 m con pie negro (MODEL_BOX; origen: el piso, bajo el medio de la tapa)
   'mesa-redonda': () => model(cyl(0.35, 0.03, [0, 0.72, 0], TOP_WHITE, 20), cyl(0.04, 0.69, [0, 0.03, 0], PEDESTAL, 8),
     cyl(0.25, 0.03, [0, 0, 0], PEDESTAL, 16)),
   // la freidora de una cuba (MODEL_BOX: 0,5 × 0,8 × 1,1): el gabinete de acero con su puerta, la cuba con el aceite, las
@@ -173,12 +184,13 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
     box(0.16, 0.12, 0.2, [-0.1, 0.92, 0.08], GRILLE), box(0.16, 0.12, 0.2, [0.1, 0.92, 0.08], GRILLE),
     box(0.02, 0.02, 0.18, [-0.1, 1.04, 0.27], HANDLE), box(0.02, 0.02, 0.18, [0.1, 1.04, 0.27], HANDLE),
     box(0.5, 0.2, 0.08, [0, 0.9, -0.36], INOX)),
-  // la heladera de acero de dos puertas (MODEL_BOX: 0,75 × 0,8 × 2,0): el cuerpo, las puertas con sus manijas y la
-  // rejilla del motor arriba
-  heladera: () => model(box(0.75, 2.0, 0.78, [0, 0, -0.01], INOX), box(0.36, 1.72, 0.02, [-0.19, 0.1, 0.38], INOX),
-    box(0.36, 1.72, 0.02, [0.19, 0.1, 0.38], INOX), box(0.02, 0.5, 0.03, [-0.03, 0.9, 0.39], HANDLE), box(0.02, 0.5, 0.03, [0.03, 0.9, 0.39], HANDLE),
-    box(0.7, 0.14, 0.02, [0, 1.84, 0.38], GRILLE), box(0.75, 0.1, 0.02, [0, 0, 0.38], HANDLE)),
-  // la pantalla de menú (brilla): el marco negro y las dos varillas al cielorraso
+  // la heladera de acero de dos puertas de cocina (MODEL_BOX: 1,3 × 0,8 × 2,0): el cuerpo, las dos puertas de 0,62 con
+  // sus manijas en el medio, la rejilla del motor arriba y el zócalo
+  heladera: () => model(box(1.3, 2.0, 0.78, [0, 0, -0.01], INOX), box(0.62, 1.72, 0.02, [-0.325, 0.1, 0.38], INOX),
+    box(0.62, 1.72, 0.02, [0.325, 0.1, 0.38], INOX), box(0.025, 0.6, 0.03, [-0.045, 0.85, 0.39], HANDLE), box(0.025, 0.6, 0.03, [0.045, 0.85, 0.39], HANDLE),
+    box(1.24, 0.14, 0.02, [0, 1.84, 0.38], GRILLE), box(1.3, 0.1, 0.02, [0, 0, 0.38], HANDLE)),
+  // la pantalla de menú (brilla; origen: el medio de su borde de abajo, ver PANTALLA): el marco negro y las dos varillas
+  // al cielorraso
   pantalla: () => model(box(PANTALLA.w, PANTALLA.h, PANTALLA.d, [0, 0, 0], BEZEL),
     box(0.02, PANTALLA.rod, 0.02, [-0.35, PANTALLA.h, 0], BEZEL), box(0.02, PANTALLA.rod, 0.02, [0.35, PANTALLA.h, 0], BEZEL)),
   // la mesa de picnic de madera (MODEL_BOX: 1,8 × 1,5 × 0,75): la tapa, los dos bancos y los caballetes en A
@@ -186,10 +198,12 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
     box(1.8, 0.04, 0.26, [0, 0.42, 0.62], PICNIC_WOOD),
     ...[-0.7, 0.7].flatMap((x) => [lean(0.06, 0.8, 0.06, [x, 0, -0.58], 0.52, PICNIC_WOOD), lean(0.06, 0.8, 0.06, [x, 0, 0.58], -0.52, PICNIC_WOOD),
       box(0.06, 0.05, 1.5, [x, 0.38, 0], PICNIC_WOOD)])),
-  // la sombrilla (sin caja: se cruza): la base, el mástil y la tela en ocho paños, roja
+  // la sombrilla (sin caja: se cruza; origen: el piso, en el medio de la base): la base, el mástil y la tela en ocho
+  // paños, roja, de 1,3 m de radio con el borde a 1,86 m
   sombrilla: () => model(cyl(0.22, 0.06, [0, 0, 0], BASE, 12), cyl(0.022, 2.3, [0, 0.06, 0], POLE, 6),
     cone(0.04, 1.3, 0.38, [0, 1.98, 0], CANOPY, 8), cone(1.3, 1.3, 0.12, [0, 1.86, 0], CANOPY, 8)),
-  // la silla director plegable (sin caja): el armazón y los apoyabrazos negros, la lona (asiento y respaldo) se tiñe
+  // la silla director plegable (sin caja; origen: el piso, bajo el medio del asiento; el respaldo, del lado de −z): el
+  // armazón y los apoyabrazos negros, la lona (asiento y respaldo) se tiñe
   'silla-director': () => model(...[-1, 1].flatMap((sx) => [
     box(0.03, 0.48, 0.03, [sx * 0.26, 0.42, -0.2], FRAME_BLACK), box(0.03, 0.24, 0.03, [sx * 0.26, 0.42, 0.2], FRAME_BLACK),
     box(0.04, 0.03, 0.46, [sx * 0.26, 0.64, 0], FRAME_BLACK), box(0.03, 0.03, 0.42, [sx * 0.26, 0.42, 0], FRAME_BLACK),

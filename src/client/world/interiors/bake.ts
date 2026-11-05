@@ -32,6 +32,8 @@ const NEGLIGIBLE = 1e-4, FEW = 0.01;
 const FAR = 2;
 /** Lado (m) de la grilla en planta de los que tapan la luz. */
 const GRID = 2;
+/** Hasta dónde se busca lo que tapa el sol si está casi en el horizonte (m). */
+const SUN_REACH = 50;
 /** El segmento hasta la fuente se acorta esto (m) en cada punta: un punto sobre una cara no se tapa a sí mismo. */
 const TRIM = 0.02;
 
@@ -46,7 +48,9 @@ interface Cell { at: Vec3; area: number }
  *  (abajo). */
 interface Source { k: number; normal: Vec3; twoSided: boolean; cells: Cell[]; samples: Vec3[]; middle: Vec3[]; disc: Cell[]; size: number }
 interface Grid { x0: number; z0: number; nx: number; nz: number; cells: Prism[][] }
-interface Prepared { sources: Source[]; blockers: Grid; slabs: Prism[]; occluders: Prism[]; query: { n: number } }
+/** `sun`: lo que le tapa el sol a lo de afuera: lo macizo del interior salvo las losas (van en `slabs`) y las cajas de
+ *  los muebles (MODEL_BOX es gruesa: una mesa de picnic haría la sombra de un cajón), y `sunTop`, su punto más alto. */
+interface Prepared { sources: Source[]; blockers: Grid; slabs: Prism[]; occluders: Prism[]; sun: Grid; sunTop: number; query: { n: number } }
 
 /** El sentido de una planta convexa (1 o −1, el signo del giro en cada vértice), o 0 si no es convexa. */
 function convexTurn(poly: Vec2[]): number {
@@ -184,6 +188,8 @@ function prepare(i: Interior): Prepared {
     blockers: gridOf(i.blocks.filter((b) => b.role === 'pared' || b.role === 'tabique').map((b) => prism(b.polygon, b.y0, b.y1))),
     slabs: i.blocks.filter((b) => b.role === 'losa').map((b) => prism(b.polygon, b.y0, b.y1)),
     occluders: i.blocks.filter((b) => b.role !== 'vidrio' && b.role !== 'baranda').map((b) => prism(b.polygon, b.y0, b.y1)),
+    sun: gridOf(i.blocks.filter((b) => b.collide === 'solid' && b.role !== 'losa' && b.role !== 'mueble').map((b) => prism(b.polygon, b.y0, b.y1))),
+    sunTop: Math.max(0, ...i.blocks.filter((b) => b.collide === 'solid' && b.role !== 'mueble').map((b) => b.y1)),
     query: { n: 0 },
   };
   cache.set(i, p);
@@ -270,10 +276,9 @@ const hits = (q: Prism, a: Vec3, b: Vec3, box: number[]): boolean =>
   !(box[1] < q.minX || box[0] > q.maxX || box[5] < q.minZ || box[4] > q.maxZ || box[3] <= q.y0 + 1e-3 || box[2] >= q.y1 - 1e-3) &&
   hitsBox(q, a, b) && (q.turn !== 0 ? crossesConvex(q, a, b) : crosses(q, a, b));
 
-/** ¿Algo tapa el camino de p a c? Las losas se miran todas; las paredes y los tabiques, en las celdas de la grilla que
- *  cruza el segmento (DDA). */
-function blocked(pr: Prepared, p: Vec3, c: Vec3): boolean {
-  const g = pr.blockers;
+/** ¿Algo tapa el camino de p a c? Las losas se miran todas; lo de la grilla `g` (las paredes y los tabiques, o lo que
+ *  tapa el sol), en las celdas que cruza el segmento (DDA). */
+function blocked(pr: Prepared, p: Vec3, c: Vec3, g: Grid = pr.blockers): boolean {
   if (g.nx === 0 && pr.slabs.length === 0) return false;
   const len = Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]);
   if (len < 2 * TRIM) return false;
@@ -376,12 +381,23 @@ const lum = (hex: number): number => {
 const SUN_K = SUN_LIGHT.intensity * lum(SUN_LIGHT.color), SKY_K = SKY_LIGHT.intensity * lum(SKY_LIGHT.sky), GROUND_K = SKY_LIGHT.intensity * lum(SKY_LIGHT.ground);
 
 /** La luz al aire libre en una cara de normal `n` (unitaria): la que le da la escena a un Lambert (el sol por el coseno
- *  y el cielo de la HemisphereLight, sobre π), sin sombras. Va en vez de la horneada en lo que el interior tiene afuera
- *  (outdoors): así una terraza o un patio se ven como lo de alrededor, con la exposición de la calle. */
-export function outdoorLight(n: Vec3): number {
-  const sun = Math.max(0, n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z);
+ *  y el cielo de la HemisphereLight, sobre π); `sun` false, a la sombra (solo el cielo). Va en vez de la horneada en lo
+ *  que el interior tiene afuera (outdoors): así una terraza o un patio se ven como lo de alrededor, con la exposición de
+ *  la calle. */
+export function outdoorLight(n: Vec3, sun = true): number {
+  const k = sun ? Math.max(0, n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z) : 0;
   const w = 0.5 * n[1] + 0.5;
-  return (SUN_K * sun + GROUND_K + (SKY_K - GROUND_K) * w) / Math.PI;
+  return (SUN_K * k + GROUND_K + (SKY_K - GROUND_K) * w) / Math.PI;
+}
+
+/** outdoorLight en el punto `p`, con la sombra de lo macizo del propio interior: sin el sol si una pared o una losa se
+ *  lo tapa (hacia SUN_DIR, hasta pasar lo más alto del interior). La de los muebles y la de los vecinos no está (T11). */
+export function outdoorLightAt(i: Interior, p: Vec3, n: Vec3): number {
+  if (n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z <= 0) return outdoorLight(n);
+  const pr = prepare(i);
+  const reach = SUN_DIR.y > 0.05 ? Math.max(0, pr.sunTop - p[1]) / SUN_DIR.y + 0.1 : SUN_REACH;
+  const c: Vec3 = [p[0] + SUN_DIR.x * reach, p[1] + SUN_DIR.y * reach, p[2] + SUN_DIR.z * reach];
+  return outdoorLight(n, !blocked(pr, p, c, pr.sun));
 }
 
 /** ¿El punto está al aire libre? Fuera de la planta (un patio, la vereda) o, con terraza, sobre el techo. */

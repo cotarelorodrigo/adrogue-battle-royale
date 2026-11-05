@@ -15,25 +15,31 @@
 //   roja vertical, y "McDonald's" en blanco sobre el costado que da al AutoMac. El revestimiento gris oscuro de la
 //   fachada ya lo pone el lote (tinte #2e2e30), y el cartel del frente, el lugar.
 // Si la planta no es la relevada (sin el patio o más chica), queda el salón vacío.
-import type { Vec2 } from '../geo.ts';
+import { distPointSegment } from '../geo.ts';
+import type { Vec2, Vec3 } from '../geo.ts';
 import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
-import { GROUND_Y } from './kit.ts';
+import { GROUND_Y, MODEL_BOX, WALL_OUT } from './kit.ts';
 import type { Kit } from './kit.ts';
 import type { Look } from './types.ts';
 
 // ---------- materiales ----------
 
-/** Las paredes: el gris claro de adentro; el cielorraso de placas oscuras. */
+/** Las paredes: el gris claro de adentro; el cielorraso de placas gris oscuro con las juntas más claras. Calibrados con
+ *  la luz horneada, a INDOOR_EXPOSURE (tests/client/mcd-veneciana.test.ts): las placas se ven ~(45, 47, 50), la mitad
+ *  que las paredes; más oscuras, la ACES las aplasta a negro y el cielorraso se lee como un hueco. */
 const PARED: Look = { mat: 'liso', color: '#d9d8d4' };
-const PLACAS: Look = { mat: 'liso', color: '#3b3c3f' };
+const PLACAS: Look = { mat: 'liso', color: '#808388' };
+const JUNTA: Look = { mat: 'liso', color: '#a9abaf' };
 /** El porcelanato gris claro del salón y las tablas de madera clara del lado norte. */
 const PORCELANATO: Look = { mat: 'porcelanato', color: '#cfcfcb' };
 const TABLAS: Look = { mat: 'madera', color: '#d2ad7e' };
-/** La madera de las columnas y de las barras; la de los listones va lisa (la veta de `madera` corre a lo ancho: en un
- *  listón parado se ve como tablitas apiladas). */
+/** La madera de las barras; la de los listones y las tablas de las columnas va lisa (la veta de `madera` corre a lo
+ *  ancho: en una pieza parada se ve como tablitas apiladas), en dos tonos y con la junta oscura. */
 const LISTON: Look = { mat: 'madera', color: '#b98a58' };
 const LISTON_PARADO: Look = { mat: 'liso', color: '#b98a58' };
+const TABLA_OSCURA: Look = { mat: 'liso', color: '#a6784b' };
+const JUNTA_MADERA: Look = { mat: 'liso', color: '#5a3e26' };
 /** El mostrador: el frente negro y la mesada blanca. */
 const FRENTE_NEGRO: Look = { mat: 'liso', color: '#1d1d1f' };
 const MESADA: Look = { mat: 'liso', color: '#f2f2f0' };
@@ -43,10 +49,12 @@ const BALDOSA_COCINA: Look = { mat: 'baldosa', color: '#9a4434' };
 const TECHO_COCINA: Look = { mat: 'liso', color: '#eeeeec' };
 /** Las puertas de los baños, de madera oscura. */
 const PUERTA: Look = { mat: 'madera', color: '#5e4634' };
-/** El patio: el piso de baldosones grises y la pared de ladrillo; de lejos (`out`), el revoque del color del ladrillo. */
+/** El patio: el piso de baldosones grises y la pared de ladrillo; de lejos (`out`), el revoque del color del ladrillo.
+ *  La foto del ladrillo ya es rojiza: el tinte apenas la calienta (uno rojo la deja bordó, casi negra a la sombra; tests/
+ *  client/mcd-veneciana.test.ts). El de lejos va sobre el revoque crudo del chunk: es el tono de la foto por el tinte. */
 const PATIO_PISO: Look = { mat: 'baldosa', color: '#a39f98' };
-const LADRILLO: Look = { mat: 'ladrillo', color: '#c0674a' };
-const LADRILLO_LEJOS: Look = { mat: 'liso', color: '#8e4a36' };
+const LADRILLO: Look = { mat: 'ladrillo', color: '#ffc2a8' };
+const LADRILLO_LEJOS: Look = { mat: 'liso', color: '#b87e67' };
 /** Los spots del cielorraso y los paneles de la cocina (brillan). */
 const SPOT: Look = { mat: 'luz', color: '#fff2dc' };
 const PANEL: Look = { mat: 'luz', color: '#e8ecee' };
@@ -81,8 +89,17 @@ const SPOT_R = 3.6, SPOT_P = 0.3, CAMPANA_R = 2.6, CAMPANA_P = 0.3, PANEL_R = 4.
 const TECHO = 3.0;
 /** El mostrador: de U 2,0 a 11,8, de V 10,8 a 11,6, de 1,1 m; el paso a la cocina, de 11,8 a la medianera (13,0). */
 const MOSTRADOR = { u0: 2.0, u1: 11.8, v0: 10.8, v1: 11.6, h: 1.1 } as const;
-/** El tabique de la cocina (V 14) y el del pasillo de los baños (U 1,95), y el del fondo (V 21,55). */
+/** El tabique de la cocina (V 14) y el del pasillo de los baños (U 1,95), y el del fondo (V 21). */
 const COCINA_V = 14.0, PASILLO_U = 1.95, FONDO_V = 21.0;
+/** La puerta del personal, del pasillo del fondo a la cocina: en el tabique del fondo, `at` m desde su punta del pasillo. */
+const PUERTA_PERSONAL = { at: 8.6, ancho: 1.0, alto: 2.2 } as const;
+/** El cielorraso del salón, del frente al mostrador: las placas de PLACA m, centradas en los spots (cada SPOTS.paso,
+ *  desde SPOTS.u, SPOTS.v), con juntas de JUNTA_W. */
+const SALON_CIELO: Rect = [0.2, 0.2, 13.0, 10.8];
+const SPOTS = { u: 1.2, v: 1.4, paso: 2.4, nu: 5, nv: 4 } as const;
+const PLACA = 0.6, JUNTA_W = 0.03;
+/** Las columnas revestidas en madera: el lado, las tablas por cara, la junta entre tablas y lo que salen del núcleo. */
+const COLUMNA = { lado: 0.44, tablas: 4, junta: 0.008, sale: 0.012 } as const;
 /** El tabique de listones entre el porcelanato y la madera. */
 const LISTONES = { u: 6.4, v0: 1.4, v1: 5.6 } as const;
 /** La zona de tablas de madera. */
@@ -137,7 +154,7 @@ function salon(k: Kit): void {
   }
   k.block(rect([LISTONES.u - 0.05, LISTONES.v0, LISTONES.u + 0.05, LISTONES.v1]), TECHO - 0.08, TECHO - 0.005, 'none', 'otro', { side: LISTON_PARADO, bottom: LISTON_PARADO });
   // las columnas revestidas en madera
-  for (const c of [[3.2, 8.6], [9.4, 8.6]] as Vec2[]) k.block(rect([c[0] - 0.22, c[1] - 0.22, c[0] + 0.22, c[1] + 0.22]), 0, TECHO, 'solid', 'otro', { side: LISTON });
+  for (const c of [[3.2, 8.6], [9.4, 8.6]] as Vec2[]) columna(k, c);
   // las barras contra la vidriera (de 1,05 m, mesada de madera) con banquetas amarillas mirando a la calle
   for (const [u0, u1] of [[0.5, 3.6], [6.7, 10.5]] as const) {
     k.block(rect([u0, 0.2, u1, 0.6]), 0, 1.05, 'solid', 'mueble', { side: FRENTE_NEGRO, top: LISTON });
@@ -161,8 +178,44 @@ function salon(k: Kit): void {
   }
   // en el porcelanato, seis mesas redondas con sillas amarillas (sin tapar la puerta: U 4–6,2 queda libre)
   for (const u of [1.4, 3.1]) for (const v of [2.6, 4.6, 6.6]) mesaRedonda(k, [u, v], 'V', AMARILLO);
-  // los spots del cielorraso de placas oscuras
-  for (const u of [1.2, 3.6, 6.0, 8.4, 10.8]) for (const v of [1.4, 3.8, 6.2, 8.8]) spot(k, [u, v]);
+  // el cielorraso de placas oscuras: las juntas y los spots, cada uno en el medio de una placa
+  juntas(k);
+  for (let a = 0; a < SPOTS.nu; a++) for (let b = 0; b < SPOTS.nv; b++) spot(k, [SPOTS.u + a * SPOTS.paso, SPOTS.v + b * SPOTS.paso]);
+}
+
+/** Las juntas de las placas del cielorraso del salón: perfiles de JUNTA_W, 4 mm bajo el revestimiento, a lo largo de U y
+ *  de V, a media placa de los spots. Son paños (Pane: no tapan la luz; como bloques, cada junta le haría sombra de
+ *  contacto al cielorraso de alrededor) del `liso` de las paredes, sin mallas nuevas. Van en tramos de dos placas: un
+ *  paño se hornea en sus puntas (build.ts). */
+function juntas(k: Kit): void {
+  const [u0, v0, u1, v1] = SALON_CIELO, w = JUNTA_W / 2, y = TECHO - 0.004, down: Vec3 = [0, -1, 0];
+  // de lo a hi, cada PLACA: la primera, la de un spot corrida media placa y llevada hacia atrás hasta el borde
+  const lines = (spot: number, lo: number, hi: number): number[] => {
+    const start = spot - PLACA / 2 - PLACA * Math.floor((spot - PLACA / 2 - lo) / PLACA);
+    return Array.from({ length: Math.ceil((hi - start) / PLACA) }, (_, j) => start + j * PLACA);
+  };
+  const tramos = (lo: number, hi: number): [number, number][] => {
+    const n = Math.ceil((hi - lo) / (2 * PLACA));
+    return Array.from({ length: n }, (_, j) => [lo + (j * (hi - lo)) / n, lo + ((j + 1) * (hi - lo)) / n]);
+  };
+  for (const u of lines(SPOTS.u, u0, u1)) for (const [a, b] of tramos(v0, v1)) k.pane([[u - w, y, a], [u + w, y, a], [u + w, y, b], [u - w, y, b]], down, JUNTA);
+  // las de través, 1 mm más abajo: en los cruces no se pisan con las otras
+  for (const v of lines(SPOTS.v, v0, v1)) for (const [a, b] of tramos(u0, u1)) k.pane([[a, y - 0.001, v - w], [b, y - 0.001, v - w], [b, y - 0.001, v + w], [a, y - 0.001, v + w]], down, JUNTA);
+}
+
+/** Una columna revestida en madera, de COLUMNA.lado, en `c`: el núcleo sólido (se ve en las juntas) y, en cada cara,
+ *  tablas paradas en dos tonos. La última tabla de cada cara sale hasta tapar la punta de la cara siguiente. */
+function columna(k: Kit, c: Vec2): void {
+  const { lado, tablas, junta, sale } = COLUMNA, h = lado / 2, w = (lado - junta * (tablas - 1)) / tablas;
+  k.block(rect([c[0] - h, c[1] - h, c[0] + h, c[1] + h]), 0, TECHO, 'solid', 'otro', { side: JUNTA_MADERA });
+  for (const n of [[0, -1], [1, 0], [0, 1], [-1, 0]] as Vec2[]) {
+    const t: Vec2 = [-n[1], n[0]], f = add(c, n, h);
+    for (let j = 0; j < tablas; j++) {
+      const s0 = -h + j * (w + junta), s1 = j === tablas - 1 ? h + sale : s0 + w;
+      const [a, b] = [add(f, t, s0), add(f, t, s1)];
+      k.block([a, b, add(b, n, sale), add(a, n, sale)], 0, TECHO, 'none', 'otro', { side: j % 2 === 0 ? LISTON_PARADO : TABLA_OSCURA });
+    }
+  }
 }
 
 /** El mostrador, sus carteles, las pantallas, la zona de atención y la cocina. */
@@ -199,8 +252,11 @@ function mostradorYCocina(k: Kit): void {
   k.block(rect([5.4, 16.3, 7.2, 16.85]), 0.92, 0.96, 'none', 'otro', { top: { mat: 'metal', color: '#3a3c40' }, side: ACERO });
   acero(k, [4.0, 14.05, 10.6, 14.75], 0.92);
   acero(k, [5.2, 18.6, 9.6, 19.3], 0.92);
-  for (const u of [3.0, 3.8, 4.6, 5.4]) k.furniture('heladera', [u, FONDO_V - 0.45], 0, MIRA.menosV);
-  for (const u of [10.2, 11.0]) k.furniture('heladera', [u, FONDO_V - 0.45], 0, MIRA.menosV);
+  // las heladeras de dos puertas contra el fondo: tres del lado del pasillo y una pasando la puerta del personal, que
+  // queda libre
+  const hw = MODEL_BOX.heladera!.w, hv = FONDO_V - 0.05 - MODEL_BOX.heladera!.d / 2;
+  for (let j = 0; j < 3; j++) k.furniture('heladera', [PASILLO_U + 0.2 + hw / 2 + j * (hw + 0.05), hv], 0, MIRA.menosV);
+  k.furniture('heladera', [PASILLO_U + 0.05 + PUERTA_PERSONAL.at + PUERTA_PERSONAL.ancho / 2 + 0.1 + hw / 2, hv], 0, MIRA.menosV);
   for (const [u, v] of [[4.0, 15.6], [8.0, 15.6], [4.0, 19.8], [8.0, 19.8], [11.4, 17.5]] as Vec2[]) {
     k.block(rect([u - 0.6, v - 0.3, u + 0.6, v + 0.3]), TECHO - 0.03, TECHO - 0.02, 'none', 'otro', { bottom: PANEL, side: PANEL });
     k.lamp([u, v], TECHO - 0.2, PANEL_R, PANEL_P);
@@ -210,7 +266,7 @@ function mostradorYCocina(k: Kit): void {
 /** El pasillo de los baños y el del fondo, con la puerta del personal a la cocina. */
 function pasillos(k: Kit, U0: number): void {
   k.wall([PASILLO_U, MOSTRADOR.v0], [PASILLO_U, FONDO_V + 0.05], { look: PARED });
-  k.wall([PASILLO_U + 0.05, FONDO_V], [13.0, FONDO_V], { look: PARED, gaps: [{ at: 8.6, width: 1.0, height: 2.2 }] });
+  k.wall([PASILLO_U + 0.05, FONDO_V], [13.0, FONDO_V], { look: PARED, gaps: [{ at: PUERTA_PERSONAL.at, width: PUERTA_PERSONAL.ancho, height: PUERTA_PERSONAL.alto }] });
   // las puertas de los baños (cerradas: un paño de madera contra la pared de afuera) y su cartel
   for (const [v, n] of [[13.4, 'DAMAS'], [16.4, 'CABALLEROS']] as const) {
     k.block(rect([U0, v, U0 + 0.03, v + 0.9]), 0, 2.1, 'none', 'otro', { side: PUERTA, top: PUERTA });
@@ -221,13 +277,18 @@ function pasillos(k: Kit, U0: number): void {
   for (const u of [4.0, 8.0, 11.5]) spot(k, [u, 22.5]);
 }
 
-/** El patio del fondo (D12): el piso, la pared de ladrillo en los lados que no son del local (por afuera, donde da a la
- *  calle de servicio, un revoque del color del ladrillo que se ve de lejos), las mesas de picnic y las sombrillas. */
+/** El patio del fondo (D12): el piso, la pared de ladrillo en los lados que no son del local (por afuera, un revoque del
+ *  color del ladrillo que se ve de lejos), las mesas de picnic y las sombrillas. */
 function patio(k: Kit, ring: Vec2[]): void {
   k.block(ring, 0, GROUND_Y, 'none', 'otro', { top: PATIO_PISO });
-  // la pared, 0,2 m adentro de cada lado salvo el del local (V = 23,6); en las puntas contra el local, recta
-  const n = ring.length, T = 0.2, H = 2.4;
-  const local = (k2: number): boolean => Math.abs(ring[k2][1] - 23.6) < 1e-6 && Math.abs(ring[(k2 + 1) % n][1] - 23.6) < 1e-6;
+  // la pared, 0,2 m adentro de cada lado salvo el del local; en las puntas contra el local, recta. El lado del local va
+  // sobre la planta: su medio queda a WALL_OUT de la cara de adentro de las paredes del local (k.inside)
+  const n = ring.length, T = 0.2, H = 2.4, inside = k.inside;
+  const toInside = (p: Vec2): number => Math.min(...inside.map((q, j) => distPointSegment(p, q, inside[(j + 1) % inside.length])));
+  const local = (k2: number): boolean => {
+    const [a, b] = [ring[k2], ring[(k2 + 1) % n]];
+    return Math.abs(toInside([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]) - WALL_OUT) < 0.01;
+  };
   const inward = (a: Vec2, b: Vec2): Vec2 => {
     const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
     return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l];
@@ -243,18 +304,15 @@ function patio(k: Kit, ring: Vec2[]): void {
     const bis: Vec2 = [m1[0] + m2[0], m1[1] + m2[1]], dot = m1[0] * bis[0] + m1[1] * bis[1];
     return add(b, bis, T / dot);
   };
-  // los lados que dan a la calle de servicio (sin vecino): se ven de lejos
-  const calle = (a: Vec2, b: Vec2): boolean => (Math.abs(a[0]) < 1e-6 && Math.abs(b[0]) < 1e-6) || (a[0] < 2.01 && b[0] < 2.01 && Math.abs(a[1] - b[1]) > 1);
   for (let j = 0; j < n; j++) {
     if (local(j)) continue;
     const [a, b] = [ring[j], ring[(j + 1) % n]];
     const wall = [a, b, corner((j + 1) % n), corner(j)];
-    // la cara de afuera (la primera arista) no se dibuja: da al vecino o la tapa el revoque de afuera
+    // la cara de afuera (la primera arista) no se dibuja: la tapa el revoque de afuera, 3 cm más allá. Va en todos los
+    // lados: donde da a la calle se ve de lejos; donde hay un vecino más alto, queda adentro de su pared
     k.block(wall, 0, H, 'solid', 'otro', { side: LADRILLO, top: LADRILLO }, { hide: [0] });
-    if (calle(a, b)) {
-      const o = side(a, b);
-      k.block([add(a, o, -0.03), add(b, o, -0.03), b, a], 0, H, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, { out: true, hide: [2] });
-    }
+    const o = side(a, b);
+    k.block([add(a, o, -0.03), add(b, o, -0.03), b, a], 0, H, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, { out: true, hide: [2] });
   }
   for (const u of [3.2, 6.6, 10.0]) {
     k.furniture('mesa-picnic', [u, 26.35], 0, 0);

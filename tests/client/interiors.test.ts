@@ -126,6 +126,8 @@ describe('interiorTextures', () => {
       const image = x.image as HTMLCanvasElement;
       expect([image.width, image.height]).toEqual([512, 512]);
       expect([x.wrapS, x.wrapT]).toEqual([THREE.RepeatWrapping, THREE.RepeatWrapping]);
+      // su color medio, lineal (el stub no dibuja: da negro), para el nivel 3 de baja
+      expect((x.userData.tone as number[]).filter((c) => Number.isFinite(c) && c >= 0 && c <= 1)).toHaveLength(3);
     }
     expect(drawing).toEqual([]);
     // con la misma semilla, el mismo dibujo

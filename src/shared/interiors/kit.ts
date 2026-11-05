@@ -37,10 +37,11 @@ export const MODEL_BOX: Partial<Record<ItemModel, { w: number; d: number; h: num
   'puesto-caja': { w: 1.9, d: 0.6, h: 1.1 },
   'panel-muestra': { w: 1.6, d: 0.12, h: 2.2 },
   // McDonald's y La Veneciana (tarea 8): la mesa redonda de 0,7 m, la freidora de una cuba (con su respaldo), la
-  // heladera de acero de dos puertas, la mesa de picnic con sus dos bancos y el metegol (sin las barras ni las manijas)
+  // heladera de acero de dos puertas (las de cocina miden ~1,3 m de ancho), la mesa de picnic con sus dos bancos y el
+  // metegol (sin las barras ni las manijas)
   'mesa-redonda': { w: 0.7, d: 0.7, h: 0.75 },
   freidora: { w: 0.5, d: 0.8, h: 1.1 },
-  heladera: { w: 0.75, d: 0.8, h: 2.0 },
+  heladera: { w: 1.3, d: 0.8, h: 2.0 },
   'mesa-picnic': { w: 1.8, d: 1.5, h: 0.75 },
   metegol: { w: 0.76, d: 1.42, h: 0.9 },
 };
@@ -52,11 +53,18 @@ export interface ShellOpts { publicFloors: number; terrace?: true; holes?: { lev
  *  del hueco), `width` y `height` desde `y0`; arriba, dintel. `glassLeaf`: la hoja de vidrio dibujada abierta (D10). */
 export interface WallOpts { t?: number; y0?: number; y1?: number; gaps?: { at: number; width: number; height: number; glassLeaf?: true }[]; look: Look; collide?: Collide }
 /** Una escalera del nivel `from` al `to`: `foot` es el medio del primer escalón, en el piso de abajo, y sube hacia `dir`.
- *  `railStyle`: el de las barandas de su hueco (RailStyle). `approach`: el hueco de arriba arranca esos metros antes del
- *  pie. Hace falta si el pie queda bajo la losa (no en un atrio): sin eso, el borde de la losa cae justo sobre el primer
- *  escalón y el análisis de huecos del suelo (pockets.ts: parado sobre un sólido bajo, sin nada de 2,4 a 4,2 m) no une
- *  la escalera con el piso; con ≥ 2 radios del jugador (0,75), sí. */
-export interface StairOpts { from: number; to: number; foot: Vec2; dir: Vec2; width: number; look: Look; rail?: Look; railStyle?: RailStyle; out?: true; approach?: number }
+ *  `railStyle`: el de las barandas de su hueco (RailStyle). */
+export interface StairOpts {
+  from: number; to: number; foot: Vec2; dir: Vec2; width: number; look: Look; rail?: Look; railStyle?: RailStyle; out?: true;
+  /**
+   * Metros (≥ 0; por defecto 0) que el hueco de las losas de arriba arranca antes del pie, hacia −`dir`; la baranda del
+   * hueco lo rodea igual. Hace falta si el pie queda bajo una losa (no en un atrio): sin eso, el borde de la losa cae
+   * justo sobre el primer escalón y el análisis de huecos del suelo (pockets.ts: parado sobre un sólido bajo, sin nada de
+   * 2,4 a 4,2 m) no une la escalera con el piso, y `build:map` pone una escalera de mano adentro. Con ≥ 2 radios del
+   * jugador (0,75), sí la une. Lo usa La Veneciana (tarea 8).
+   */
+  approach?: number;
+}
 /** Cómo se ve una baranda. Sin nada, un paño de RAIL_H con el look (el vidrio de un balcón). `caño`: de caño (la de la
  *  terraza de La Veneciana, §4.7): el paño frena y no se ve, y se ven el pasamanos, un caño intermedio y los parantes
  *  cada ≤ CAÑO.paso; con `out`, los caños se dibujan siempre, con el edificio (de lejos, sobre el pretil). */

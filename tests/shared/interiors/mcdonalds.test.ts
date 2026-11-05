@@ -25,6 +25,7 @@ const dist2 = (a: Vec2, c: Vec2): number => Math.hypot(a[0] - c[0], a[1] - c[1])
 const toRing = (p: Vec2, ring: Vec2[]): number => Math.min(...ring.map((q, k) => distPointSegment(p, q, ring[(k + 1) % ring.length])));
 const inPatio = (p: Vec2): boolean => i.patios.some((r) => pointInPolygon(p, r));
 const count = (m: ItemModel): number => i.items.filter((it) => it.model === m).length;
+const mid = (r: Vec2[]): Vec2 => [r.reduce((t, q) => t + q[0], 0) / r.length, r.reduce((t, q) => t + q[1], 0) / r.length];
 
 function mark(name: string): Vec3 {
   const p = i.marks[name];
@@ -82,7 +83,6 @@ test('el patio del fondo (D12): walkTo llega a patio por la puerta de atrás, y 
   expect(inPatio(xz(p))).toBe(true);
   expect(world.overlaps(p[0], p[2], 0.35, 2.0, 50)).toBe(false);
   // la pared de ladrillo del patio, las mesas de picnic y las sombrillas
-  const mid = (r: Vec2[]): Vec2 => [r.reduce((t, q) => t + q[0], 0) / r.length, r.reduce((t, q) => t + q[1], 0) / r.length];
   expect(i.blocks.some((x) => x.side?.mat === 'ladrillo' && x.collide === 'solid' && inPatio(mid(x.polygon)) && x.y1 > 2)).toBe(true);
   expect(i.items.filter((it) => it.model === 'mesa-picnic' && inPatio(xz(it.at))).length).toBeGreaterThanOrEqual(2);
   expect(i.items.filter((it) => it.model === 'sombrilla' && inPatio(xz(it.at))).length).toBeGreaterThanOrEqual(2);
@@ -126,6 +126,49 @@ test('muebles: mesas redondas y sillones sólidos; sillas y banquetas no; freido
     const its = i.items.filter((it) => it.model === m);
     expect(its.length, m).toBeGreaterThanOrEqual(2);
     for (const it of its) expect(depth(xz(it.at)), `${m} en ${fmt(it.at)}`).toBeGreaterThan(kitchen);
+  }
+});
+
+test('la heladera de acero de dos puertas mide lo que una de verdad: de 1,2 a 1,4 m de ancho', () => {
+  expect(MODEL_BOX.heladera!.w).toBeGreaterThanOrEqual(1.2);
+  expect(MODEL_BOX.heladera!.w).toBeLessThanOrEqual(1.4);
+});
+
+test('la puerta del personal, del pasillo del fondo a la cocina, queda libre: se pasa caminando', () => {
+  // el hueco: el dintel de un tabique entre el pasillo del fondo (salida) y la cocina
+  const [k, f] = [depth(xz(mark('cocina'))), depth(xz(mark('salida')))];
+  const gaps = i.blocks.filter((x) => x.role === 'dintel' && depth(mid(x.polygon)) > k && depth(mid(x.polygon)) < f);
+  expect(gaps.length).toBeGreaterThan(0);
+  const g = mid(gaps[0].polygon);
+  const route: Vec2[] = [[g[0] + inward[0] * 0.8, g[1] + inward[1] * 0.8], [g[0] - inward[0] * 0.8, g[1] - inward[1] * 0.8], xz(mark('cocina'))];
+  const s = walkTo(world, mark('salida'), route, 15);
+  expect(dist2(xz(s.pos), xz(mark('cocina'))), `termina en ${fmt(s.pos)}`).toBeLessThan(0.5);
+});
+
+test('el patio: por afuera, cada lado que no es del local lleva el revoque del color del ladrillo (se ve de lejos)', () => {
+  const ring = i.patios[0], n = ring.length;
+  const onPlan = (p: Vec2): boolean => toRing(p, b.footprint) < 1e-3;
+  const skins = i.blocks.filter((x) => x.out && x.side && x.y1 > 2 && x.y0 < 0.01);
+  const missing: string[] = [];
+  for (let k = 0; k < n; k++) {
+    const [a, c] = [ring[k], ring[(k + 1) % n]];
+    if (onPlan(a) && onPlan(c)) continue;
+    const m: Vec2 = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
+    if (!skins.some((x) => toRing(m, x.polygon) < 0.01)) missing.push(fmt(m));
+  }
+  expect(missing).toEqual([]);
+});
+
+test('las columnas revestidas en madera llevan la veta a lo alto: tablas paradas alrededor, sin caras de `madera` (su veta va a lo ancho)', () => {
+  const side = (r: Vec2[], k: number): number => dist2(r[k], r[(k + 1) % r.length]);
+  const cols = i.blocks.filter((x) => x.collide === 'solid' && x.role === 'otro' && x.polygon.length === 4 && x.y0 < 0.01 && x.y1 > 2.9
+    && [0, 1, 2, 3].every((k) => side(x.polygon, k) > 0.3 && side(x.polygon, k) < 0.6) && pointInPolygon(mid(x.polygon), b.footprint));
+  expect(cols.length).toBeGreaterThanOrEqual(2);
+  for (const c of cols) {
+    expect(c.side?.mat, fmt(mid(c.polygon))).not.toBe('madera');
+    const boards = i.blocks.filter((x) => x.collide === 'none' && x.side && x.side.mat !== 'madera' && x.y1 - x.y0 > 2.9
+      && Math.max(...x.polygon.map((q) => Math.max(...x.polygon.map((r) => dist2(q, r))))) < 0.17 && toRing(mid(x.polygon), c.polygon) < 0.06);
+    expect(boards.length, `tablas alrededor de ${fmt(mid(c.polygon))}`).toBeGreaterThanOrEqual(8);
   }
 });
 

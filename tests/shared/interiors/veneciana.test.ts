@@ -3,7 +3,7 @@
 // (el techo es un piso público más), y lo de afuera: los toldos con el nombre y las mesas de la vereda.
 import { readFileSync } from 'node:fs';
 import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
-import { buildCollisionWorld } from '../../../src/shared/collision.ts';
+import { buildCollisionWorld, collisionPrisms } from '../../../src/shared/collision.ts';
 import { hitscan } from '../../../src/shared/combat.ts';
 import { SIM_HZ } from '../../../src/shared/fixed-step.ts';
 import { distPointSegment, pointInPolygon } from '../../../src/shared/geo.ts';
@@ -108,6 +108,36 @@ describe('la escalera y la terraza', () => {
     }
   });
 
+  test('caminando 3 s hacia el hueco de la escalera desde la terraza se frena en su baranda; por el lado de la llegada, se baja', () => {
+    const st = i.stairs.find((x) => x.to === 1)!, hole = i.roofHoles[0], c = centroid(hole);
+    // D: subiendo la escalera; P: de través, hacia el medio de la terraza
+    const D = unit([st.top[0] - st.foot[0], st.top[2] - st.foot[2]]);
+    const t = mark('terraza');
+    let P: Vec2 = [-D[1], D[0]];
+    if ((t[0] - c[0]) * P[0] + (t[2] - c[1]) * P[1] < 0) P = [-P[0], -P[1]];
+    const along = (q: Vec2, e: Vec2): number => (q[0] - c[0]) * e[0] + (q[1] - c[1]) * e[1];
+    const [d0, d1] = [Math.min(...hole.map((q) => along(q, D))), Math.max(...hole.map((q) => along(q, D)))];
+    const p1 = Math.max(...hole.map((q) => along(q, P)));
+    const at = (d: number, p: number): Vec3 => [c[0] + D[0] * d + P[0] * p, H, c[1] + D[1] * d + P[1] * p];
+    // del lado de la terraza (+P), en tres puntos a lo largo del hueco, y del lado del pie (−D) si hay dónde pararse (hoy
+    // no: el frente sesgado pasa a 0,4–0,8 m del hueco); el otro costado largo es el del pretil (0,1 m entre el hueco y el
+    // borde: no hay terraza)
+    const starts: [Vec3, Vec2][] = [0.2, 0.5, 0.8].map((f): [Vec3, Vec2] => [at(d0 + (d1 - d0) * f, p1 + 1.2), [-P[0], -P[1]]]);
+    const pie = at(d0 - 0.7, 0);
+    if (isFreeSpot(world, pie[0], pie[2], H)) starts.push([pie, D]);
+    for (const [from, dir] of starts) {
+      expect(isFreeSpot(world, from[0], from[2], H), `desde ${fmt(from)}`).toBe(true);
+      const s = press(from, dir, 3);
+      expect(Math.abs(s.pos[1] - H), `desde ${fmt(from)}: termina en ${fmt(s.pos)}`).toBeLessThanOrEqual(0.05);
+      expect(pointInPolygon(xz(s.pos), hole), `desde ${fmt(from)}: no se mete en el hueco`).toBe(false);
+    }
+    // por el lado de la llegada, de frente al hueco: baja por la escalera
+    const top = at(d1 + 1.0, 0);
+    expect(isFreeSpot(world, top[0], top[2], H)).toBe(true);
+    const s = press(top, [-D[0], -D[1]], 3);
+    expect(s.pos[1], `termina en ${fmt(s.pos)}`).toBeLessThan(H - 1);
+  });
+
   test('la terraza se ve de baldosa terracota, GROUND_Y arriba del techo y sin sólido (el techo es el que apoya)', () => {
     const tiles = i.blocks.filter((x) => x.top?.mat === 'baldosa' && Math.abs(x.y1 - (H + GROUND_Y)) < 1e-6);
     expect(tiles.length).toBeGreaterThan(0);
@@ -147,6 +177,36 @@ describe('el salón', () => {
       expect(over, `vidrio sobre el balde en ${fmt(it.at)}`).toBe(true);
     }
     expect(i.blocks.some((x) => x.collide === 'solid' && x.side?.mat === 'madera' && x.y1 > 0.8 && x.y1 < 1.2)).toBe(true);
+  });
+
+  test('la vitrina: el frente de vidrio, inclinado, pasa de 1,2 m, con perfiles de acero arriba y en las dos puntas', () => {
+    const baldes = i.items.filter((it) => it.model === 'balde-helado');
+    const near = (q: Vec3): boolean => baldes.some((it) => dist2([q[0], q[2]], xz(it.at)) < 0.8);
+    const glass = i.panes.filter((x) => x.look.mat === 'vidrio' && x.corners.some(near));
+    expect(glass.length, 'paños de vidrio sobre los baldes').toBeGreaterThan(0);
+    const top = Math.max(...glass.flatMap((x) => x.corners.map((q) => q[1])));
+    expect(top, 'el alto del vidrio').toBeGreaterThan(1.2);
+    expect(glass.some((x) => Math.abs(x.normal[1]) > 0.2 && Math.abs(x.normal[1]) < 0.95), 'un paño inclinado').toBe(true);
+    // el acero: piezas de metal pegadas (≤ 6 cm) a alguna esquina del vidrio
+    const corners = glass.flatMap((x) => x.corners);
+    const d3 = (a: Vec3, q: Vec3): number => Math.hypot(a[0] - q[0], a[1] - q[1], a[2] - q[2]);
+    const steel = i.panes.filter((x) => x.look.mat === 'metal').map((x) => x.corners)
+      .filter((cs) => cs.some((q) => corners.some((g) => d3(q, g) < 0.06)));
+    expect(steel.length, 'perfiles de acero en el vidrio').toBeGreaterThan(0);
+    expect(Math.max(...steel.flat().map((q) => q[1])), 'el perfil de arriba').toBeGreaterThan(top - 0.03);
+    // en las dos puntas (a lo largo de las filas de baldes: el eje mayor de sus posiciones): perfiles que suben del
+    // mostrador al borde de arriba
+    const m = centroid(baldes.map((it) => xz(it.at)));
+    const [sxx, szz, sxz] = baldes.reduce(([a, c, d], it) => [a + (it.at[0] - m[0]) ** 2, c + (it.at[2] - m[1]) ** 2, d + (it.at[0] - m[0]) * (it.at[2] - m[1])], [0, 0, 0]);
+    const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz), e: Vec2 = [Math.cos(ang), Math.sin(ang)];
+    const s = (q: Vec3): number => (q[0] - m[0]) * e[0] + (q[2] - m[1]) * e[1];
+    const [s0, s1] = [Math.min(...corners.map(s)), Math.max(...corners.map(s))];
+    for (const end of [s0, s1]) {
+      const ys = steel.filter((cs) => cs.every((q) => Math.abs(s(q) - end) < 0.1)).flat().map((q) => q[1]);
+      expect(ys.length, `perfiles en la punta ${end.toFixed(2)}`).toBeGreaterThan(0);
+      expect(Math.min(...ys), `la punta ${end.toFixed(2)}, desde abajo`).toBeLessThan(1.0);
+      expect(Math.max(...ys), `la punta ${end.toFixed(2)}, hasta arriba`).toBeGreaterThan(top - 0.03);
+    }
   });
 
   test('el cielorraso: machimbre con vigas blancas, y en la esquina redonda, un aro blanco', () => {
@@ -190,6 +250,23 @@ test('afuera: ≥ 2 carteles `out` con "La Veneciana" (los toldos) y en la vered
   for (const it of chairs) expect(it.color, 'roja').toMatch(/^#[a-f0-9]{2}[0-3]/);
   // nada sólido afuera: ni las mesas de la vereda
   expect(i.blocks.filter((x) => x.collide !== 'none' && !pointInPolygon(centroid(x.polygon), b.footprint)).map((x) => fmt(centroid(x.polygon)))).toEqual([]);
+});
+
+test('la vereda: cada mueble de afuera y cada mesita a ≥ 1,5 m de los props del mapa (el contenedor de la 2a), y la tela de la sombrilla no los pisa', () => {
+  const kinds = new Set<string>(map.props.map((p) => p.kind));
+  const props = collisionPrisms(map).prisms.filter((p) => p.tag !== undefined && kinds.has(p.tag));
+  expect(props.length).toBeGreaterThan(0);
+  const away = (q: Vec2): number => Math.min(...props.map((p) => (pointInPolygon(q, p.polygon) ? 0 : toRing(q, p.polygon))));
+  const items = i.items.filter((it) => !pointInPolygon(xz(it.at), b.footprint) && it.at[1] < 0.1);
+  const mesitas = i.blocks.filter((x) => x.out && x.y1 < 1 && !pointInPolygon(centroid(x.polygon), b.footprint));
+  expect(items.length).toBeGreaterThan(0);
+  expect(mesitas.length).toBeGreaterThan(0);
+  const close: string[] = [];
+  for (const it of items) if (away(xz(it.at)) < 1.5) close.push(`${it.model} en ${fmt(it.at)}: ${away(xz(it.at)).toFixed(2)} m`);
+  for (const x of mesitas) for (const q of x.polygon) if (away(q) < 1.5) close.push(`mesita en ${fmt(q)}: ${away(q).toFixed(2)} m`);
+  // la tela de la sombrilla tiene 1,3 m de radio (models.ts): su borde, a ≥ 1 m de cualquier prop
+  for (const it of items.filter((x) => x.model === 'sombrilla')) if (away(xz(it.at)) < 1.3 + 1.0) close.push(`la tela de la sombrilla en ${fmt(it.at)}: ${(away(xz(it.at)) - 1.3).toFixed(2)} m`);
+  expect(close).toEqual([]);
 });
 
 test('el botín, las apariciones y el spawn del lugar alrededor del local siguen libres en el mundo hueco', () => {

@@ -27,10 +27,18 @@ const mul = (m: readonly (readonly number[])[], v: RGB): RGB =>
  * brilla (in_luz, ITEM_GLOW, carteles `glow`) y luz · INTERIOR_EXPOSURE para lo horneado.
  */
 export function seen(hex: string, k = 1, exposure = INDOOR_EXPOSURE): RGB {
-  const lin = hexRGB(hex).map((x) => toLinear(x / 255) * k * (exposure / 0.6)) as RGB;
+  return seenLinear(hexRGB(hex).map((x) => toLinear(x / 255) * k) as RGB, exposure);
+}
+
+/** Lo mismo desde un color lineal ya armado (el de una textura por el tinte y la luz, canal por canal). */
+export function seenLinear(rgb: RGB, exposure = INDOOR_EXPOSURE): RGB {
+  const lin = rgb.map((x) => x * (exposure / 0.6)) as RGB;
   const out = mul(ACES.output, mul(ACES.input, lin).map(fit) as RGB);
   return out.map((x) => Math.round(255 * toSRGB(Math.min(1, Math.max(0, x))))) as RGB;
 }
+
+/** sRGB (0–1) → lineal. */
+export const linear = toLinear;
 
 /** CIE L*a*b* (D65) de un sRGB 0–255. */
 function lab(rgb: RGB): RGB {

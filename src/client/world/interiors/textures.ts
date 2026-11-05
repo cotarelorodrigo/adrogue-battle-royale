@@ -97,28 +97,53 @@ function cloth(p: Pen): void {
   }
 }
 
+/** La luminancia media (sRGB, 0–1) a la que se aclara cada CC0: la textura queda clara y el tinte por vértice se lee. La
+ *  foto del ladrillo ya trae su tono: aclarada, su promedio es un rosado apagado, y el tinte no tiene que volver a ponerle
+ *  el rojo (H2 de la tarea 8). */
+export const PHOTO_LUMA = { liso: 0.85, metal: 0.75, ladrillo: 0.55 } as const;
+
+/** Cuánto blanco (0–0,9) se le pinta encima a una foto de luminancia media `l0` para llevarla a `target`. */
+export const photoBlend = (l0: number, target: number): number => Math.min(0.9, Math.max(0, (target - l0) / Math.max(1e-3, 1 - l0)));
+
 /** Una CC0 a `s` px, aclarada hacia la luminancia `target` (como las fachadas): así el tinte por vértice se lee. */
 function photo(p: Pen, img: CanvasImageSource, target: number): void {
   const { canvas, c, s } = p;
   c.drawImage(img, 0, 0, s, s);
-  const l0 = averageLuminance(canvas);
-  const a = Math.min(0.9, Math.max(0, (target - l0) / Math.max(1e-3, 1 - l0)));
-  c.fillStyle = `rgba(255,255,255,${a})`;
+  c.fillStyle = `rgba(255,255,255,${photoBlend(averageLuminance(canvas), target)})`;
   c.fillRect(0, 0, s, s);
 }
 
-/** Las 9 texturas de los interiores, de `size` × `size` px y con RepeatWrapping. */
+/** El color medio de un canvas, lineal (lo que la textura le multiplica en promedio al color por vértice). */
+function meanLinear(img: HTMLCanvasElement): [number, number, number] {
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(img, 0, 0, 16, 16);
+  const d = ctx.getImageData(0, 0, 16, 16).data;
+  const sum: [number, number, number] = [0, 0, 0];
+  const col = new THREE.Color();
+  for (let i = 0; i < d.length; i += 4) {
+    col.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, THREE.SRGBColorSpace);
+    sum[0] += col.r;
+    sum[1] += col.g;
+    sum[2] += col.b;
+  }
+  return sum.map((x) => x / 256) as [number, number, number];
+}
+
+/** Las 9 texturas de los interiores, de `size` × `size` px y con RepeatWrapping. Cada una lleva en `userData.tone` su
+ *  color medio, lineal: en baja, compactado al nivel 3, el ladrillo va sin textura y su tono pasa al color por vértice. */
 export function interiorTextures(size: 512 | 1024, cc0: { revoque: CanvasImageSource; metal: CanvasImageSource; ladrillo: CanvasImageSource }): Record<TexMat, THREE.Texture> {
   const draw: Record<TexMat, (p: Pen) => void> = {
-    liso: (p) => photo(p, cc0.revoque, 0.85),
+    liso: (p) => photo(p, cc0.revoque, PHOTO_LUMA.liso),
     porcelanato: (p) => tiles(p, 0.6, 0.003, 222, 6, 170, 60),
     madera: planks,
     machimbre: tongueAndGroove,
     baldosa: (p) => tiles(p, 0.2, 0.006, 230, 10, 150, 6),
     ceramico: (p) => tiles(p, 0.3, 0.004, 238, 5, 205, 10),
     tela: cloth,
-    metal: (p) => photo(p, cc0.metal, 0.75),
-    ladrillo: (p) => photo(p, cc0.ladrillo, 0.55),
+    metal: (p) => photo(p, cc0.metal, PHOTO_LUMA.metal),
+    ladrillo: (p) => photo(p, cc0.ladrillo, PHOTO_LUMA.ladrillo),
   };
   const out = {} as Record<TexMat, THREE.Texture>;
   (Object.keys(draw) as TexMat[]).forEach((mat, k) => {
@@ -130,6 +155,7 @@ export function interiorTextures(size: 512 | 1024, cc0: { revoque: CanvasImageSo
     t.name = `in_${mat}`;
     t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.userData.tone = meanLinear(canvas);
     out[mat] = t;
   });
   return out;

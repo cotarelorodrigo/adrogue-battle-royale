@@ -32,10 +32,11 @@ const MACHIMBRE: Look = { mat: 'machimbre', color: '#c99258' };
 const BLANCO: Look = { mat: 'liso', color: '#f6f5f1' };
 /** La baranda de caño, blanca (de afuera se ve con el edificio). */
 const CAÑO: Look = { mat: 'metal', color: '#f2f2ef' };
-/** El mostrador de madera, la bandeja de acero de la vitrina y su vidrio. */
+/** El mostrador de madera, la bandeja de acero de la vitrina, su vidrio y sus perfiles de acero claro. */
 const MADERA: Look = { mat: 'madera', color: '#8a5a34' };
 const BANDEJA: Look = { mat: 'metal', color: '#c9cdd0' };
 const VIDRIO: Look = { mat: 'vidrio', color: '#b8d0d6' };
+const ACERO: Look = { mat: 'metal', color: '#e2e5e8' };
 /** La alfombra redonda gris del metegol. */
 const ALFOMBRA: Look = { mat: 'tela', color: '#8c8c8a' };
 /** Los spots del machimbre (brillan). */
@@ -44,9 +45,8 @@ const SPOT: Look = { mat: 'luz', color: '#fff0d6' };
 const TOLDO: Look = { mat: 'liso', color: '#c8202f' };
 const MESITA: Look = { mat: 'liso', color: '#3a3a3c' };
 
-/** El nombre en los toldos: el mismo rojo y la misma letra que el cartel del frente (no hay letra script: va la serif en
- *  cursiva del cartel del lugar). */
-const NOMBRE: SignLook = { fondo: '#c8202f', letra: '#ffffff', marco: '#c8202f', fuente: 'serif', cursiva: true };
+/** El nombre en los toldos: el mismo rojo que el cartel del frente, con la letra script blanca (ya va inclinada). */
+const NOMBRE: SignLook = { fondo: '#c8202f', letra: '#ffffff', marco: '#c8202f', fuente: 'script' };
 
 /** Los colores que tiñen los muebles: la madera oscura de las mesas y las sillas, el rojo de las sillas director. */
 const MADERA_OSCURA = '#6a4630', MADERA_TERRAZA = '#9a7048', ROJO = '#c8202f';
@@ -68,8 +68,11 @@ const ROOF_T = 0.8;
 const ESCALERA = { d0: 2.0, p: 0.75, w: 1.3, antes: 0.75 } as const;
 /** El mostrador con la vitrina: contra el costado norte, de D 11 a 19 y de 0,9 m de fondo, a 1,15 m del vidrio. */
 const MOSTRADOR = { d0: 11.0, d1: 19.0, fondo: 0.9, aire: 1.15, h: 0.9 } as const;
-/** La vitrina: los baldes en dos filas, el vidrio del frente y la tapa. */
-const VITRINA = { d0: 12.4, baldes: 12, paso: 0.19, tapa: 1.13 } as const;
+/** La vitrina: los baldes en dos filas; el frente de vidrio en dos franjas que se inclinan hacia atrás (de 0,9 m, en el
+ *  borde del mostrador, al quiebre y al borde de arriba, cada uno `atras` m más adentro) y la tapa, a `alto`, hasta
+ *  `fondo` m del borde de atrás (detrás, abierto: se sirve de ahí); los perfiles de acero miden `perfil` y van también
+ *  de través, en las puntas y en el medio. */
+const VITRINA = { d0: 12.4, baldes: 12, paso: 0.19, quiebre: { y: 1.12, atras: 0.08 }, alto: 1.3, arriba: 0.25, fondo: 0.15, perfil: 0.02 } as const;
 /** El metegol y su alfombra (radio). */
 const METEGOL = { d: 25.4, p: 3.0, r: 1.35 } as const;
 /** El aro de la esquina redonda: radios de adentro y de afuera y cantidad de tramos. */
@@ -167,9 +170,7 @@ export const venecianaPlan: InteriorPlan = (k) => {
       k.furniture('balde-helado', L(VITRINA.d0 + 0.05 + (j + 0.5) * VITRINA.paso, p), MOSTRADOR.h + 0.005, mira(0, 1), g);
     }
   }
-  // el vidrio: el frente, del lado de los clientes, y la tapa sobre los baldes; detrás, abierto (se sirve de ahí)
-  k.block(caja(VITRINA.d0 - 0.06, pm0, vd1, pm0 + 0.03), MOSTRADOR.h, VITRINA.tapa + 0.03, 'glass', 'vidrio', { side: VIDRIO, top: VIDRIO });
-  k.block(caja(VITRINA.d0 - 0.06, pm0, vd1, pm1 - 0.1), VITRINA.tapa, VITRINA.tapa + 0.03, 'glass', 'vidrio', { side: VIDRIO, top: VIDRIO });
+  vitrina(k, m, VITRINA.d0 - 0.06, vd1, pm0, pm1);
   // la mesada de atrás, contra el vidrio del costado
   k.block(caja(MOSTRADOR.d0 + 0.5, m.W - 0.5, MOSTRADOR.d1 - 0.5, m.W - 0.02), 0, 0.9, 'solid', 'mueble', { side: MADERA, top: BANDEJA });
 
@@ -241,6 +242,38 @@ function barandaDeEscalera(k: Kit, m: Marco, d0: number, p: number, y0: number, 
   }
 }
 
+/** El vidrio de la vitrina de helados, de D d0 a d1 sobre el mostrador (de través, de pm0, el lado de los clientes, a
+ *  pm1): el frente en dos franjas inclinadas, la tapa y las puntas, de vidrio (paños: se ven de los dos lados), con los
+ *  perfiles de acero en los bordes; lo que frena son dos bloques de vidrio sin dibujo (el frente y la tapa). */
+function vitrina(k: Kit, m: Marco, d0: number, d1: number, pm0: number, pm1: number): void {
+  const { quiebre, alto, arriba, fondo, perfil } = VITRINA, y0 = MOSTRADOR.h;
+  const L = (d: number, q: number): Vec2 => add(add(m.S0, m.D, d), m.P, q);
+  const at = (d: number, [q, y]: Vec2): Vec3 => { const [u, v] = L(d, q); return [u, y, v]; };
+  /** Una dirección en (d, p) con su y, en el marco local. */
+  const dir = (dd: number, dp: number, y: number): Vec3 => [m.D[0] * dd + m.P[0] * dp, y, m.D[1] * dd + m.P[1] * dp];
+  // el corte de través (p, y): el pie del vidrio, el quiebre, el borde de arriba y el de atrás de la tapa
+  const pie: Vec2 = [pm0 + 0.03, y0], q: Vec2 = [pm0 + quiebre.atras, quiebre.y], top: Vec2 = [pm0 + arriba, alto], back: Vec2 = [pm1 - fondo, alto];
+  /** La normal de afuera (hacia los clientes y arriba) de la franja de a a b. */
+  const out = (a: Vec2, b: Vec2): Vec3 => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return dir(0, -(b[1] - a[1]) / l, (b[0] - a[0]) / l); };
+  for (const [a, b] of [[pie, q], [q, top], [top, back]] as const) k.pane([at(d0, a), at(d1, a), at(d1, b), at(d0, b)], out(a, b), VIDRIO, { back: true });
+  // las puntas: del frente a la tapa, hasta el mostrador
+  for (const [d, s] of [[d0, -1], [d1, 1]] as const) {
+    const n = dir(s, 0, 0);
+    k.pane([at(d, pie), at(d, q), at(d, top), at(d, [top[0], y0])], n, VIDRIO, { back: true });
+    k.pane([at(d, [top[0], y0]), at(d, top), at(d, back), at(d, [back[0], y0])], n, VIDRIO, { back: true });
+  }
+  // los perfiles: a lo largo, en el pie, el quiebre y los dos bordes de la tapa; de través, en las puntas y en el medio;
+  // y los parantes de atrás, en las puntas
+  for (const c of [pie, q, top, back]) barra(k, at(d0, c), at(d1, c), perfil, perfil, ACERO, { puntas: true });
+  for (const d of [d0, (d0 + d1) / 2, d1]) for (const [a, b] of [[pie, q], [q, top], [top, back]] as const) barra(k, at(d, a), at(d, b), perfil, perfil, ACERO);
+  const h = perfil / 2;
+  for (const d of [d0, d1]) k.block([L(d - h, back[0] - h), L(d + h, back[0] - h), L(d + h, back[0] + h), L(d - h, back[0] + h)], y0, alto, 'none', 'otro', { side: ACERO });
+  // lo que frena: el frente (hasta el borde de arriba) y la tapa
+  const box = (p0: number, p1: number): Vec2[] => [L(d0, p0), L(d1, p0), L(d1, p1), L(d0, p1)];
+  k.block(box(pm0, top[0]), y0, alto, 'glass', 'vidrio', {});
+  k.block(box(pm0, back[0]), alto, alto + 0.03, 'glass', 'vidrio', {});
+}
+
 /** Un toldo rojo (`out`) sobre las vidrieras del costado de P = `p` (lado −1: el sur, 1: el norte), de D d0 a d1: la
  *  lona a TOLDO_M.y, con su vuelo, y el faldón con "La Veneciana" cada 9 m. */
 function toldo(k: Kit, L: (d: number, p: number) => Vec2, d0: number, d1: number, p: number, lado: -1 | 1): void {
@@ -258,9 +291,11 @@ function toldo(k: Kit, L: (d: number, p: number) => Vec2, d0: number, d1: number
 }
 
 /** En la vereda de Espora, delante del frente (V < 0): dos juegos de sombrilla roja, mesita y cuatro sillas director
- *  rojas, lejos del botín, de la puerta y del contenedor. Las mesitas van `out` (sin sólido); lo demás, con el interior. */
+ *  rojas, del lado sur de la puerta y en la esquina con el AutoHelado: lejos del botín (que va en arco delante de la
+ *  puerta), de la vista `vidrieras` y del contenedor de la 2a (del lado norte, en U 11,4–13,2). Las mesitas van `out`
+ *  (sin sólido); lo demás, con el interior. */
 function vereda(k: Kit): void {
-  for (const c of [[0.6, -2.6], [10.6, -2.4]] as Vec2[]) {
+  for (const c of [[0.6, -2.6], [-2.6, -2.6]] as Vec2[]) {
     k.block(Array.from({ length: 12 }, (_, j) => add(c, [0.33 * Math.cos((Math.PI * j) / 6), 0.33 * Math.sin((Math.PI * j) / 6)])), 0.72, 0.75, 'none', 'otro', { top: MESITA, side: MESITA, bottom: MESITA }, true);
     k.furniture('sombrilla', c, 0, 0, '#ffffff');
     for (let j = 0; j < 4; j++) {
