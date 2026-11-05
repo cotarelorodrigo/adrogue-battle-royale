@@ -443,10 +443,10 @@ export class Kit {
       ...(o.round ? { round: true as const } : {}), ...(o.placeSign ? { placeSign: true as const } : {}) });
   }
 
-  lamp(p: Vec2, y: number, radius: number, power: number): void {
+  lamp(p: Vec2, y: number, radius: number, power: number, down = false): void {
     this.open();
     const [x, z] = this.at(p);
-    this.lamps.push({ at: [x, y, z], radius, power });
+    this.lamps.push({ at: [x, y, z], radius, power, ...(down ? { down: true as const } : {}) });
   }
 
   /** Vista con los pies en `p` sobre el piso `y`, mirando hacia `yaw` (local). */
@@ -465,8 +465,8 @@ export class Kit {
   }
 
   /** Cierra el interior: arma las losas, el techo, la planta baja, las barandas de los huecos y los pisos públicos.
-   *  `dim`: el de Interior (un lugar oscuro aunque el ojo se adapte). */
-  done(ambient: number, dim?: number): Interior {
+   *  `adaptedExposure`: el de Interior (un lugar oscuro aunque el ojo se adapte). */
+  done(ambient: number, adaptedExposure?: number): Interior {
     const o = this.need();
     const pf = o.publicFloors, H = this.b.height;
     const floor = (k: number): Look => pick(o.floor, k), ceiling = (k: number): Look => pick(o.ceiling, k);
@@ -493,7 +493,7 @@ export class Kit {
       blocks: this.blocks, panes: this.panes, items: this.items, labels: this.labels, lamps: this.lamps, floors, stairs: this.runs,
       doors: doorsOf(this.b, this.input), views: this.views, marks: this.marks,
       footprint: this.fp, patios: this.input.patios.map((r) => ensureCCW(r.map((p): Vec2 => [p[0], p[1]]))),
-      roofHoles: this.holesAt(pf).map((h) => this.toWorldRing(h)), trees: this.trees, ...(dim === undefined ? {} : { dim }),
+      roofHoles: this.holesAt(pf).map((h) => this.toWorldRing(h)), trees: this.trees, ...(adaptedExposure === undefined ? {} : { adaptedExposure }),
     };
   }
 

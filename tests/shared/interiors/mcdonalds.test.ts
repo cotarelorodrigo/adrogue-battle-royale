@@ -187,3 +187,14 @@ test('el botín, las apariciones y el spawn del lugar alrededor del local siguen
   // y la puerta de la calle sigue a la vista desde el spawn: nada sólido de afuera en el medio
   expect(doorDepth(door, place.spawn)).toBeLessThan(0);
 });
+
+// M10 de la revisión de la T11c: los vecinos que tapan el sol (Interior.shade) se buscan por cajas que se cortan, no por
+// vértices adentro de la caja: un edificio largo que la cruza sin tener ningún vértice adentro también cuenta
+test('un edificio largo que cruza la caja de los vecinos sin tener vértices adentro entra en Interior.shade', () => {
+  const pts = [...i.footprint, ...i.patios.flat()];
+  const [x0, x1] = [Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[0]))];
+  const z = Math.max(...pts.map((p) => p[1])) + 15;
+  const largo = { ...map.buildings[0], id: 'largo', height: 12, footprint: [[x0 - 200, z], [x1 + 200, z], [x1 + 200, z + 4], [x0 - 200, z + 4]] as Vec2[] };
+  const con = interiorOf({ ...map, buildings: [...map.buildings, largo] }, 'mcdonalds');
+  expect(con.shade?.some((s) => s.height === 12 && s.polygon === largo.footprint)).toBe(true);
+});

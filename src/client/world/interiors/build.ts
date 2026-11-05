@@ -9,34 +9,34 @@ import { clipSegment, distPointSegment, pointInPolygon, signedAreaFromAbove } fr
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
 import type { Block, Interior, Item, ItemModel, Label, Look, Mat, Pane } from '../../../shared/interiors/types.ts';
 import { SIGN_H } from '../../../shared/mapdata.ts';
+import { INDOOR_GAIN } from '../../render/exposure.ts';
 import { QUALITY } from '../../render/quality.ts';
 import type { Quality } from '../../render/quality.ts';
 import { PAGE, packSigns, signTexture } from '../signs.ts';
 import type { InteriorKey, WorldMaterials } from '../types.ts';
-import { cutRect, facing, lattice, marksOf, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
-import type { Builder, Rect } from '../wall-kit.ts';
-import { INDOOR_GAIN } from '../../render/exposure.ts';
+import { facing, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
+import type { Builder } from '../wall-kit.ts';
 import { lightAt, outdoorRGBAt, outdoors } from './bake.ts';
-import { adentro, bakedMaterial } from './baked.ts';
+import { adentro, bakedMaterial, withGain } from './baked.ts';
 import { LABEL_DRAWINGS } from './drawings.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassTone } from './glass.ts';
-import { ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
+import { sideFaces } from './joints.ts';
+import type { SideFace } from './joints.ts';
+import { faceShade, ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
 import { TILE_M } from './textures.ts';
 
 /** Multiplica la luz horneada de los bloques, los muebles y los carteles que no brillan (H2a); lo que brilla (in_luz,
  *  ITEM_GLOW y los carteles `glow`) va en 1. Con la exposición de la calle, un interior visto por la vidriera queda en la
- *  planta baja de las fotos (luma sRGB 11–50: la pared blanca de un banco, ~40 con el reflejo del vidrio); adentro lo
- *  aclara la adaptación del ojo (render/exposure.ts: la exposición de adentro y la ganancia de lo horneado). */
-export const INTERIOR_EXPOSURE = 0.09;
+ *  planta baja de las fotos (luma sRGB 11–46: la pared blanca de un banco, ~40 con el reflejo del vidrio; I1 de la
+ *  T11c); adentro lo aclara la adaptación del ojo (render/exposure.ts: la exposición de adentro y la ganancia de lo
+ *  horneado). */
+export const INTERIOR_EXPOSURE = 0.078;
 /** A lo sumo esta cantidad de mallas (draw calls) por interior. */
 export const MAX_MESHES = 20;
 /** Un modelo con esta cantidad de copias o más va instanciado. */
 const INSTANCE_MIN = 4;
 /** Lado (m) de la grilla en que se parten las caras para hornear la luz, según el detalle de la calidad. */
 const BAKE_STEP: Record<1 | 2, number> = { 1: 2, 2: 1 };
-/** Lo que una cara de costado se mete (m) en lo opaco que la corta o la tapa (una losa, un techo, un dintel, un tabique):
- *  la junta queda detrás de la cara de enfrente y no se abre en el rasterizado (T5 M1, T9 H5). */
-const JOINT = 0.015;
 /** El cartel se separa esto (m) de lo que tenga detrás. */
 const LABEL_LIFT = 0.02;
 /** Un cartel redondo (`round`) es un disco de tantos lados. */
@@ -53,20 +53,37 @@ const unit = (x: number, z: number): Vec2 => {
  *  (cálida al sol, azulada a la sombra); adentro, null (gris). */
 interface Light { (p: Vec3, n: Vec3): number; tone: (p: Vec3, n: Vec3) => THREE.Color | null }
 
-/** El horneado de un interior: la luz de cada punto (con memoria: las celdas vecinas comparten vértices), por Interior.dim
+/** Al aire libre, para lo horneado de los bloques: afuera de la planta (outdoors: la terraza, el patio, la vereda) o
+ *  sobre su borde, a menos de EDGE_M. El canto de afuera de una jamba, de un umbral o de un dintel está en la cara de
+ *  afuera de la pared, que es el borde de la planta: sin la tolerancia caía de un lado o del otro según el redondeo, y
+ *  desde la vereda se veía con la luz de adentro (M4 de la T11c). */
+function openAir(i: Interior, p: Vec3): boolean {
+  if (outdoors(i, p)) return true;
+  const fp = i.footprint;
+  return fp.some((a, k) => distPointSegment([p[0], p[2]], a, fp[(k + 1) % fp.length]) < EDGE_M);
+}
+const EDGE_M = 1e-3;
+
+/** Por cuánto va la luz horneada bajo techo de `i`: 1 en un local claro; en uno oscuro aunque el ojo se adapte (el cine,
+ *  Interior.adaptedExposure), lo que lo deja, adaptado, a esa exposición en vez de INTERIOR_EXPOSURE · INDOOR_GAIN (M8 de
+ *  la T11c: sale de las constantes, no es un número a mano). */
+export const dimOf = (i: Interior): number => (i.adaptedExposure === undefined ? 1 : i.adaptedExposure / (INTERIOR_EXPOSURE * INDOOR_GAIN));
+
+/** El horneado de un interior: la luz de cada punto (con memoria: las celdas vecinas comparten vértices), por dimOf
  *  bajo techo. Lo que está al aire libre (outdoors: la terraza, el patio, la vereda) lleva la luz de afuera, con la
  *  sombra de lo macizo del propio interior y de los vecinos (outdoorRGBAt), su luminancia dividida por
  *  INTERIOR_EXPOSURE, que después la multiplica, y su tono. */
 function baker(i: Interior): Light {
+  const dim = dimOf(i);
   const memo = new Map<string, { v: number; tone: THREE.Color | null }>();
   const at = (p: Vec3, n: Vec3): { v: number; tone: THREE.Color | null } => {
     const key = `${p.map((v) => v.toFixed(3)).join(',')}|${n.map((v) => v.toFixed(2)).join(',')}`;
     let e = memo.get(key);
     if (e === undefined) {
-      if (outdoors(i, p)) {
+      if (openAir(i, p)) {
         const c = outdoorRGBAt(i, p, n), l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
         e = { v: l / INTERIOR_EXPOSURE, tone: l > 0 ? new THREE.Color(c[0] / l, c[1] / l, c[2] / l) : null };
-      } else e = { v: lightAt(i, p, n) * (i.dim ?? 1), tone: null };
+      } else e = { v: lightAt(i, p, n) * dim, tone: null };
       memo.set(key, e);
     }
     return e;
@@ -80,32 +97,52 @@ function baker(i: Interior): Light {
  *  outdoors, lleva la luz de afuera y va sin la ganancia de adentro). */
 interface Paint { look: Look; light: Light; glass: (p: Vec3, n: Vec3) => number; inside: (p: Vec3) => boolean }
 
+/** Un Builder de lo horneado: con la ganancia de cada vértice (de 0 a 1), que va al alfa del color (baked.ts). El del
+ *  vidrio y el de lo que brilla no la llevan. */
+type BakedBuilder = Builder & { gain?: number[] };
+
+/** La geometría de `b`, con la ganancia en el alfa del color si la lleva. */
+function bakedGeometry(b: BakedBuilder): THREE.BufferGeometry {
+  const g = toGeometry(b);
+  if (!b.gain || !b.col) return g;
+  const out = new Float32Array(b.gain.length * 4);
+  b.gain.forEach((w, k) => out.set([b.col![k * 3], b.col![k * 3 + 1], b.col![k * 3 + 2], w], k * 4));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(out, 4));
+  return g;
+}
+
 /** Una cara de normal `n` con uv planas (metros / TILE_M): un polígono convexo (`rect`: un rectángulo o un paño,
  *  antihorario visto desde `n`, en abanico) o un pedazo recortado de una cara horizontal, que se triangula. Lo que
  *  brilla va con su color pleno; el vidrio no se hornea: su color es el lado de la cara (glass.ts), uno por cara (el
  *  esmerilado lleva además, en el azul, la luz que deja pasar); lo
  *  demás, su color por la luz y INTERIOR_EXPOSURE, y la cara bajo techo (por su centro) va marcada para la ganancia de
- *  adentro (baked.ts). Una esquina al aire libre de una cara bajo techo (el canto de una abertura) lleva la luz de afuera
- *  sin la ganancia: dividida por INDOOR_GAIN. */
-function emit(b: Builder, corners: Vec3[], n: Vec3, uvOf: (p: Vec3) => [number, number], paint: Paint, rect: boolean): void {
+ *  adentro (baked.ts). Una esquina al aire libre de una cara bajo techo (el canto de afuera de una jamba, de un umbral o
+ *  de un dintel) lleva la luz de afuera con ganancia 0 (M4): se ve igual desde la vereda que desde adentro. */
+function emit(b: BakedBuilder, corners: Vec3[], n: Vec3, uvOf: (p: Vec3) => [number, number], paint: Paint, rect: boolean, tris?: readonly (readonly [number, number, number])[]): void {
   const { mat } = paint.look;
   const color = tintColor(paint.look.color);
   const first = b.pos.length / 3;
   const mid = (): Vec3 => corners.reduce((s, p): Vec3 => [s[0] + p[0] / corners.length, s[1] + p[1] / corners.length, s[2] + p[2] / corners.length], [0, 0, 0]);
   const side = mat === 'vidrio' ? paint.glass(mid(), n) : 0;
   const inside = mat !== 'vidrio' && mat !== 'luz' && paint.inside(mid());
-  // el esmerilado: la luz que deja pasar (su color por la horneada), en el azul y negativa (glass.ts)
+  // el esmerilado: la luz que deja pasar (su color por la horneada del lado más iluminado), en el azul y negativa (glass.ts)
   const frost = paint.look.esmerilado ? 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b : 0;
   for (const p of corners) {
-    if (mat === 'vidrio') vert(b, p, n, uvOf(p), new THREE.Color(side, side, frost > 0 ? -frost * paint.light(p, n) * INTERIOR_EXPOSURE : side));
+    // el esmerilado es translúcido: cada cara lleva la luz del lado más iluminado (la que pasa por el vinilo)
+    if (mat === 'vidrio') vert(b, p, n, uvOf(p), new THREE.Color(side, side, frost > 0 ? -frost * Math.max(paint.light(p, n), paint.light(p, [-n[0], -n[1], -n[2]])) * INTERIOR_EXPOSURE : side));
     else if (mat === 'luz') vert(b, p, n, uvOf(p), color.clone());
     else {
-      const k = paint.light(p, n) * INTERIOR_EXPOSURE / (inside && !paint.inside(p) ? INDOOR_GAIN : 1);
+      const k = paint.light(p, n) * INTERIOR_EXPOSURE;
       const c = new THREE.Color(color.r * k, color.g * k, color.b * k);
       const tone = paint.light.tone(p, n);
       if (tone) c.multiply(tone);
       vert(b, p, n, uvOf(p), inside ? adentro(c) : c);
+      b.gain?.push(inside && paint.inside(p) ? 1 : 0);
     }
+  }
+  if (tris) {
+    for (const [a, c, d] of tris) b.idx.push(first + a, first + c, first + d);
+    return;
   }
   if (rect) {
     for (let k = 1; k + 1 < corners.length; k++) b.idx.push(first, first + k, first + k + 1);
@@ -153,57 +190,6 @@ function cells(poly: Vec2[], step: number): { ring: Vec2[]; rect: boolean }[] {
   return out;
 }
 
-/** Un bloque opaco tapa lo que se le pega: todo lo dibujado que no es vidrio (ni la caja invisible de un mueble). */
-const opaque = (b: Block): boolean => {
-  const l = b.side ?? b.top ?? b.bottom;
-  return b.role !== 'mueble' && l !== undefined && l.mat !== 'vidrio';
-};
-
-/** Lo tapado de la cara de la arista p → q de un bloque (de y0 a y1): las caras de los opacos pegadas a ella (en la
- *  misma recta, recorridas al revés), como rectángulos en metros desde p. Cada uno se achica JOINT de los lados que caen
- *  adentro de la cara: la cara se mete detrás de lo que la tapa. */
-function covered(p: Vec2, q: Vec2, y0: number, y1: number, others: Block[]): Rect[] {
-  const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-  const e = unit(q[0] - p[0], q[1] - p[1]);
-  const across = (r: Vec2): number => (r[0] - p[0]) * e[1] - (r[1] - p[1]) * e[0];
-  const along = (r: Vec2): number => (r[0] - p[0]) * e[0] + (r[1] - p[1]) * e[1];
-  const out: Rect[] = [];
-  for (const o of others) {
-    const [lo, hi] = [Math.max(y0, o.y0), Math.min(y1, o.y1)];
-    if (hi - lo < EPS) continue;
-    o.polygon.forEach((r, k) => {
-      const s = o.polygon[(k + 1) % o.polygon.length];
-      if (Math.abs(across(r)) > 1e-4 || Math.abs(across(s)) > 1e-4 || along(s) >= along(r)) return;
-      const [s0, s1] = [Math.max(0, along(s)), Math.min(len, along(r))];
-      if (s1 - s0 <= EPS) return;
-      const shrink = (v: number, edge: number, d: number): number => (Math.abs(v - edge) < EPS ? v : v + d);
-      const h = { s0: shrink(s0, 0, JOINT), s1: shrink(s1, len, -JOINT), y0: shrink(lo, y0, JOINT), y1: shrink(hi, y1, -JOINT) };
-      if (h.s1 - h.s0 > EPS && h.y1 - h.y0 > EPS) out.push(h);
-    });
-  }
-  return out;
-}
-
-/** Cuánto se estira hacia abajo y hacia arriba la cara de la arista p → q (normal `n`, afuera) de `b`: JOINT si su borde
- *  da contra un opaco que empieza (o termina) a esa altura, de cualquiera de los dos lados de la cara: una losa sobre un
- *  tabique, un tabique del primer piso en su losa, el último escalón contra el borde del descanso. */
-function stretch(b: Block, p: Vec2, q: Vec2, n: Vec3, others: Block[]): [number, number] {
-  // unos puntos a lo largo de la cara, 2 cm de cada lado: con que uno caiga bajo (o sobre) el opaco, se estira toda
-  const ms = [0.02, 0.25, 0.5, 0.75, 0.98].flatMap((f) => [-0.02, 0.02].map((o): Vec2 => [p[0] + (q[0] - p[0]) * f + n[0] * o, p[1] + (q[1] - p[1]) * f + n[2] * o]));
-  const on = (y: number, top: boolean): boolean => others.some((o) => Math.abs((top ? o.y0 : o.y1) - y) < 1e-4 && ms.some((m) => pointInPolygon(m, o.polygon)));
-  return [on(b.y0, false) ? JOINT : 0, on(b.y1, true) ? JOINT : 0];
-}
-
-/** Las caras de costado de un mismo plano (la misma normal, a menos de 2·10⁻³ rad, y a menos de 5 mm), juntas. */
-class Planes<T extends { normal: Vec3; d: number }> {
-  readonly all: T[][] = [];
-  add(f: T): void {
-    const same = this.all.find((g) => 1 - (g[0].normal[0] * f.normal[0] + g[0].normal[2] * f.normal[2]) < 2e-6 && Math.abs(g[0].d - f.d) < 0.005);
-    if (same) same.push(f);
-    else this.all.push([f]);
-  }
-}
-
 /** El lado de una cara del vidrio de un lucernario (`sky`, D13): está arriba del techo, así que el tope y los costados
  *  dan al cielo (GLASS_OUTSIDE) y la de abajo, al atrio (GLASS_INSIDE). */
 const skyTone = (_p: Vec3, n: Vec3): number => (n[1] < -0.5 ? GLASS_INSIDE : GLASS_OUTSIDE);
@@ -219,8 +205,8 @@ function paneUv(n: Vec3): (p: Vec3) => [number, number] {
 /** Los paños (Pane): cada uno entero, sin partir (lo inclinado: el vidrio, la estructura blanca y los pasamanos, que no
  *  piden más horneado que en sus esquinas). El vidrio de un lucernario (`sky`) da al cielo por el frente (GLASS_OUTSIDE)
  *  y al interior por atrás (GLASS_INSIDE); otro vidrio, según de qué lado queda (glassTone). */
-function paneFaces(i: Interior, panes: Pane[], builder: (mat: Mat) => Builder, light: Light): void {
-  const inside = (p: Vec3): boolean => !outdoors(i, p);
+function paneFaces(i: Interior, panes: Pane[], builder: (mat: Mat) => BakedBuilder, light: Light): void {
+  const inside = (p: Vec3): boolean => !openAir(i, p);
   for (const pn of panes) {
     const front = facing(pn.corners, pn.normal);
     const sides: [Vec3[], Vec3, number | null][] = [[front, pn.normal, pn.sky ? GLASS_OUTSIDE : null]];
@@ -232,97 +218,16 @@ function paneFaces(i: Interior, panes: Pane[], builder: (mat: Mat) => Builder, l
   }
 }
 
-/** Una cara de costado de un bloque: su arista (p, dirección e, normal afuera), t0 = p · e y lo que se dibuja de ella
- *  (rectángulos en t, a lo largo de la recta, y en alto), con las rectas en que se parte (`lines`). */
-interface SideFace { look: Look; p: Vec2; e: Vec2; t0: number; normal: Vec3; d: number; rects: Rect[]; lines: { s: number[]; y: number[] } }
-
-/** Las rectas en que se parten los rectángulos `rs` que se tocan (un grupo de un plano): sus puntas (`marks`) y, entre
- *  dos seguidas a más de `step`, partes iguales de a lo sumo `step` (el horneado). Las mismas para todo el grupo: ningún
- *  vértice de uno queda en medio de una arista de otro. */
-function groupLines(rs: readonly Rect[], step: number): { s: number[]; y: number[] } {
-  const fill = (ms: number[]): number[] => {
-    const xs = [...new Set(ms)].sort((a, b) => a - b).filter((m, k, a) => k === 0 || m - a[k - 1] > 1e-6);
-    if (!Number.isFinite(step)) return xs;
-    return xs.flatMap((m, k) => {
-      if (k === 0) return [m];
-      const gap = m - xs[k - 1], n = Math.ceil(gap / step - 1e-9);
-      return Array.from({ length: n }, (_, j) => xs[k - 1] + (gap * (j + 1)) / n);
-    });
-  };
-  const { s, y } = marksOf(rs);
-  return { s: fill(s), y: fill(y) };
-}
-
-/** Las caras de costado de los bloques (ni `out` ni sin `side`) de todo el interior (las dos partes: un muro del patio
- *  sigue en el plano de una pared del local): sin lo que les tapan otros opacos, metidas JOINT en lo que las corta o se
- *  les apoya, y con las marcas de su plano (las puntas de todas sus caras) para partirlas sin juntas en T. */
-function sideFaces(i: Interior, bakeStep: number): Map<Block, SideFace[]> {
-  const boxOf = (b: Block): [number, number, number, number] => {
-    const xs = b.polygon.map((p) => p[0]), zs = b.polygon.map((p) => p[1]);
-    return [Math.min(...xs) - 1e-3, Math.max(...xs) + 1e-3, Math.min(...zs) - 1e-3, Math.max(...zs) + 1e-3];
-  };
-  const occluders = i.blocks.filter(opaque).map((b) => ({ b, box: boxOf(b) }));
-  const planes = new Planes<SideFace>();
-  const out = new Map<Block, SideFace[]>();
-  for (const b of i.blocks) {
-    if (b.out || !b.side) continue;
-    // las caras van hacia afuera de la planta antihoraria; `hide` cuenta las aristas del polígono guardado
-    const flipped = signedAreaFromAbove(b.polygon) < 0;
-    const poly = flipped ? [...b.polygon].reverse() : b.polygon, n = poly.length;
-    const hidden = new Set(b.hide ?? []);
-    const [x0, x1, z0, z1] = boxOf(b);
-    const near = occluders.filter(({ b: o, box: [ox0, ox1, oz0, oz1] }) => o !== b && ox0 <= x1 && ox1 >= x0 && oz0 <= z1 && oz1 >= z0).map((o) => o.b);
-    const faces: SideFace[] = [];
-    for (let k = 0; k < n; k++) {
-      if (hidden.has(flipped ? (2 * n - 2 - k) % n : k)) continue;
-      const [p, q] = [poly[k], poly[(k + 1) % poly.length]];
-      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-      if (len < EPS) continue;
-      const e = unit(q[0] - p[0], q[1] - p[1]);
-      const normal: Vec3 = [-e[1], 0, e[0]];
-      const [down, up] = opaque(b) ? stretch(b, p, q, normal, near) : [0, 0];
-      // en la recta de la cara, t = (x, z) · e: las caras de un mismo plano comparten las marcas de t
-      const t0 = p[0] * e[0] + p[1] * e[1];
-      const rects = cutRect({ s0: 0, s1: len, y0: b.y0 - down, y1: b.y1 + up }, covered(p, q, b.y0, b.y1, near)).solid
-        .map((r): Rect => ({ ...r, s0: r.s0 + t0, s1: r.s1 + t0 }));
-      const f: SideFace = { look: b.side, p, e, t0, normal, d: p[0] * normal[0] + p[1] * normal[2], rects, lines: { s: [], y: [] } };
-      // el vidrio va entero: una junta abierta en un vidrio deja ver lo mismo que el vidrio
-      if (b.side.mat !== 'vidrio') planes.add(f);
-      faces.push(f);
-    }
-    out.set(b, faces);
-  }
-  // en cada plano, las caras que se tocan (o se pisan) van en un grupo, con las mismas rectas
-  for (const faces of planes.all) {
-    const root = faces.map((_, k) => k);
-    const find = (k: number): number => (root[k] === k ? k : (root[k] = find(root[k])));
-    const touch = (a: Rect, b: Rect): boolean => a.s0 <= b.s1 + 1e-6 && b.s0 <= a.s1 + 1e-6 && a.y0 <= b.y1 + 1e-6 && b.y0 <= a.y1 + 1e-6;
-    for (let a = 0; a < faces.length; a++) {
-      for (let c = a + 1; c < faces.length; c++) {
-        if (find(a) !== find(c) && faces[a].rects.some((r) => faces[c].rects.some((q) => touch(r, q)))) root[find(a)] = find(c);
-      }
-    }
-    const groups = new Map<number, SideFace[]>();
-    faces.forEach((f, k) => groups.set(find(k), [...(groups.get(find(k)) ?? []), f]));
-    for (const g of groups.values()) {
-      // el horneado: el paso más fino de los que se hornean (lo que brilla no; el vidrio ni entra)
-      const lines = groupLines(g.flatMap((f) => f.rects), Math.min(...g.map((f) => (f.look.mat === 'luz' ? Infinity : bakeStep))));
-      for (const f of g) f.lines = lines;
-    }
-  }
-  return out;
-}
-
 /** Las caras de los bloques `blocks` (ninguno `out`) y los paños `panes` de una parte del interior, por Mat: los bloques
  *  partidos en la grilla de `step` m (los costados, además, en las marcas de su plano: `sides`); todo horneado con
  *  `light`. */
 function blockGeometries(i: Interior, blocks: Block[], panes: Pane[], step: number, light: Light, sides: Map<Block, SideFace[]>): Map<Mat, THREE.BufferGeometry> {
   const inGlass = (p: Vec3, n: Vec3): number => glassTone(i, p, n);
-  const inside = (p: Vec3): boolean => !outdoors(i, p);
-  const builders = new Map<Mat, Builder>();
-  const builder = (mat: Mat): Builder => {
+  const inside = (p: Vec3): boolean => !openAir(i, p);
+  const builders = new Map<Mat, BakedBuilder>();
+  const builder = (mat: Mat): BakedBuilder => {
     let b = builders.get(mat);
-    if (!b) builders.set(mat, (b = newBuilder(true)));
+    if (!b) builders.set(mat, (b = mat === 'vidrio' || mat === 'luz' ? newBuilder(true) : { ...newBuilder(true), gain: [] }));
     return b;
   };
   const flat = (p: Vec3): [number, number] => [p[0] / TILE_M, p[2] / TILE_M];
@@ -337,19 +242,15 @@ function blockGeometries(i: Interior, blocks: Block[], panes: Pane[], step: numb
         emit(builder(look.mat), ring.map((p): Vec3 => [p[0], y, p[1]]), [...n], flat, { look, light, glass, inside }, c.rect);
       }
     }
-    // los costados, partidos en las rectas de su grupo (sin juntas en T, con la grilla del horneado)
-    for (const { look, p, e, t0, normal, rects, lines } of sides.get(b) ?? []) {
+    // los costados, en sus pedazos (joints.ts: la grilla del horneado, sin juntas en T); (t, y) antihorario mira a la normal
+    for (const { look, p, e, t0, normal, pieces } of sides.get(b) ?? []) {
       const at = (t: number, y: number): Vec3 => [p[0] + e[0] * (t - t0), y, p[1] + e[1] * (t - t0)];
       const uv = (v: Vec3): [number, number] => [(v[0] * e[0] + v[2] * e[1]) / TILE_M, v[1] / TILE_M];
-      for (const r of rects) {
-        for (const c of lattice([r], lines.s, lines.y)) {
-          emit(builder(look.mat), [at(c.s0, c.y0), at(c.s1, c.y0), at(c.s1, c.y1), at(c.s0, c.y1)], normal, uv, { look, light, glass, inside }, true);
-        }
-      }
+      for (const m of pieces) emit(builder(look.mat), m.pts.map(([t, y]) => at(t, y)), normal, uv, { look, light, glass, inside }, true, m.tris);
     }
   }
   paneFaces(i, panes, builder, light);
-  return new Map([...builders].map(([mat, b]) => [mat, toGeometry(b)]));
+  return new Map([...builders].map(([mat, b]) => [mat, bakedGeometry(b)]));
 }
 
 /** La matriz de un mueble: en su `at`, girado `yaw` sobre +Y. */
@@ -405,12 +306,30 @@ function instancedMeshes(i: Interior, repeated: [ItemModel, Item[]][], material:
   });
 }
 
-/** Cada mueble en su lugar, con su color ya multiplicado: para juntarlos en una sola geometría. */
-const looseGeometries = (i: Interior, items: Item[], light: Light): THREE.BufferGeometry[] => items.map((it) => {
+/**
+ * Cada mueble en su lugar, con su color ya multiplicado: para juntarlos en una sola geometría.
+ * M7 de la T11c: un mueble al aire libre que nunca va instanciado (`single`, su modelo; en la T11c, los molinetes y las
+ * mesas y sombrillas del patio del McDonald's) lleva en cada vértice la luz de afuera de ese punto, con el sol según
+ * hacia dónde mira la cara (outdoorRGBAt), en vez de la de arriba de su centro por el sombreado de la cara (FACE). Así se
+ * lee igual que lo que el chunk dibuja al lado con el sol de verdad (el gabinete del molinete). Las caras de abajo
+ * quedan como estaban: llevan su propia sombra (la lona de la sombrilla, LONA_ABAJO). Uno instanciado lleva una sola luz
+ * por copia: con eso, uno que se instancia en un nivel y no en otro cambiaría de aspecto según la calidad, así que
+ * quedan como estaban.
+ */
+const looseGeometries = (i: Interior, items: Item[], light: Light, single: ReadonlySet<ItemModel> = new Set()): THREE.BufferGeometry[] => items.map((it) => {
   const g = ITEM_MODELS[it.model]().applyMatrix4(placeOf(it));
   const k = itemColor(i, it, light);
-  const col = g.getAttribute('color');
-  for (let v = 0; v < col.count; v++) col.setXYZ(v, col.getX(v) * k.r, col.getY(v) * k.g, col.getZ(v) * k.b);
+  const [pos, nor, col] = [g.getAttribute('position'), g.getAttribute('normal'), g.getAttribute('color')];
+  const sunlit = single.has(it.model) && !ITEM_GLOW[it.model] && outdoors(i, [it.at[0], it.at[1] + 0.6, it.at[2]]);
+  const own = new THREE.Color(it.color ?? '#ffffff');
+  for (let v = 0; v < col.count; v++) {
+    const [p, n]: Vec3[] = [[pos.getX(v), pos.getY(v), pos.getZ(v)], [nor.getX(v), nor.getY(v), nor.getZ(v)]];
+    // lo que imita una luz (`horneado`, negativo) y lo que mira para abajo, como antes
+    if (sunlit && n[1] > -0.5 && col.getX(v) >= 0 && outdoors(i, p)) {
+      const L = outdoorRGBAt(i, p, n), f = faceShade(n);
+      col.setXYZ(v, (col.getX(v) / f) * own.r * L[0], (col.getY(v) / f) * own.g * L[1], (col.getZ(v) / f) * own.b * L[2]);
+    } else col.setXYZ(v, col.getX(v) * k.r, col.getY(v) * k.g, col.getZ(v) * k.b);
+  }
   return g;
 });
 
@@ -623,6 +542,8 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   /** Las mallas de una parte, compactada a `level`. */
   const meshesOf = (p: Prep): THREE.Mesh[] => {
     const meshes: THREE.Mesh[] = [];
+    // los modelos que esta parte nunca instancia (en el nivel 0, el resto del plan): sueltos en todos los niveles
+    const single = new Set(p.plan.rest.map((it) => it.model));
     const add = (g: THREE.BufferGeometry | null, key: InteriorKey): void => {
       if (!g) return;
       const mesh = new THREE.Mesh(g, m[key]);
@@ -641,16 +562,16 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
         toned(g, (m[`in_${mat}`] as THREE.MeshBasicMaterial).map?.userData.tone as Vec3 | undefined);
         return g;
       });
-      add(merged(i, [...flat, ...looseGeometries(i, p.items, light)]), 'in_mueble');
+      add(merged(i, [...flat, ...looseGeometries(i, p.items, light, single)].map(withGain)), 'in_mueble');
     }
     if (level === 0) {
       for (const mesh of instancedMeshes(i, p.plan.repeated, m.in_mueble, light)) {
         mesh.name = 'in_mueble';
         meshes.push(mesh);
       }
-      add(merged(i, looseGeometries(i, p.plan.rest, light)), 'in_mueble');
+      add(merged(i, looseGeometries(i, p.plan.rest, light, single)), 'in_mueble');
     } else if (level < 3) {
-      add(merged(i, looseGeometries(i, p.items, light)), 'in_mueble');
+      add(merged(i, looseGeometries(i, p.items, light, single)), 'in_mueble');
     }
     if (p.labels.length > 0) {
       const { canvases: cs, packed } = packLabels(p.canvases, level >= 2);

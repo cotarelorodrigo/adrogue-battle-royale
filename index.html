@@ -54,7 +54,8 @@
         background: rgba(0, 0, 0, 0.55); font: 13px/1.6 ui-monospace, Menlo, Consolas, monospace; }
 
       /* HUD de la partida */
-      .match-hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      .match-hud { position: fixed; inset: 0; pointer-events: none;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6);
         font-variant-numeric: tabular-nums; }
       .hitmarker { position: fixed; left: 50%; top: 50%; width: 0; height: 0; }
       .hitmarker i { position: absolute; left: -1px; top: -5px; width: 2px; height: 9px; background: #fff;
@@ -96,6 +97,12 @@
       .weapon .slots { display: flex; gap: 6px; justify-content: flex-end; font-size: 0.85rem; }
       .weapon .slots span { padding: 1px 8px; border-radius: 5px; background: rgba(0, 0, 0, 0.45); opacity: 0.7; }
       .weapon .slots span.active { opacity: 1; outline: 1px solid rgba(255, 255, 255, 0.7); }
+      /* Los textos sueltos llevan una chapa oscura sutil: sobre el piso claro del hall de la Casa (~206) el blanco solo
+         con sombra casi no se lee. Con 0,5 de negro el contraste queda ≥ 4,5 (WCAG AA). */
+      .weapon .name, .weapon .ammo, .medkits, .prompt, .status { padding: 0 8px; border-radius: 5px;
+        background: rgba(0, 0, 0, 0.5); }
+      .weapon .name, .weapon .ammo { align-self: flex-end; }
+      .medkits { align-self: flex-start; }
       /* Mira telescópica: negro alrededor de un círculo, con la cruz fina. */
       .scope { position: fixed; inset: 0;
         background: radial-gradient(circle at center, transparent 0 38vmin, rgba(0, 0, 0, 0.94) 38.4vmin); }

@@ -8,17 +8,27 @@ import type { Interior, Look } from '../../../shared/interiors/types.ts';
 import type { Sign } from '../../../shared/mapdata.ts';
 import { triangulateUp } from '../geometry.ts';
 import type { RoofCut } from '../geometry.ts';
-import { BAY_W, facing, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from '../wall-kit.ts';
+import { BAY_W, facing, FLOOR_H, newBuilder, quad, REVOQUE_MEDIA, tintColor, toGeometry, vert } from '../wall-kit.ts';
 import { ITEM_FAR } from './models.ts';
 
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
 const PLANAR_UV = 4;
 /** Lo de metal y lo pintado (`luz`: la estructura del lucernario) va liso, sin el grano del revoque: todo su uv es un
- *  solo punto de la textura. El metal, además, lleva el reflejo del piso al pie de sus costados (su color por SHEEN) y
- *  el del cielo arriba, como el acero inoxidable cepillado (el gabinete del molinete). */
-const SMOOTH_UV: [number, number] = [0.5, 0.5];
+ *  solo punto de la textura, MEAN_UV, y su color va dividido por REVOQUE_MEDIA (se ve el del Look). El metal, además,
+ *  lleva el reflejo del piso al pie de sus costados (su color por SHEEN) y el del cielo arriba, como el acero
+ *  inoxidable cepillado (el gabinete del molinete). */
 const smooth = (l: Look): boolean => l.mat === 'metal' || l.mat === 'luz';
 const SHEEN = 0.8;
+/** Un punto de la foto del revoque que da su media: el medio del texel (96, 48) de 512, que en 1024 cae en la esquina de
+ *  cuatro texels (el bilineal da su media, la misma caja de 2 × 2 px de la foto). Esa caja y la de 4 × 4 de alrededor
+ *  dan la media ±0,5 % en los tres canales: lo mismo en baja (512) que en media y alta (1024). Antes era [0,5, 0,5], un
+ *  texel cualquiera. */
+export const MEAN_UV: [number, number] = [96.5 / 512, 1 - 48.5 / 512];
+/** El color de lo liso: el del Look, compensado por la media del texel. */
+const smoothColor = (hex: string): THREE.Color => {
+  const c = tintColor(hex);
+  return new THREE.Color(c.r / REVOQUE_MEDIA[0], c.g / REVOQUE_MEDIA[1], c.b / REVOQUE_MEDIA[2]);
+};
 
 /** Los bloques y los paños `out` del interior, y las piezas de lejos de sus muebles al aire libre (afuera de su planta, o
  *  arriba de `roof`, el alto del edificio: H2 de la revisión de la T11b), en una geometría para el merge `parapet` de su
@@ -31,16 +41,16 @@ export function exteriorGeometry(i: Interior, roof: number): THREE.BufferGeometr
     const poly = flipped ? [...block.polygon].reverse() : block.polygon, n = poly.length;
     for (const [look, y, up] of [[block.top, block.y1, true], [block.bottom, block.y0, false]] as const) {
       if (!look) continue;
-      const c = tintColor(look.color);
+      const c = smooth(look) ? smoothColor(look.color) : tintColor(look.color);
       const base = b.pos.length / 3;
-      for (const [x, z] of poly) vert(b, [x, y, z], [0, up ? 1 : -1, 0], smooth(look) ? SMOOTH_UV : [x / PLANAR_UV, z / PLANAR_UV], c);
+      for (const [x, z] of poly) vert(b, [x, y, z], [0, up ? 1 : -1, 0], smooth(look) ? MEAN_UV : [x / PLANAR_UV, z / PLANAR_UV], c);
       const idx: number[] = [];
       triangulateUp(poly, base, idx);
       if (!up) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
       b.idx.push(...idx);
     }
     if (!block.side) continue;
-    const c = tintColor(block.side.color), flat = smooth(block.side);
+    const flat = smooth(block.side), c = flat ? smoothColor(block.side.color) : tintColor(block.side.color);
     const foot = block.side.mat === 'metal' ? c.clone().multiplyScalar(SHEEN) : c;
     const hidden = new Set(block.hide ?? []);
     for (let k = 0; k < n; k++) {
@@ -51,7 +61,7 @@ export function exteriorGeometry(i: Interior, roof: number): THREE.BufferGeometr
       const [ex, ez] = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
       const u0 = (p[0] * ex + p[1] * ez) / BAY_W, u1 = u0 + len / BAY_W;
       const [v0, v1] = [block.y0 / FLOOR_H, block.y1 / FLOOR_H];
-      const uvs: [number, number][] = flat ? [SMOOTH_UV, SMOOTH_UV, SMOOTH_UV, SMOOTH_UV] : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+      const uvs: [number, number][] = flat ? [MEAN_UV, MEAN_UV, MEAN_UV, MEAN_UV] : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
       const vs = ([[p[0], block.y0, p[1]], [q[0], block.y0, q[1]], [q[0], block.y1, q[1]], [p[0], block.y1, p[1]]] as [number, number, number][])
         .map((r, j) => vert(b, r, [-ez, 0, ex], uvs[j], j < 2 ? foot : c));
       b.idx.push(vs[0], vs[1], vs[2], vs[0], vs[2], vs[3]);

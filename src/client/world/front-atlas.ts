@@ -292,6 +292,10 @@ function fillGutter(ctx: Ctx, cv: HTMLCanvasElement, x0: number, y0: number, x1:
  * Atlas de módulos de fachada (`size` px de lado). `color` lleva el dibujo; `mask`, en su canal R,
  * 255 donde es pared pintada (se tiñe con el color del vértice) y 0 donde conserva su color.
  */
+/** La media lineal (canal por canal) de la pintura de las paredes del atlas: el revoque aclarado a luminancia sRGB 0,9
+ *  (composeFrontAtlas), medida sobre public/textures/revoque_diff.jpg (tests/client/aspecto.test.ts, I3 de la T11c). */
+export const PINTURA_MEDIA: readonly [number, number, number] = [0.802, 0.785, 0.772];
+
 export function composeFrontAtlas(img: Images, size: number): { color: HTMLCanvasElement; mask: HTMLCanvasElement } {
   const [color, cc] = newCanvas(size);
   const [mask, mc] = newCanvas(size);

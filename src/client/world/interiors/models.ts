@@ -37,14 +37,40 @@ export const cyl = (r: number, h: number, at: Vec3, color: string, segments = 10
 export const cone = (rTop: number, rBottom: number, h: number, at: Vec3, color: string, segments = 10): THREE.BufferGeometry =>
   paint(new THREE.CylinderGeometry(rTop, rBottom, h, segments).translate(0, h / 2, 0), at, color);
 
-/** La cara de abajo de una lona (la de la sombrilla), a la sombra de sí misma: su color por LONA_ABAJO (le llega solo
- *  lo que pasa por la tela y lo que rebota del piso; el horneado le da a cada mueble una sola luz, la de arriba). */
+/** El sombreado por cara de los muebles que no brillan (I1 de la T11c): el horneado le da a cada mueble una sola luz, la
+ *  de arriba, y sin esto sus caras se veían todas iguales, como recortes de cartón. Cada cara va por un factor según su
+ *  normal (en el marco del modelo, que mira a +z): arriba entera, el frente y la espalda (±z) un poco menos, los costados
+ *  (±x) menos y abajo lo menos (le llega el rebote del piso). En el medio, en proporción a los cuadrados de la normal (un
+ *  cilindro va de a poco). */
+export const FACE = { arriba: 1, frente: 0.8, costado: 0.66, abajo: 0.4 } as const;
+export function faceShade(n: Vec3): number {
+  const h = n[0] * n[0] + n[2] * n[2], y = n[1] * n[1];
+  const side = h > 1e-9 ? (n[2] * n[2] * FACE.frente + n[0] * n[0] * FACE.costado) / h : FACE.frente;
+  return y * (n[1] >= 0 ? FACE.arriba : FACE.abajo) + (1 - y) * side;
+}
+const shaded = (g: THREE.BufferGeometry): THREE.BufferGeometry => {
+  const [nor, col] = [g.getAttribute('normal'), g.getAttribute('color')];
+  for (let v = 0; v < nor.count; v++) {
+    const f = faceShade([nor.getX(v), nor.getY(v), nor.getZ(v)]);
+    col.setXYZ(v, col.getX(v) * f, col.getY(v) * f, col.getZ(v) * f);
+  }
+  return g;
+};
+
+/** La cara de abajo de una lona (la de la sombrilla), a la sombra de sí misma: con el sombreado por cara, su color queda
+ *  en LONA_ABAJO (le llega solo lo que pasa por la tela y lo que rebota del piso). */
 const LONA_ABAJO = 0.3;
 const underside = (g: THREE.BufferGeometry): THREE.BufferGeometry => {
   const [nor, col] = [g.getAttribute('normal'), g.getAttribute('color')];
-  for (let v = 0; v < nor.count; v++) if (nor.getY(v) < -0.5) col.setXYZ(v, col.getX(v) * LONA_ABAJO, col.getY(v) * LONA_ABAJO, col.getZ(v) * LONA_ABAJO);
+  const k = LONA_ABAJO / FACE.abajo;
+  for (let v = 0; v < nor.count; v++) if (nor.getY(v) < -0.5) col.setXYZ(v, col.getX(v) * k, col.getY(v) * k, col.getZ(v) * k);
   return g;
 };
+
+/** Un rectángulo horizontal de w (x) × d (z) en `at`, mirando hacia arriba (2 triángulos): la ranura entre el asiento y
+ *  el respaldo de una butaca, que se ve desde arriba por el hueco (M3 de la revisión de la T11c: no una caja). */
+const slot = (w: number, d: number, at: Vec3, color: string): THREE.BufferGeometry =>
+  paint(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), at, color);
 
 /** Tronco de cono sin tapas (lo de arriba y lo de abajo no se ve): de radio rTop arriba y rBottom abajo, con la base en
  *  `at`. */
@@ -79,8 +105,8 @@ const CHAIR = '#3b3f45', CHAIR_BASE = '#26282c', SEAT = '#646a72';
 // que tendría a la luz del salón (el real · 0,9 · INTERIOR_EXPOSURE: el aluminio #9aa0a6 queda en #2d2f31), marcado como
 // lo horneado (`horneado`), y la pantalla, su brillo. Desde adentro, con el ojo adaptado, lo que brilla se ve ~4 veces
 // más fuerte que desde la vereda (lo horneado, además, con la ganancia).
-const ATM_BODY = horneado('#2d2f31'), ATM_FRONT = horneado('#131517'), ATM_SCREEN = '#3d76a8', ATM_KEYS = horneado('#404143'), ATM_SLOT = horneado('#060708');
-const SIGN_BOX = horneado('#0b0c0d'), SIGN_SCREEN = horneado('#030304'), ROD = horneado('#212225');
+const ATM_BODY = horneado('#2a2c2d'), ATM_FRONT = horneado('#111315'), ATM_SCREEN = '#3d76a8', ATM_KEYS = horneado('#3b3d3e'), ATM_SLOT = horneado('#050607');
+const SIGN_BOX = horneado('#0a0a0c'), SIGN_SCREEN = horneado('#030303'), ROD = horneado('#1e1f22');
 
 /** Una silla de oficina giratoria en (x, z), con el respaldo hacia −z si `back` es −1 (mira a +z) o hacia +z si es 1. */
 const officeChair = (x: number, z: number, back: 1 | -1): THREE.BufferGeometry[] => [
@@ -105,9 +131,9 @@ const PLAFON_R = 3.5, PLAFON_T = 0.1, PLAFON_CABLE = 2.5;
 const RANURA = '#141214';
 /** La butaca: asiento, la ranura, respaldo y medio costado de cada lado con su apoyabrazos (con el de la butaca de al
  *  lado hacen uno entero; en las puntas de la fila queda el medio), de 0,55 m de ancho; mira a +z (al escenario). Son
- *  ~200 en el auditorio: cinco cajas cada una (60 triángulos). */
+ *  ~200 en el auditorio: cuatro cajas y la ranura (un quad), 50 triángulos. */
 const seat = (): THREE.BufferGeometry[] => [
-  box(0.5, 0.1, 0.415, [0, 0.4, 0.0425], SEAT_FABRIC), box(0.5, 0.08, 0.02, [0, 0.4, -0.175], RANURA),
+  box(0.5, 0.1, 0.415, [0, 0.4, 0.0425], SEAT_FABRIC), slot(0.5, 0.02, [0, 0.48, -0.175], RANURA),
   box(0.5, 0.56, 0.09, [0, 0.42, -0.23], SEAT_FABRIC),
   box(0.025, 0.62, 0.52, [-0.2625, 0, -0.02], SEAT_FRAME), box(0.025, 0.62, 0.52, [0.2625, 0, -0.02], SEAT_FRAME),
 ];
@@ -219,8 +245,10 @@ const BENCH_WOOD = '#9a6a3c', BENCH_IRON = '#2a3a2f';
 const WIN_FRAME = '#6b4a2e', MARBLE = '#dcd8cf', BRONZE = '#8a7444', GRILLE_DARK = '#55595d';
 /** La terminal SUBE: la pintura de su cuerpo (gris claro) y de su franja (el celeste de la tarjeta), y lo que llevan
  *  ya oscurecido (brilla: va sin hornear; la pintura a la luz del hall, 0,57, por INTERIOR_EXPOSURE, y en el modelo
- *  marcado como lo horneado); la pantalla prendida, el lector y la boca de billetes. */
-export const SUBE_COLORES = { pintura: '#e2e4e6', cuerpo: '#383839', franjaPintura: '#1e9bd7', franja: '#022334', pantalla: '#8fb4d4', lector: '#1a1c1f' } as const;
+ *  marcado como lo horneado); la pantalla prendida, el lector y la boca de billetes. La carcasa, gris y no blanca, y la
+ *  pantalla, más clara: la pantalla prendida se despega ≥ 30 del cuerpo (I2 de la T11c; con la carcasa blanca, el
+ *  cuerpo daba 212 y la pantalla no tenía dónde subir). */
+export const SUBE_COLORES = { pintura: '#c8ccd0', cuerpo: '#2c2e2f', franjaPintura: '#1e9bd7', franja: '#022031', pantalla: '#a0c8e8', lector: '#1a1c1f' } as const;
 /** Un caño de radio r de `a` a `b` (sin tapas). */
 const rod = (a: Vec3, b: Vec3, r: number, color: string, segments = 6): THREE.BufferGeometry => {
   const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
@@ -392,9 +420,10 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   'balde-helado': () => model(box(0.16, 0.1, 0.32, [0, 0, 0], '#ffffff'), box(0.13, 0.05, 0.26, [0, 0.1, 0.01], '#ffffff'),
     box(0.08, 0.03, 0.14, [0.01, 0.15, -0.02], '#ffffff')),
   // la butaca del cine (MODEL_BOX: 0,55 × 0,62 × 1,0; mira a +z, a la pantalla): el asiento y el respaldo alto de tela,
-  // la ranura entre los dos y medio costado de cada lado con su apoyabrazos (con el de la de al lado hacen uno entero; en
-  // las puntas de la fila queda el medio). Son 434: cinco cajas (60 triángulos)
-  butaca: () => model(box(0.5, 0.14, 0.46, [0, 0.38, 0.06], BUTACA_TELA), box(0.5, 0.11, 0.02, [0, 0.38, -0.18], RANURA),
+  // la ranura entre los dos (un quad, 2 cm abajo del asiento) y medio costado de cada lado con su apoyabrazos (con el de
+  // la de al lado hacen uno entero; en las puntas de la fila queda el medio). Son 434: cuatro cajas y el quad (50
+  // triángulos)
+  butaca: () => model(box(0.5, 0.14, 0.46, [0, 0.38, 0.06], BUTACA_TELA), slot(0.5, 0.02, [0, 0.5, -0.18], RANURA),
     box(0.5, 0.62, 0.12, [0, 0.38, -0.25], BUTACA_TELA),
     box(0.025, 0.68, 0.62, [-0.2625, 0, 0], BUTACA_ARMAZON), box(0.025, 0.68, 0.62, [0.2625, 0, 0], BUTACA_ARMAZON)),
   // la máquina de pochoclo (MODEL_BOX: 0,9 × 0,6 × 1,75): el carrito rojo con su guarda dorada, la vitrina (el vidrio va
@@ -439,6 +468,14 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
 /** Los que brillan: van con su color pleno, sin la luz horneada. */
 export const ITEM_GLOW: Partial<Record<ItemModel, true>> = { lampara: true, cajero: true, turnero: true, pantalla: true, 'balde-helado': true,
   guirnalda: true, botella: true, lamparita: true, sube: true };
+
+// los que no brillan, sombreados por cara (los que brillan van con su color pleno: lo que imita lo horneado en ellos ya
+// lleva su tono calibrado, `horneado`)
+for (const m of Object.keys(ITEM_MODELS) as ItemModel[]) {
+  if (ITEM_GLOW[m]) continue;
+  const make = ITEM_MODELS[m];
+  ITEM_MODELS[m] = () => shaded(make());
+}
 
 /** Las partes de vidrio de un modelo, en su marco: van en la malla de in_vidrio del interior (con su material
  *  transparente), no en la de los muebles. El color lo pone el interior (es el lado de la cara, glass.ts). */

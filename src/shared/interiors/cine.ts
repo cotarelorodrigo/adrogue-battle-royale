@@ -80,9 +80,11 @@ const SPOT_L = { r: 8.5, p: 0.75 } as const;
 const CAJON_L = { r: 9, p: 1.1 } as const;
 const TIRA_L = { r: 4, p: 0.22 } as const;
 const SALA_L = { r: 7, p: 0.68 } as const;
-/** Un cine es oscuro aunque el ojo se adapte: lo horneado bajo techo va a esto de lo de un local claro (Interior.dim; la
- *  ganancia de adentro, render/exposure.ts, aclara lo horneado ~4 veces; esto lo deja como se calibró sin ella). */
-const PENUMBRA = 0.26;
+/** Un cine es oscuro aunque el ojo se adapte: lo horneado bajo techo, adentro y adaptado, se ve a su luz por esto
+ *  (Interior.adaptedExposure), la exposición de un local claro antes de la adaptación (el INTERIOR_EXPOSURE de la T11b,
+ *  sin ganancia), con la que se calibró la sala. El factor sobre lo de un local claro lo saca el cliente de sus
+ *  constantes (build.ts, dimOf): ~0,26 con las de hoy. */
+const PENUMBRA = 0.15;
 
 // ---------- medidas (m, marco local) ----------
 

@@ -44,16 +44,18 @@ const ZOCALO_OUT: Look = { mat: 'liso', color: '#86bbe2' };
 const VERDE: Look = { mat: 'liso', color: '#2c4a36' };
 const INOX: Look = { mat: 'liso', color: '#b7bbbf' };
 /** El acero inoxidable de lo que es `out` (el gabinete del molinete, la hoja abierta): lo dibuja el chunk con el revoque,
- *  liso y con el reflejo del piso (exterior.ts); claro y frío, como el de los molinetes al sol. */
-const INOX_AFUERA: Look = { mat: 'metal', color: '#e4e8ec' };
+ *  liso y con el reflejo del piso (exterior.ts). El mismo que el del cuerpo de los molinetes (M7 de la T11c): sus caras
+ *  verticales llevan la luz de afuera de cada vértice, con el sol de verdad, como el gabinete. */
+const INOX_AFUERA: Look = { mat: 'metal', color: INOX.color };
 const INOX_TAPA: Look = { mat: 'liso', color: '#3b3e42' };
 /** Las ventanas de afuera: el marco, el vidrio oscuro (de día, de afuera, no se ve el interior) y el alféizar. */
 const MARCO_OUT: Look = { mat: 'liso', color: '#e8e3d4' };
 const VIDRIO_OUT: Look = { mat: 'liso', color: '#3d4b55' };
 const ALFEIZAR: Look = { mat: 'liso', color: '#c9c3b6' };
 /** Las ventanas del frente desde adentro: la luz de día por el vidrio (in_luz, calibrada como el ventanal de la Casa
- *  de la Cultura: más clara que la pared, más oscura que los tubos y azulada), su marco y la reja a contraluz. */
-const LUZ_DIA: Look = { mat: 'luz', color: '#a0bcd2' };
+ *  de la Cultura: ≥ 20 más clara que la pared a luz plena, sin quemarse y apenas azulada; I2 de la T11c), su marco y la
+ *  reja a contraluz. */
+const LUZ_DIA: Look = { mat: 'luz', color: '#9affff' };
 const MARCO_IN: Look = { mat: 'liso', color: '#f2efe6' };
 const REJA_IN: Look = { mat: 'liso', color: '#26302a' };
 /** Los tubos fluorescentes (brillan: blancos fríos) y su artefacto de chapa blanca. */

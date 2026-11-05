@@ -84,13 +84,13 @@ const QUE_SE_VE: { que: string; brilla: string; ve: RGB; imita?: true }[] = [
   { que: 'el fondo negro del turnero', brilla: '#070707', ve: hexRGB('#000000') },
   { que: 'el número del turnero, LED rojo', brilla: '#aa1503', ve: hexRGB('#ff3b1c') },
   { que: 'la pantalla encendida del cajero automático', brilla: '#3d76a8', ve: hexRGB('#8fc6e4') },
-  { que: 'el gabinete del cajero: aluminio', brilla: '#2d2f31', ve: horneado('#9aa0a6'), imita: true },
-  { que: 'el frente del cajero: plástico gris oscuro', brilla: '#131517', ve: horneado('#50555c'), imita: true },
-  { que: 'el teclado del cajero: acero claro', brilla: '#404143', ve: horneado('#d0d4d8'), imita: true },
-  { que: 'las ranuras del cajero: negro', brilla: '#060708', ve: horneado('#2a2c30'), imita: true },
-  { que: 'la caja del turnero: acero oscuro', brilla: '#0b0c0d', ve: horneado('#3a3c40'), imita: true },
-  { que: 'la pantalla apagada del turnero', brilla: '#030304', ve: horneado('#1b1c1f'), imita: true },
-  { que: 'las varillas del turnero', brilla: '#212225', ve: horneado('#777b82'), imita: true },
+  { que: 'el gabinete del cajero: aluminio', brilla: '#2a2c2d', ve: horneado('#9aa0a6'), imita: true },
+  { que: 'el frente del cajero: plástico gris oscuro', brilla: '#111315', ve: horneado('#50555c'), imita: true },
+  { que: 'el teclado del cajero: acero claro', brilla: '#3b3d3e', ve: horneado('#d0d4d8'), imita: true },
+  { que: 'las ranuras del cajero: negro', brilla: '#050607', ve: horneado('#2a2c30'), imita: true },
+  { que: 'la caja del turnero: acero oscuro', brilla: '#0a0a0c', ve: horneado('#3a3c40'), imita: true },
+  { que: 'la pantalla apagada del turnero', brilla: '#030303', ve: horneado('#1b1c1f'), imita: true },
+  { que: 'las varillas del turnero', brilla: '#1e1f22', ve: horneado('#777b82'), imita: true },
 ];
 
 /** Los colores que brillan en un interior: los carteles `glow`, los bloques de in_luz y los muebles de ITEM_GLOW (los que

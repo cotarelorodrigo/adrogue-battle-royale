@@ -60,7 +60,9 @@ export type LabelDrawing = 'tesoro' | 'plafon' | 'cuadro' | 'menu' | 'zigzag' | 
  *  dibuja (la marquesina del cine, la chapa del Guernica). */
 export interface Label { text: string; at: Vec3; normal: Vec2; width: number; height: number; look: SignLook; glow?: true; out?: true; drawing?: LabelDrawing;
   down?: true; round?: true; placeSign?: true }
-export interface Lamp { at: Vec3; radius: number; power: number }
+/** Una lámpara: su luz cae con la distancia hasta `radius`. `down`: embutida en el cielorraso (un panel), alumbra solo lo
+ *  que está más abajo que ella: su cielorraso no (le llega solo el rebote, el ambiente). */
+export interface Lamp { at: Vec3; radius: number; power: number; down?: true }
 export interface FloorArea { level: number; y: number; polygon: Vec2[]; holes: Vec2[][]; area: number }
 /** foot: 0,6 m antes del primer escalón; top: 0,6 m pasado el último; yaw: subiendo (convención de player.ts). */
 export interface StairRun { from: number; to: number; foot: Vec3; top: Vec3; yaw: number }
@@ -71,11 +73,12 @@ export interface Viewpoint { id: string; pos: Vec3; yaw: number }
  *  es `out`; los usa validateInterior. `roofHoles`: los huecos (mundo, antihorarios) que el interior le abre al techo
  *  del edificio (D13: el atrio de la Casa de la Cultura); el chunk los abre en su techo y en la cáscara de sombra.
  *  `trees`: los árboles de sus patios (Kit.tree, tarea 9), árboles del mapa como los de la calle: el cliente los dibuja
- *  con ellos (vegetation.ts) y collision.ts les pone el tronco sólido de cualquier árbol. `dim` (si está; si no, 1): por
- *  cuánto va la luz horneada bajo techo de un lugar que es oscuro aunque el ojo se adapte (el cine), sin tocar sus
- *  lámparas ni su ambient (la oclusión del horneado resta lo mismo). `shade` (si está): los edificios del mapa cerca de
+ *  con ellos (vegetation.ts) y collision.ts les pone el tronco sólido de cualquier árbol. `adaptedExposure` (si está):
+ *  un lugar oscuro aunque el ojo se adapte (el cine): lo horneado bajo techo, adentro y adaptado, se ve a su luz por esto
+ *  y no por la de un local claro (INTERIOR_EXPOSURE · INDOOR_GAIN); el cliente saca de ahí el factor (build.ts, dimOf),
+ *  sin tocar sus lámparas ni su ambient (la oclusión del horneado resta lo mismo). `shade` (si está): los edificios del mapa cerca de
  *  lo que el interior tiene al aire libre (planta y altura), que le pueden tapar el sol al horneado de afuera. */
 export interface Interior { placeId: string; buildingId: string; publicFloors: number; terrace: boolean; ambient: number;
   blocks: Block[]; panes: Pane[]; items: Item[]; labels: Label[]; lamps: Lamp[]; floors: FloorArea[]; stairs: StairRun[]; doors: Door[];
-  views: Viewpoint[]; marks: Record<string, Vec3>; footprint: Vec2[]; patios: Vec2[][]; roofHoles: Vec2[][]; trees: Tree[]; dim?: number;
+  views: Viewpoint[]; marks: Record<string, Vec3>; footprint: Vec2[]; patios: Vec2[][]; roofHoles: Vec2[][]; trees: Tree[]; adaptedExposure?: number;
   shade?: { polygon: Vec2[]; height: number }[] }

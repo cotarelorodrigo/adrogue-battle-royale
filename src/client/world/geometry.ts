@@ -9,7 +9,7 @@ import { LOT_OPENINGS } from '../../shared/interiors/openings.ts';
 import { SHOP_GLASS, cellRect, panesOf } from './front-atlas.ts';
 import { frontGeometry } from './fronts.ts';
 import type { WorldMaterials } from './types.ts';
-import { BAY_W, cutRect, edgeHoles, facing, FLOOR_H, lattice, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
+import { BAY_W, cutRect, edgeHoles, facing, flatMesh, FLOOR_H, marked, newBuilder, quad, REVOQUE_MEDIA, surveyedColor, tintColor, toGeometry, vert } from './wall-kit.ts';
 import type { Builder, Rect } from './wall-kit.ts';
 
 export { FLOOR_H, BAY_W };
@@ -177,12 +177,14 @@ function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, 
   }
 }
 
-/** Dónde se parten las paredes de un edificio con aberturas para no dejar juntas en T (wall-kit.ts, lattice): a lo largo
- *  de la arista i, en las puntas de sus huecos (`s(i)`, de todas las bandas: la de arriba también, que se junta en
- *  3,2 m); en alto, en las de todos los huecos y en cada piso (`y`, iguales en todas las aristas: se juntan en las
- *  esquinas). Sin aberturas, nada: una banda entera es un cuadrilátero. */
-export interface WallMarks { s: (i: number) => number[]; y: number[] }
-const NO_MARKS: WallMarks = { s: () => [], y: [] };
+/** Dónde se parten las paredes de un edificio con aberturas para no dejar juntas en T (wall-kit.ts, marked): arriba y
+ *  abajo de cada pedazo de la arista i, en las puntas de sus huecos (`s(i)`, de todas las bandas: la de arriba también,
+ *  que se junta en 3,2 m); en la recta vertical `s` de la arista i, en las alturas de lo que la toca (`y(i, s)`: los
+ *  huecos que empiezan o terminan ahí y, en una esquina, los de las dos aristas que la tocan, más cada piso si una es
+ *  del frente del lote, que va por piso). El frente parte las puntas de sus aristas en las mismas (`y(i, 0)` y
+ *  `y(i, largo)`). Sin aberturas, nada: una banda entera es un cuadrilátero. */
+export interface WallMarks { s: (i: number) => number[]; y: (i: number, s: number) => number[]; seam: (y: number) => boolean }
+const NO_MARKS: WallMarks = { s: () => [], y: () => [], seam: () => false };
 
 /** `colorOf(i)`: color de la arista i de `fp`, o null para saltearla (va en otra banda). Los huecos de cada arista
  *  (`holes`) no se dibujan: lo recortado va a `tapa()`, con las mismas uv. Los pedazos se parten en `marks`. */
@@ -197,16 +199,16 @@ function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i
     const len = Math.hypot(dx, dz);
     if (len < 1e-6) continue;
     const n: [number, number, number] = [-dz / len, 0, dx / len];
-    const piece = (to: Builder, r: Rect): void => {
-      const [p, q] = [[a[0] + (dx * r.s0) / len, a[1] + (dz * r.s0) / len], [a[0] + (dx * r.s1) / len, a[1] + (dz * r.s1) / len]];
-      const u0 = (cum[i] + r.s0) / BAY_W, u1 = (cum[i] + r.s1) / BAY_W;
-      quad(to, [[p[0], r.y0, p[1]], [q[0], r.y0, q[1]], [q[0], r.y1, q[1]], [p[0], r.y1, p[1]]],
-        [[u0, r.y0 / FLOOR_H], [u1, r.y0 / FLOOR_H], [u1, r.y1 / FLOOR_H], [u0, r.y1 / FLOOR_H]], n, color);
-    };
-    const { solid, cut } = cutRect({ s0: 0, s1: len, y0, y1 }, holes.get(i) ?? []);
     const ss = marks.s(i);
-    for (const r of lattice(solid, ss, marks.y)) piece(b, r);
-    for (const r of lattice(cut, ss, marks.y)) piece(tapa(), r);
+    // a lo largo, las puntas de las columnas de los huecos donde algo se junta con otras columnas: en las alturas de los
+    // huecos y en la junta de las dos bandas (`seam`); lo recortado (un hueco, que puede abarcar varias columnas), siempre
+    const along = (y: number, cut: boolean): number[] => (cut || marks.seam(y) || (holes.get(i) ?? []).some((h) => Math.abs(h.y0 - y) < 1e-6 || Math.abs(h.y1 - y) < 1e-6) ? ss : []);
+    const piece = (to: Builder, r: Rect, cut: boolean): void => flatMesh(to,
+      marked(r, { bottom: along(r.y0, cut), top: along(r.y1, cut), left: marks.y(i, r.s0), right: marks.y(i, r.s1) }),
+      (s, y) => [a[0] + (dx * s) / len, y, a[1] + (dz * s) / len], (s, y) => [(cum[i] + s) / BAY_W, y / FLOOR_H], n, color);
+    const { solid, cut } = cutRect({ s0: 0, s1: len, y0, y1 }, holes.get(i) ?? []);
+    for (const r of solid) piece(b, r, false);
+    for (const r of cut) piece(tapa(), r, true);
   }
   return toGeometry(b);
 }
@@ -224,12 +226,8 @@ function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color, 
     const u0 = cum[i] / BAY_W, u1 = (cum[i] + len) / BAY_W;
     const v0 = y0 / FLOOR_H, v1 = y1 / FLOOR_H;
     // cara exterior (al ras de la pared)
-    for (const r of lattice([{ s0: 0, s1: len, y0, y1 }], splits(i), [])) {
-      const [p, q] = [[a[0] + (dx * r.s0) / len, a[1] + (dz * r.s0) / len], [a[0] + (dx * r.s1) / len, a[1] + (dz * r.s1) / len]];
-      const [ua, ub] = [(cum[i] + r.s0) / BAY_W, (cum[i] + r.s1) / BAY_W];
-      quad(b, [[p[0], y0, p[1]], [q[0], y0, q[1]], [q[0], y1, q[1]], [p[0], y1, p[1]]],
-        [[ua, v0], [ub, v0], [ub, v1], [ua, v1]], [nx, 0, nz], color);
-    }
+    flatMesh(b, marked({ s0: 0, s1: len, y0, y1 }, { bottom: splits(i) }), (s, y) => [a[0] + (dx * s) / len, y, a[1] + (dz * s) / len],
+      (s, y) => [(cum[i] + s) / BAY_W, y === y0 ? v0 : v1], [nx, 0, nz], color);
     // cara interior (mira hacia adentro): winding invertido
     quad(b, [[ci[0], y0, ci[1]], [ai[0], y0, ai[1]], [ai[0], y1, ai[1]], [ci[0], y1, ci[1]]],
       [[u1, v0], [u0, v0], [u0, v1], [u1, v1]], [-nx, 0, -nz], color);
@@ -269,6 +267,8 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [],
 } {
   const fp = ensureCCW(bd.footprint);
   const color = tintColor(bd.tint);
+  // un lote pinta sus medianeras, sus fondos y su pretil con la foto cruda del revoque (`parapet`): su blanco, compensado
+  const lotColor = bd.front ? surveyedColor(bd.tint, REVOQUE_MEDIA) : color;
   // facades cuenta aristas sobre el footprint guardado; si ensureCCW lo dio vuelta, la arista i es la n − 2 − i
   const n = fp.length;
   const flipped = fp !== bd.footprint;
@@ -293,9 +293,20 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [],
   // con aberturas, las paredes se parten sin juntas en T (T11c): en las puntas de los huecos de cada arista y, en alto,
   // en las de todos y en cada piso (el frente de un lote se parte por piso y su banda de arriba)
   const floorsY = Array.from({ length: Math.max(1, bd.floors) + 1 }, (_, r) => r * FLOOR_H).filter((y) => y < bd.height);
+  const lenOf = (i: number): number => Math.hypot(fp[(i + 1) % fp.length][0] - fp[i][0], fp[(i + 1) % fp.length][1] - fp[i][1]);
+  const touching = (i: number, s: number): number[] => (holes.get(i) ?? [])
+    .filter((h) => Math.abs(h.s0 - s) < 1e-6 || Math.abs(h.s1 - s) < 1e-6).flatMap((h) => [h.y0, h.y1]);
+  // en una esquina, los huecos de las dos aristas que la tocan y, si una es del frente del lote (que va por piso), cada piso
+  const atCorner = (i: number, end: boolean): number[] => {
+    const j = (i + (end ? 1 : fp.length - 1)) % fp.length;
+    return [...touching(i, end ? lenOf(i) : 0), ...touching(j, end ? 0 : lenOf(j)),
+      ...(lotEdges.has(i) || lotEdges.has(j) ? [...floorsY, bd.height] : [])];
+  };
   const marks: WallMarks = openings.length === 0 ? NO_MARKS : {
     s: (i) => (holes.get(i) ?? []).flatMap((h) => [h.s0, h.s1]),
-    y: [...floorsY, bd.height, ...[...holes.values()].flat().flatMap((h) => [h.y0, h.y1])],
+    y: (i, s) => (Math.abs(s) < 1e-6 ? atCorner(i, false) : Math.abs(s - lenOf(i)) < 1e-6 ? atCorner(i, true) : touching(i, s)),
+    // la junta de la planta baja con la banda de arriba
+    seam: (y) => bd.height > FLOOR_H && Math.abs(y - FLOOR_H) < 1e-6,
   };
 
   const rb = newBuilder(true), top = roofColor(cut);
@@ -310,12 +321,12 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [],
   };
   roofTapa(bd, cut, color, tapa);
   const walls = {
-    ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color), holes, tapa(mats.ground), marks),
+    ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : lotColor), holes, tapa(mats.ground), marks),
     // edificio más bajo que un piso: sin banda superior (geometría vacía)
     upper: bd.height > FLOOR_H
-      ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : color), holes, tapa(mats.upper), marks)
+      ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : lotColor), holes, tapa(mats.upper), marks)
       : toGeometry(newBuilder(true)),
-    front: bd.front ? frontGeometry(bd, fp, edgeOf, openings, tapa('front'), marks.y) : toGeometry(newBuilder(true)),
+    front: bd.front ? frontGeometry(bd, fp, edgeOf, openings, tapa('front'), (i, end) => marks.y(i, end ? lenOf(i) : 0)) : toGeometry(newBuilder(true)),
     overrides: grounds.map((ground) => ({
       ground,
       geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }, holes, tapa(GROUND_MAT[ground]), marks),
@@ -327,7 +338,7 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [],
     walls,
     roof: toGeometry(rb),
     // un relleno de hueco (mapgen/pockets.ts) es un parche de techo entre vecinos: sin pretil propio
-    parapet: bd.fill ? toGeometry(newBuilder(true)) : parapetRing(fp, cum, bd.height, color, splits),
+    parapet: bd.fill ? toGeometry(newBuilder(true)) : parapetRing(fp, cum, bd.height, lotColor, splits),
     tapas: Object.fromEntries([...tapaBuilders].map(([mat, t]) => [mat, toGeometry(t)])),
   };
 }

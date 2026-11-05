@@ -95,21 +95,87 @@ function splits(ms: readonly number[], a: number, b: number): number[] {
   return [a, ...inside.filter((m, k) => k === 0 || m - inside[k - 1] > 1e-6), b];
 }
 
-/** Los rectángulos `rs` partidos en cada marca de `ss` (a lo largo) y de `ys` (en alto) que les cae adentro. Si todas
- *  las caras de un plano se parten con las mismas marcas (las puntas de todos sus rectángulos), ningún vértice de una
- *  queda en medio de una arista de otra: sin juntas en T, que el rasterizado deja abiertas como puntos o una línea de
- *  lo que hay detrás (T5 M1, T9 H5 y la T11c). */
-export function lattice(rs: readonly Rect[], ss: readonly number[], ys: readonly number[]): Rect[] {
-  const out: Rect[] = [];
-  for (const r of rs) {
-    const [cs, rows] = [splits(ss, r.s0, r.s1), splits(ys, r.y0, r.y1)];
-    for (let a = 0; a + 1 < cs.length; a++) for (let c = 0; c + 1 < rows.length; c++) out.push({ s0: cs[a], s1: cs[a + 1], y0: rows[c], y1: rows[c + 1] });
+/** Un polígono convexo antihorario con puntos en línea en sus aristas (un rectángulo con marcas), en n − 2 triángulos
+ *  con área y sin vértices nuevos: le recorta de a una punta saliente, la del triángulo más parejo (el de más área por
+ *  el cuadrado de su perímetro). La diagonal que deja une dos puntos que no están en una misma arista, así que no pasa
+ *  por ningún otro punto del borde: no deja juntas en T. */
+export function convexTris(ring: readonly (readonly [number, number])[]): [number, number, number][] {
+  const left = ring.map((_, k) => k), out: [number, number, number][] = [];
+  const area = (a: number, b: number, c: number): number =>
+    ((ring[b][0] - ring[a][0]) * (ring[c][1] - ring[a][1]) - (ring[c][0] - ring[a][0]) * (ring[b][1] - ring[a][1])) / 2;
+  const d = (a: number, b: number): number => Math.hypot(ring[b][0] - ring[a][0], ring[b][1] - ring[a][1]);
+  while (left.length > 3) {
+    let best = -1, score = -Infinity;
+    for (let k = 0; k < left.length; k++) {
+      const [a, b, c] = [left[(k + left.length - 1) % left.length], left[k], left[(k + 1) % left.length]];
+      const A = area(a, b, c);
+      if (A <= 1e-9) continue;
+      const q = A / (d(a, b) + d(b, c) + d(c, a)) ** 2;
+      if (q > score) [best, score] = [k, q];
+    }
+    if (best < 0) break;
+    const n = left.length;
+    out.push([left[(best + n - 1) % n], left[best], left[(best + 1) % n]]);
+    left.splice(best, 1);
   }
+  // lo que quede (3 puntos, o un resto chato por redondeo), en abanico
+  for (let k = 1; k + 1 < left.length; k++) out.push([left[0], left[k], left[k + 1]]);
   return out;
 }
 
-/** Las marcas de los rectángulos `rs`: sus puntas a lo largo (`s`) y en alto (`y`). */
-export const marksOf = (rs: readonly Rect[]): { s: number[]; y: number[] } => ({ s: rs.flatMap((r) => [r.s0, r.s1]), y: rs.flatMap((r) => [r.y0, r.y1]) });
+/** Un pedazo plano en (s, y): sus puntos y sus triángulos (índices, antihorarios en (s, y)). */
+export interface FlatMesh { pts: [number, number][]; tris: [number, number, number][] }
+
+/** Las marcas de cada arista de un pedazo: a lo largo, abajo (`bottom`) y arriba (`top`); en alto, a la izquierda (s0,
+ *  `left`) y a la derecha (s1, `right`). */
+export interface EdgeMarks { bottom?: readonly number[]; top?: readonly number[]; left?: readonly number[]; right?: readonly number[] }
+
+/** El rectángulo `r` con las marcas de `m` que le caen adentro como vértices de su borde: sin juntas en T con los
+ *  pedazos de al lado (que tienen sus puntas en esas marcas; una junta en T el rasterizado la deja abierta, como puntos
+ *  o una línea de lo que hay detrás: T5 M1, T9 H5 y la T11c) y sin partirlo en la grilla de todas (M2 de la revisión de
+ *  la T11c). Con marcas en un solo sentido, un cierre entre las dos aristas de ese sentido; en los dos, el polígono de su
+ *  borde (`convexTris`). En los dos casos, sin vértices adentro: n − 2 triángulos para n puntos del borde. */
+export function marked(r: Rect, m: EdgeMarks): FlatMesh {
+  const [bottom, top] = [splits(m.bottom ?? [], r.s0, r.s1), splits(m.top ?? [], r.s0, r.s1)];
+  const [left, right] = [splits(m.left ?? [], r.y0, r.y1), splits(m.right ?? [], r.y0, r.y1)];
+  const along = bottom.length > 2 || top.length > 2, high = left.length > 2 || right.length > 2;
+  if (along && high) {
+    // el borde antihorario: abajo de izquierda a derecha, la derecha para arriba, arriba de vuelta y la izquierda
+    const ring: [number, number][] = [
+      ...bottom.map((s): [number, number] => [s, r.y0]),
+      ...right.slice(1).map((y): [number, number] => [r.s1, y]),
+      ...top.slice(0, -1).reverse().map((s): [number, number] => [s, r.y1]),
+      ...left.slice(1, -1).reverse().map((y): [number, number] => [r.s0, y]),
+    ];
+    return { pts: ring, tris: convexTris(ring) };
+  }
+  // el cierre entre dos cadenas paralelas, `a` y `b`, de una punta a la otra (`t`: su avance), con (a, b, a⁺) antihorario
+  const zip = (a: [number, number][], b: [number, number][], t: (p: [number, number]) => number): FlatMesh => {
+    const pts = [...a, ...b], tris: [number, number, number][] = [];
+    let [i, j] = [0, 0];
+    while (i + 1 < a.length || j + 1 < b.length) {
+      if (j + 1 >= b.length || (i + 1 < a.length && t(a[i + 1]) <= t(b[j + 1]))) tris.push([i, a.length + j, ++i]);
+      else tris.push([i, a.length + j, a.length + ++j]);
+    }
+    return { pts, tris };
+  };
+  if (high) return zip(left.map((y): [number, number] => [r.s0, y]), right.map((y): [number, number] => [r.s1, y]), (p) => p[1]);
+  return zip(top.map((s): [number, number] => [s, r.y1]), bottom.map((s): [number, number] => [s, r.y0]), (p) => p[0]);
+}
+
+/** Pone el pedazo `m` en `b`: cada punto (s, y) en `at(s, y)` con `uv(s, y)`, normal `n` y color `c`; los triángulos, de
+ *  frente hacia `n` (dados vuelta si la corrida va al revés). */
+export function flatMesh(b: Builder, m: FlatMesh, at: (s: number, y: number) => [number, number, number],
+  uv: (s: number, y: number) => [number, number], n: [number, number, number], c?: THREE.Color): void {
+  const first = b.pos.length / 3;
+  const ps = m.pts.map(([s, y]) => at(s, y));
+  for (let k = 0; k < ps.length; k++) vert(b, ps[k], n, uv(m.pts[k][0], m.pts[k][1]), c);
+  // el sentido de la corrida: (s, y) antihorario, ¿de frente hacia n?
+  const [o, u, v] = [at(0, 0), at(1, 0), at(0, 1)];
+  const [ux, uy, uz, vx, vy, vz] = [u[0] - o[0], u[1] - o[1], u[2] - o[2], v[0] - o[0], v[1] - o[1], v[2] - o[2]];
+  const front = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2] >= 0;
+  for (const [a, bb, cc] of m.tris) b.idx.push(first + a, first + (front ? bb : cc), first + (front ? cc : bb));
+}
 
 /** Los huecos de `openings` por arista de `fp` (la planta antihoraria que dibuja; `edgeOf`: arista guardada → de fp),
  *  con `s` en metros desde fp[i]. Si fp es la planta guardada dada vuelta, cada arista se recorre al revés. */
@@ -125,9 +191,36 @@ export function edgeHoles(stored: Vec2[], fp: Vec2[], edgeOf: (e: number) => num
   return out;
 }
 
+/** La media de public/textures/revoque_diff.jpg (lineal, canal por canal), medida (tests/client/aspecto.test.ts, M7 de
+ *  la T11c): la de lo que lleva la foto cruda (el material `parapet`). */
+export const REVOQUE_MEDIA: readonly [number, number, number] = [0.676, 0.649, 0.630];
+
 const tintCache = new Map<string, THREE.Color>();
 export function tintColor(tint: string): THREE.Color {
   let c = tintCache.get(tint);
   if (!c) { c = new THREE.Color().setStyle(tint); tintCache.set(tint, c); }
   return c;
+}
+
+/**
+ * Los blancos de los frentes relevados (I3 de la T11c). La pared de un lote es su textura por el tinte, y la textura tiene
+ * media < 1: la foto cruda del revoque (REVOQUE_MEDIA, ~0,65) o la pintura del atlas (PINTURA_MEDIA, ~0,79). En un color
+ * medio no se nota, pero un blanco por 0,65 se ve gris: el #f4f4f1 de La Veneciana daba 114 de luma a la sombra.
+ *  - Desde `desde` de luminancia lineal del tinte, el color va dividido por la media de su textura (el albedo queda en
+ *    el color relevado) y por `k`, del todo en `hasta`. En el medio, de a poco: dos blancos parecidos no saltan.
+ *  - `k` > 1 a propósito: el hemisferio de afuera trae del suelo un marrón oscuro (#80705a) y no el rebote de la calle
+ *    al sol, que en una pared a la sombra suma ~20 % (informe de la T11c). En un color medio eso no se ve, pero sin él un
+ *    blanco a la sombra da gris medio, y el blanco es lo que el ojo toma de referencia. Con 1,25: ~211 de frente al sol,
+ *    ~148 a la sombra.
+ *  - Los colores de abajo de `desde` (casi todos los relevados) quedan como estaban.
+ */
+export const BLANCO = { desde: 0.78, hasta: 0.86, k: 1.25 } as const;
+
+/** El color de la pared de un frente relevado con una textura de media `media`: el tinte, o el blanco compensado. */
+export function surveyedColor(hex: string, media: readonly [number, number, number]): THREE.Color {
+  const c = tintColor(hex);
+  const w = Math.min(1, Math.max(0, (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b - BLANCO.desde) / (BLANCO.hasta - BLANCO.desde)));
+  if (w === 0) return c;
+  const f = (x: number, m: number): number => x * (1 + w * (BLANCO.k / m - 1));
+  return new THREE.Color(f(c.r, media[0]), f(c.g, media[1]), f(c.b, media[2]));
 }

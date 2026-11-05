@@ -8,7 +8,7 @@ import { QUALITY } from '../../src/client/render/quality.ts';
 import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { crosses, crossesConvex, hitsBox, lightAt, OPENING_MAX, prism } from '../../src/client/world/interiors/bake.ts';
-import { buildInterior3D, INTERIOR_EXPOSURE, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
+import { buildInterior3D, dimOf, INTERIOR_EXPOSURE, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
 import { LABEL_DRAWINGS } from '../../src/client/world/interiors/drawings.ts';
 import { exteriorGeometry, exteriorSigns, ownSignPlaces } from '../../src/client/world/interiors/exterior.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassMaterial } from '../../src/client/world/interiors/glass.ts';
@@ -415,7 +415,8 @@ describe('lightAt', () => {
 
 describe('exposición, vidrio y adaptación del ojo (H2, H10)', () => {
   const m = fakeMaterials();
-  const colorAt = (g: THREE.BufferGeometry, k: number): number[] => [0, 1, 2].map((c) => g.getAttribute('color').array[k * 3 + c]);
+  // el RGB (el color de los bloques lleva además la ganancia en el alfa: M4 de la T11c)
+  const colorAt = (g: THREE.BufferGeometry, k: number): number[] => [0, 1, 2].map((c) => g.getAttribute('color').getComponent(k, c));
   const vec = (g: THREE.BufferGeometry, name: string, k: number): Vec3 => [0, 1, 2].map((c) => g.getAttribute(name).array[k * 3 + c]) as Vec3;
   const lit = testInterior({ extra: (k) => {
     k.block([[4, 13], [6, 13], [6, 13.5], [4, 13.5]], 2.5, 2.6, 'none', 'otro', { bottom: { mat: 'luz', color: '#fff4e0' } });
@@ -869,6 +870,31 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
   const butacas = cine.items.filter((it) => it.model === 'butaca');
   const m = fakeMaterials();
   const luma = ([r, g, b]: number[]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  // M8 de la revisión de la T11c: la penumbra del cine sale de las constantes. El plan dice a qué exposición se ve lo
+  // horneado bajo techo ya adaptado (adaptedExposure: la de un local claro antes de la adaptación, el INTERIOR_EXPOSURE
+  // de la T11b) y el cliente saca el factor: si cambian INTERIOR_EXPOSURE o INDOOR_GAIN, el cine se ve igual
+  test('la penumbra del cine no es un número a mano: lo horneado bajo techo, adaptado, se ve a su luz por adaptedExposure', () => {
+    expect('dim' in cine, 'sin factor a mano').toBe(false);
+    expect(cine.adaptedExposure).toBe(0.15);
+    expect(dimOf(cine) * INTERIOR_EXPOSURE * INDOOR_GAIN).toBeCloseTo(0.15, 12);
+    expect(dimOf(interiorOf(map, 'banco-nacion'))).toBe(1);
+    // y en lo armado: el color de un vértice bajo techo, por la ganancia, es su luz por 0,15 por el color de su cara
+    const { group } = buildInterior3D({ ...cine }, m, 'alta');
+    const mesh = group.children.find((o): o is THREE.Mesh => o instanceof THREE.Mesh && o.name === 'in_liso')!;
+    const [pos, nor, col] = ['position', 'normal', 'color'].map((a) => mesh.geometry.getAttribute(a));
+    let n = 0;
+    for (let k = 0; k < pos.count && n < 40; k += 13) {
+      if (col.getW(k) !== 1) continue; // bajo techo, con la ganancia entera
+      const p: Vec3 = [pos.getX(k), pos.getY(k), pos.getZ(k)], q: Vec3 = [nor.getX(k), nor.getY(k), nor.getZ(k)];
+      const light = lightAt(cine, p, q);
+      if (light < 0.05) continue;
+      // el color de la cara no se sabe acá: la razón entre los canales y la luz es la misma en todos los vértices de un color
+      expect(-col.getX(k) * INDOOR_GAIN / light, `${p.map((x) => x.toFixed(2))}`).toBeLessThanOrEqual(0.15 + 1e-6);
+      n++;
+    }
+    expect(n).toBeGreaterThan(10);
+  });
+
   /** Los bloques del cine con algo dibujado (el vidrio y lo que no se ve, no), para tirarles rayos: el tag es su índice. */
   const shown = cine.blocks.map((b, k) => ({ b, k })).filter(({ b }) => b.role === 'mueble' || ((b.top || b.side || b.bottom) && b.top?.mat !== 'vidrio' && b.side?.mat !== 'vidrio'));
   const xs = shown.flatMap(({ b }) => b.polygon.map((p) => p[0])), zs = shown.flatMap(({ b }) => b.polygon.map((p) => p[1]));
@@ -918,7 +944,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
         const c0 = b.polygon.reduce((s, q) => [s[0] + q[0] / b.polygon.length, s[1] + q[1] / b.polygon.length], [0, 0]);
         const it = seat.get(`${c0[0].toFixed(2)},${c0[1].toFixed(2)}`);
         const light = lightAt(cine, [c0[0], b.y0 + 0.6, c0[1]], [0, 1, 0]);
-        (it ? kinds.butaca : kinds.resto).push(luma(seen(it ? BUTACA_TELA : '#808080', light * ADENTRO * cine.dim!)));
+        (it ? kinds.butaca : kinds.resto).push(luma(seen(it ? BUTACA_TELA : '#808080', light * ADENTRO * dimOf(cine))));
         continue;
       }
       const look = n[1] > 0.5 ? b.top : n[1] < -0.5 ? b.bottom : b.side;
@@ -928,7 +954,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
         (big ? kinds.pantalla : kinds.brilla).push(luma(seen(look.color, 1)));
         continue;
       }
-      kinds.resto.push(luma(seen(look.color, lightAt(cine, p, n) * ADENTRO * cine.dim!)));
+      kinds.resto.push(luma(seen(look.color, lightAt(cine, p, n) * ADENTRO * dimOf(cine))));
     }
     const all = Object.values(kinds).flat();
     const mean = (a: number[]): number => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);
@@ -979,7 +1005,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
       for (let y = 0.3; y <= 3.8; y += 0.25) {
         if (enW1.some((a) => Math.abs(v - a) < 0.45) && y > 1.25 && y < 2.5) continue; // detrás de un afiche
         const h = ray(hall + 1.5, v, y, 1);
-        if (h && Math.abs(h.u - hall) < 0.05 && h.look.mat !== 'luz') hallSide.push(luma(seen(h.look.color, h.light * ADENTRO * cine.dim!)));
+        if (h && Math.abs(h.u - hall) < 0.05 && h.look.mat !== 'luz') hallSide.push(luma(seen(h.look.color, h.light * ADENTRO * dimOf(cine))));
       }
     }
     const mean = hallSide.reduce((t, x) => t + x, 0) / hallSide.length;

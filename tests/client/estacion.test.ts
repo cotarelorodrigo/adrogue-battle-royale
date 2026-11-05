@@ -77,14 +77,15 @@ describe('lo que brilla, a la exposición de adentro (aces.ts)', () => {
     }
   });
 
-  test('las ventanas del frente, desde adentro, se leen como luz de día por un vidrio: más claras que la pared, más oscuras que los tubos, azuladas', () => {
+  // I2 de la revisión de la T11c: ≥ pared a luz plena + 20 y ≤ 250, sin quemarse (no más la cota contra los tubos)
+  test('las ventanas del frente, desde adentro, se leen como luz de día por un vidrio: más claras que la pared, sin quemarse, azuladas', () => {
     const colors = new Set(i.panes.filter((p) => p.look.mat === 'luz' && Math.abs(p.normal[1]) < 0.1 && p.corners.every((q) => pointInPolygon([q[0], q[2]], b.footprint))).map((p) => p.look.color));
     expect(colors.size).toBeGreaterThanOrEqual(1);
     const muro = seen(pared, 1 * ADENTRO * linear(PHOTO_LUMA.liso)); // con la textura del liso
     for (const c of colors) {
       const v = seen(c), say = `${c} se ve (${v.join(', ')})`;
-      expect(luma(v), `${say}: más clara que la pared a luz plena (${muro.join(', ')})`).toBeGreaterThanOrEqual(luma(muro) + 8);
-      for (const t of tubos) expect(luma(v), `${say}: más oscura que un tubo`).toBeLessThanOrEqual(luma(seen(t)) - 5);
+      expect(luma(v), `${say}: más clara que la pared a luz plena (${muro.join(', ')})`).toBeGreaterThanOrEqual(luma(muro) + 20);
+      expect(luma(v), `${say}: sin quemarse`).toBeLessThanOrEqual(250);
       expect(v[2] - v[0], `${say}: azulada`).toBeGreaterThanOrEqual(10);
       expect(Math.max(...v) - Math.min(...v), `${say}: casi sin color`).toBeLessThanOrEqual(40);
     }
@@ -108,7 +109,8 @@ describe('lo que brilla, a la exposición de adentro (aces.ts)', () => {
     const franja = seen(SUBE_COLORES.franja, INDOOR_GAIN), celeste = seen(SUBE_COLORES.franjaPintura, L * ADENTRO);
     expect(deltaE(franja, celeste), `franja (${franja.join(', ')}) contra (${celeste.join(', ')})`).toBeLessThanOrEqual(10);
     const p = seen(SUBE_COLORES.pantalla);
-    expect(luma(p), `pantalla (${p.join(', ')}) contra el cuerpo (${cuerpo.join(', ')})`).toBeGreaterThan(luma(cuerpo) + 10);
+    // I2 de la revisión de la T11c: la pantalla prendida se despega 30 del cuerpo (se había bajado a 10)
+    expect(luma(p), `pantalla (${p.join(', ')}) contra el cuerpo (${cuerpo.join(', ')})`).toBeGreaterThan(luma(cuerpo) + 30);
     expect(p[2]).toBeGreaterThan(p[0]);
   });
 });

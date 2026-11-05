@@ -13,7 +13,9 @@ const i = interiorOf(map, 'casa-de-la-cultura');
 const H = map.buildings.find((b) => b.id === i.buildingId)!.height;
 const luma = ([r, g, b]: RGB): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-test('el ventanal se ve como luz de día por un vidrio: más claro que la pared más iluminada, más oscuro que un panel de luz, y azulado', () => {
+// I2 de la revisión de la T11c: ≥ pared a luz plena + 20 (se había bajado a + 8) y ≤ 250, sin quemarse (de día una
+// ventana puede ser tan clara como un panel o más: la cota contra el panel no va)
+test('el ventanal se ve como luz de día por un vidrio: más claro que la pared más iluminada, sin quemarse, y azulado', () => {
   // el vidrio del ventanal: los paños de luz verticales de los pisos de abajo del techo (no los de la estructura del lucernario)
   const colors = new Set(i.panes.filter((p) => p.look.mat === 'luz' && Math.abs(p.normal[1]) < 0.1 && p.corners.every((q) => q[1] < H - 1)).map((p) => p.look.color));
   expect(colors.size).toBeGreaterThanOrEqual(1);
@@ -24,8 +26,8 @@ test('el ventanal se ve como luz de día por un vidrio: más claro que la pared 
   expect(paneles.length).toBeGreaterThan(0);
   for (const c of colors) {
     const v = seen(c), say = `${c} se ve (${v.join(', ')})`;
-    expect(luma(v), `${say}: más claro que la pared a luz plena (${pared.join(', ')})`).toBeGreaterThanOrEqual(luma(pared) + 8);
-    for (const p of paneles) expect(luma(v), `${say}: más oscuro que un panel de luz (${p.join(', ')})`).toBeLessThanOrEqual(luma(p) - 5);
+    expect(luma(v), `${say}: más claro que la pared a luz plena (${pared.join(', ')})`).toBeGreaterThanOrEqual(luma(pared) + 20);
+    expect(luma(v), `${say}: sin quemarse`).toBeLessThanOrEqual(250);
     expect(v[2] - v[0], `${say}: azulado, el cielo`).toBeGreaterThanOrEqual(10);
     expect(Math.max(...v) - Math.min(...v), `${say}: casi sin color, no un cartel`).toBeLessThanOrEqual(40);
   }

@@ -55,13 +55,18 @@ export function buildInterior(b: Building, input: InteriorInput, platforms: MapD
  *  un edificio de 30 m con el sol a 50° llega a ~25 m. */
 const SHADE_REACH = 40;
 
-/** El interior con los edificios de `buildings` (salvo el suyo) a menos de SHADE_REACH de su planta y sus patios. */
+/** El interior con los edificios de `buildings` (salvo el suyo) a menos de SHADE_REACH de su planta y sus patios: los
+ *  que tienen la caja cortada con la de la planta y los patios agrandada SHADE_REACH (no los que tienen un vértice
+ *  adentro: un edificio largo la puede cruzar sin ninguno, M10 de la revisión de la T11c). */
 function withShade(i: Interior, buildings: readonly Building[]): Interior {
   const pts = [...i.footprint, ...i.patios.flat()];
   const [x0, x1] = [Math.min(...pts.map((p) => p[0])) - SHADE_REACH, Math.max(...pts.map((p) => p[0])) + SHADE_REACH];
   const [z0, z1] = [Math.min(...pts.map((p) => p[1])) - SHADE_REACH, Math.max(...pts.map((p) => p[1])) + SHADE_REACH];
-  const shade = buildings.filter((b) => b.id !== i.buildingId && b.footprint.some((p) => p[0] > x0 && p[0] < x1 && p[1] > z0 && p[1] < z1))
-    .map((b) => ({ polygon: b.footprint, height: b.height }));
+  const crosses = (b: Building): boolean => {
+    const xs = b.footprint.map((p) => p[0]), zs = b.footprint.map((p) => p[1]);
+    return Math.min(...xs) < x1 && Math.max(...xs) > x0 && Math.min(...zs) < z1 && Math.max(...zs) > z0;
+  };
+  const shade = buildings.filter((b) => b.id !== i.buildingId && crosses(b)).map((b) => ({ polygon: b.footprint, height: b.height }));
   return shade.length === 0 ? i : { ...i, shade };
 }
 

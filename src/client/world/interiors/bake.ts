@@ -422,6 +422,7 @@ export function lightAt(i: Interior, p: Vec3, n: Vec3): number {
   const pr = prepare(i);
   let light = i.ambient;
   for (const l of i.lamps) {
+    if (l.down && p[1] > l.at[1]) continue; // la de un panel embutido no le llega a su cielorraso
     const d = Math.hypot(l.at[0] - p[0], l.at[1] - p[1], l.at[2] - p[2]);
     if (d < l.radius && !blocked(pr, p, l.at)) light += l.power * (1 - d / l.radius) ** 2 * facing(p, l.at, n);
   }

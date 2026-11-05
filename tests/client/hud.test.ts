@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 // El HUD de la partida: vida, chaleco, munición, ranuras, zona, "Quedan N", cartel de juntar, marca de acierto, números
 // de daño, feed de eliminaciones, flecha hacia la zona y mira telescópica. Se arma con estados de verdad de newMatch.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createHud } from '../../src/client/ui/hud.ts';
 import type { Hud, HudFrame } from '../../src/client/ui/hud.ts';
 import { CollisionWorld } from '../../src/shared/collision.ts';
@@ -331,4 +333,26 @@ test('sin partida (modo paseo) no se ve nada de la partida, pero sí la mira', (
   hud.combat(null);
   for (const id of ['hud-vida', 'hud-municion', 'hud-zona', 'hud-quedan', 'hud-juntar', 'hud-flecha']) expect(shown(id), id).toBe(false);
   expect(root.querySelector<HTMLElement>('.crosshair')!.hidden).toBe(false);
+});
+
+describe('el texto del HUD se lee sobre un piso claro (M9)', () => {
+  // El hall de la Casa tiene el piso de mármol claro; la revisión midió el blanco del texto (~246) sobre un piso de ~206.
+  // Cada texto suelto (sin chapa propia) lleva un fondo oscuro sutil que, sobre ese piso, deja el contraste WCAG AA.
+  const css = readFileSync(resolve(__dirname, '../../index.html'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** Las declaraciones de todas las reglas cuyo selector es `sel` o lo incluyen en una lista con comas. */
+  const rule = (sel: string): string => [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter((r) => r[1]!.split(',').map((s) => s.trim()).includes(sel))
+    .map((r) => r[2]).join(';');
+  /** Luminancia relativa de un gris sRGB 0–255. */
+  const lum = (v: number): number => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const PISO = 206;
+  const TEXTO = 246;
+  for (const sel of ['.weapon .name', '.weapon .ammo', '.medkits', '.prompt', '.status']) {
+    it(`${sel} tiene un fondo que da contraste ≥ 4,5 sobre el piso claro`, () => {
+      const bg = /background:\s*rgba\(\s*0,\s*0,\s*0,\s*([\d.]+)\s*\)/.exec(rule(sel));
+      expect(bg, sel).not.toBeNull();
+      const fondo = PISO * (1 - Number(bg![1]));
+      expect((lum(TEXTO) + 0.05) / (lum(fondo) + 0.05), sel).toBeGreaterThanOrEqual(4.5);
+    });
+  }
 });

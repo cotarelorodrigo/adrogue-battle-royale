@@ -25,9 +25,10 @@ export type Marca = 'nacion' | 'galicia' | 'bbva';
 
 // ---------- materiales ----------
 
-/** Porcelanato gris claro, paredes y cielorraso blancos. */
+/** Paredes y cielorraso blancos; el piso, porcelanato gris medio, el de las sucursales (I1 de la T11c: uno claro se leía
+ *  igual que la pared). */
 const PARED: Look = { mat: 'liso', color: '#f1f0ec' };
-const PISO: Look = { mat: 'porcelanato', color: '#c9cbcc' };
+const PISO: Look = { mat: 'porcelanato', color: '#b2b4b5' };
 const TECHO: Look = { mat: 'liso', color: '#f6f6f3' };
 const VIDRIO: Look = { mat: 'vidrio', color: '#b8d0d6' };
 /** El aluminio de los parantes y el acero de la chapa del tesoro, lisos: son finos o los tapa el cartel, y así no suman
@@ -38,8 +39,10 @@ const ACERO: Look = { mat: 'liso', color: '#8e9398' };
  *  el ojo adaptado, se ven ~4 veces más fuertes que desde la vereda. */
 const PANEL: Look = { mat: 'luz', color: '#dcdedc' };
 const PANEL_FRIO: Look = { mat: 'luz', color: '#d2deec' };
-/** La luz pareja del lugar; el resto lo ponen los paneles (una lámpara cada uno) y la vidriera. */
-const AMBIENT = 0.45;
+/** La luz pareja del lugar (el rebote); el resto lo ponen los paneles (una lámpara embutida cada uno, que no alumbra el
+ *  cielorraso) y la vidriera. Baja (era 0,45) para que el cielorraso y lo lejos de los paneles se despeguen de la pared
+ *  iluminada (I1 de la T11c). */
+const AMBIENT = 0.33;
 /** Lámpara de cada panel: alcance (m) y fuerza, en el salón y en el vestíbulo (más fuerte: la luz blanca fría). */
 const LAMP_R = 5.5, LAMP_P = 0.55, LAMP_P_FRIO = 0.7;
 /** Lado (m) de la grilla de los paneles. */
@@ -49,8 +52,9 @@ const PASO = 2.6;
  *  #ff3b1c adentro (ver franjaLuz en Estilo). */
 const TURNO: SignLook = { fondo: '#070707', letra: '#aa1503', marco: '#070707', fuente: 'condensada' };
 /** La franja esmerilada de la pared de vidrio (el vinilo que la hace ver, a la altura de la vista de un chico): un vidrio
- *  esmerilado, blanquecino y translúcido (Look.esmerilado), que no suma oclusión ni colisión. */
-const ESMERILADO: Look = { mat: 'vidrio', color: '#e4e6e6', esmerilado: true };
+ *  esmerilado, blanquecino y translúcido (Look.esmerilado), que no suma oclusión ni colisión. Blanco: con el ambiente
+ *  más bajo (I1 de la T11c) se sigue leyendo como una pared blanca (le llega además la luz de la calle de atrás). */
+const ESMERILADO: Look = { mat: 'vidrio', color: '#ffffff', esmerilado: true };
 /** La puerta del tesoro: el acero de la puerta, los bulones y el volante, y la chapa del marco. */
 const BOVEDA: SignLook = { fondo: '#b3b8bd', letra: '#5c6166', marco: '#7c8186', fuente: 'sans' };
 
@@ -163,7 +167,7 @@ function paneles(k: Kit, [u0, v0, u1, v1]: Rect, look: Look, power: number): voi
       const r = rect([c[0] - 0.3, c[1] - 0.6, c[0] + 0.3, c[1] + 0.6]);
       if (!r.every((q) => pointInPolygon(q, k.inside))) continue;
       k.block(r, cielo - 0.005, cielo, 'none', 'otro', { bottom: look });
-      k.lamp(c, cielo - 0.1, LAMP_R, power);
+      k.lamp(c, cielo - 0.1, LAMP_R, power, true);
     }
   }
 }

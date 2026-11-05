@@ -9,9 +9,13 @@ export const OUTDOOR_EXPOSURE = 0.7;
 /** La de adentro: la del mundo que se ve por las ventanas y la de lo que brilla (los colores de glow están calibrados a
  *  esta, tests/client/aces.ts). Lo horneado de adentro se ve a INDOOR_EXPOSURE · INTERIOR_EXPOSURE · INDOOR_GAIN. */
 export const INDOOR_EXPOSURE = 2.8;
-/** La ganancia de lo horneado de adentro, ya adaptado: con INTERIOR_EXPOSURE (0,09), la pared blanca de un banco (luz
- *  ~0,78, el liso de 0,85 de luma) se lee ~220 (tests/client/aspecto.test.ts). */
-export const INDOOR_GAIN = 6.4;
+/** La ganancia de lo horneado de adentro, ya adaptado: con INTERIOR_EXPOSURE (0,078), la pared blanca de un banco a luz
+ *  plena (el liso de 0,85 de luma) se lee ~224 y su mediana ~207 (tests/client/aspecto.test.ts, I1 de la T11c). El
+ *  producto INTERIOR_EXPOSURE · INDOOR_GAIN (0,546) es ~5 % menos que antes (0,576): la pared a luz plena deja lugar a un
+ *  ventanal 20 más claro sin quemarse (el blanco que brilla da 246). Desde la vereda lo de adentro queda ~13 % más
+ *  oscuro (lo más claro de un banco, ≤ 46). Lo que imita lo horneado en un mueble que brilla (models.ts, `horneado`) va
+ *  con INTERIOR_EXPOSURE: no depende de esta. */
+export const INDOOR_GAIN = 7.0;
 /** La ganancia de lo horneado de adentro con la exposición `exposure`: 1 con la de afuera, INDOOR_GAIN con la de adentro y,
  *  en la rampa de la adaptación, en proporción geométrica (sin saltos al entrar ni al salir). */
 export function interiorGain(exposure: number): number {

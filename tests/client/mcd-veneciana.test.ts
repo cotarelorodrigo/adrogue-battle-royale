@@ -256,7 +256,11 @@ describe('al aire libre', () => {
       const flats: THREE.Mesh[] = [];
       group.traverse((o) => { if (o instanceof THREE.Mesh && !(o instanceof THREE.InstancedMesh) && o.name === 'in_mueble') flats.push(o); });
       expect(flats).toHaveLength(2);
-      return new THREE.BufferAttribute(new Float32Array(flats.flatMap((f) => [...(f.geometry.getAttribute('color').array as Float32Array)])), 3);
+      // el RGB de cada vértice (el color lleva además la ganancia en el alfa: M4 de la T11c)
+      return new THREE.BufferAttribute(new Float32Array(flats.flatMap((f) => {
+        const col = f.geometry.getAttribute('color');
+        return Array.from({ length: col.count }, (_, k) => [col.getX(k), col.getY(k), col.getZ(k)]).flat();
+      })), 3);
     };
     const [plain, withTone] = [colors(fake), colors(toned)];
     expect(withTone.count).toBe(plain.count);

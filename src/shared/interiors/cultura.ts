@@ -30,10 +30,11 @@ import type { Collide, Look, Role } from './types.ts';
 
 // ---------- materiales ----------
 
-/** Paredes y cielorrasos blancos; el porcelanato blanco de la planta baja y el crema de los balcones. */
+/** Paredes y cielorrasos blancos; el granito gris-beige de la planta baja (el de un hall; I1 de la T11c: el porcelanato
+ *  blanco se leía más claro que la pared) y el crema de los balcones. */
 const PARED: Look = { mat: 'liso', color: '#f1eee7' };
 const TECHO: Look = { mat: 'liso', color: '#f5f3ee' };
-const PISO_PB: Look = { mat: 'porcelanato', color: '#efede8' };
+const PISO_PB: Look = { mat: 'porcelanato', color: '#c4beb2' };
 const PISO_ALTO: Look = { mat: 'porcelanato', color: '#e6dcc6' };
 /** Las guardas crema del porcelanato de la planta baja (el mismo crema de los balcones). */
 const CREMA: Look = { mat: 'porcelanato', color: '#e6dcc6' };
@@ -59,10 +60,10 @@ const TARIMA: Look = { mat: 'liso', color: '#e9e6df' };
 const BRONCE: Look = { mat: 'liso', color: '#7a5a3a' };
 /** Los paneles de luz del cielorraso (brillan: van sin hornear). */
 const PANEL_LUZ: Look = { mat: 'luz', color: '#dedcd4' };
-/** El vidrio del ventanal del frente visto de adentro: luz de día por un vidrio con reflejo, un blanco azulado más claro
- *  que la pared blanca (que con el ojo adaptado se lee ~220) y que no llega al blanco de los paneles de luz (sin hornear:
- *  a la exposición de adentro se ve ≈ (228, 235, 240)). */
-const VENTANAL: Look = { mat: 'luz', color: '#a0bcd2' };
+/** El vidrio del ventanal del frente visto de adentro: luz de día por un vidrio con reflejo, un blanco apenas azulado,
+ *  ≥ 20 más claro que la pared blanca a luz plena (~223 con el ojo adaptado) y sin quemarse (sin hornear: a la exposición
+ *  de adentro se ve ≈ (235, 246, 246); el blanco que brilla da 246: I2 de la T11c). */
+const VENTANAL: Look = { mat: 'luz', color: '#9affff' };
 
 /** El plafón: fondo crema y el aro oscuro del borde (drawings.ts pinta el resto). */
 const PLAFON_LOOK: SignLook = { fondo: '#efe6d2', letra: '#3a3530', marco: '#3a3530', fuente: 'sans' };
@@ -71,8 +72,9 @@ const CUADRO_LOOK: SignLook = { fondo: '#f3f1ec', letra: '#1b1b1c', marco: '#1b1
 /** Los nombres de las salas, en gris oscuro sobre la pared. */
 const ROTULO: SignLook = { fondo: '#f1eee7', letra: '#3c3c3e', marco: '#f1eee7', fuente: 'sans' };
 
-/** La luz pareja del lugar; el resto lo ponen el lucernario (el atrio), la vidriera y los paneles. */
-const AMBIENT = 0.44;
+/** La luz pareja del lugar (el rebote); el resto lo ponen el lucernario (el atrio), la vidriera y los paneles (embutidos:
+ *  no alumbran el cielorraso). Baja (era 0,44) para que el cielorraso se despegue de la pared (I1 de la T11c). */
+const AMBIENT = 0.35;
 /** Lámpara de cada panel del cielorraso: alcance (m) y fuerza; en el auditorio y el escenario, más alcance. */
 const LAMP_R = 6.5, LAMP_P = 0.5, LAMP_R_ALTO = 8, LAMP_P_ALTO = 0.55;
 /** Los reflectores del escenario (colgados de la vara, 3,4 m arriba de las tablas). */
@@ -242,7 +244,7 @@ function luces(k: Kit, [u0, v0, u1, v1]: Rect, techo: number, huecos: Vec2[][], 
       const q = rect([c[0] - 0.3, c[1] - 0.3, c[0] + 0.3, c[1] + 0.3]);
       if (!q.every((x) => pointInPolygon(x, k.inside)) || [...q, c].some((x) => huecos.some((h) => pointInPolygon(x, h)))) continue;
       k.block(q, techo - 0.005, techo, 'none', 'otro', { bottom: PANEL_LUZ });
-      k.lamp(c, techo - 0.1, r, p);
+      k.lamp(c, techo - 0.1, r, p, true);
     }
   }
 }

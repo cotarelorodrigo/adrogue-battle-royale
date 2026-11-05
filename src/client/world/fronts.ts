@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../../shared/geo.ts';
 import type { Building, Opening } from '../../shared/mapdata.ts';
-import { cellRect, groundCells, upperCell } from './front-atlas.ts';
+import { cellRect, groundCells, PINTURA_MEDIA, upperCell } from './front-atlas.ts';
 import type { FrontCell } from './front-atlas.ts';
-import { BAY_W, cutRect, edgeHoles, FLOOR_H, lattice, newBuilder, quad, tintColor, toGeometry } from './wall-kit.ts';
+import { BAY_W, cutRect, edgeHoles, flatMesh, FLOOR_H, marked, newBuilder, quad, surveyedColor, tintColor, toGeometry } from './wall-kit.ts';
 import type { Builder, Rect } from './wall-kit.ts';
 
 /** Toldo sobre la puerta y la vidriera: cae de `topY` (en la pared) a `bottomY` a `depth` m; `inset` m de margen por lado. */
@@ -68,14 +68,16 @@ function face(b: Builder, vs: [number, number, number][], uvs: [number, number][
  * adentro de `openings`: lo recortado va a `tapa()` (si viene), con las mismas uv.
  */
 export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => number, openings: readonly Opening[] = [],
-  tapa?: () => Builder, ys: readonly number[] = []): THREE.BufferGeometry {
+  tapa?: () => Builder, ysAt: (i: number, end: boolean) => readonly number[] = () => []): THREE.BufferGeometry {
   const b = newBuilder(true);
   const f = bd.front;
   if (!f) return toGeometry(b);
   const ladrillo = f.ladrillo === true;
   const floors = Math.max(1, bd.floors);
-  const tint = tintColor(bd.tint);
-  const groundColor = f.colorPB ? tintColor(f.colorPB) : tint;
+  // la pintura del atlas tiene media PINTURA_MEDIA: un blanco va compensado (wall-kit.ts, BLANCO); el ladrillo, no
+  const paint = (hex: string): THREE.Color => (ladrillo ? tintColor(hex) : surveyedColor(hex, PINTURA_MEDIA));
+  const tint = paint(bd.tint);
+  const groundColor = f.colorPB ? paint(f.colorPB) : tint;
   const { door, rest } = groundCells(f.pb, ladrillo);
   const upper = upperCell(f.arriba, ladrillo);
   const bandCell = upperCell('ciego', ladrillo);
@@ -116,24 +118,35 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
       : f.puerta === 'inicio' ? 0
         : f.puerta === 'fin' ? bays(run.length) - 1
           : Math.floor((bays(run.length) - 1) / 2);
+    // primero los pedazos de cada fila y bahía (lo sólido y lo recortado); después, cada uno con las puntas de los otros
+    // de la corrida que le caen en el borde (sin juntas en T con ellos) y nada más: la marca de un hueco no pasa a las
+    // filas que no lo tocan (M2 de la revisión de la T11c). En las puntas de una arista (las esquinas), además, las de lo
+    // que la toca del otro lado (`ysAt`: la arista de fp y si es su punta final).
+    const cuts: { p: Piece; q: Rect; cut: boolean; color: THREE.Color; uv: (s: number, y: number) => [number, number] }[] = [];
     for (const row of [...rows, ...(band ? [band] : [])]) {
       const isBand = row === band;
       eachSpan(run, 0, run.length, (p, sa, sb, bay, bw) => {
         const cell: FrontCell = row.groundRow ? (bay === doorBay ? door : rest) : isBand ? bandCell : upper;
         const r = cellRect(cell);
         const v = (y: number): number => r.v0 + ((r.v1 - r.v0) * (y - row.y0)) / FLOOR_H; // alturas parciales (banda, edificio bajo): se recorta
-        const piece = (to: Builder, q: Rect): void => {
-          const ua = uAt(r, p, q.s0, bay, bw), ub = uAt(r, p, q.s1, bay, bw);
-          const [pa, pb] = [at(p, q.s0), at(p, q.s1)];
-          face(to, [[pa[0], q.y0, pa[1]], [pb[0], q.y0, pb[1]], [pb[0], q.y1, pb[1]], [pa[0], q.y1, pa[1]]],
-            [[ua, v(q.y0)], [ub, v(q.y0)], [ub, v(q.y1)], [ua, v(q.y1)]], [p.n[0], 0, p.n[1]], row.groundRow ? groundColor : tint);
-        };
-        // sin juntas en T (wall-kit.ts, lattice): en las puntas de los huecos de la arista (de todas las filas) y en `ys`
-        const hs = holesOf(p), ss = hs.flatMap((h) => [h.s0, h.s1]);
-        const { solid, cut } = cutRect({ s0: sa, s1: sb, y0: row.y0, y1: row.y1 }, hs);
-        for (const q of lattice(solid, ss, ys)) piece(b, q);
-        if (tapa) for (const q of lattice(cut, ss, ys)) piece(tapa(), q);
+        const uv = (s: number, y: number): [number, number] => [uAt(r, p, s, bay, bw), v(y)];
+        const color = row.groundRow ? groundColor : tint;
+        const { solid, cut } = cutRect({ s0: sa, s1: sb, y0: row.y0, y1: row.y1 }, holesOf(p));
+        for (const q of solid) cuts.push({ p, q, cut: false, color, uv });
+        if (tapa) for (const q of cut) cuts.push({ p, q, cut: true, color, uv });
       });
+    }
+    const corners = cuts.flatMap(({ q }): [number, number][] => [[q.s0, q.y0], [q.s1, q.y0], [q.s0, q.y1], [q.s1, q.y1]]);
+    const near = (a: number, b: number): boolean => Math.abs(a - b) < 1e-6;
+    for (const { p, q, cut, color, uv } of cuts) {
+      const along = (y: number): number[] => corners.filter((c) => near(c[1], y)).map((c) => c[0]);
+      // la punta de la corrida en p.s0 es la final de la arista si se recorre al revés
+      const high = (s: number): readonly number[] => [...corners.filter((c) => near(c[0], s)).map((c) => c[1]),
+        ...(near(s, p.s0) ? ysAt(p.i, p.rev) : near(s, p.s0 + p.len) ? ysAt(p.i, !p.rev) : [])];
+      flatMesh(cut ? tapa!() : b, marked(q, { bottom: along(q.y0), top: along(q.y1), left: high(q.s0), right: high(q.s1) }), (s, y) => {
+        const pa = at(p, s);
+        return [pa[0], y, pa[1]];
+      }, uv, [p.n[0], 0, p.n[1]], color);
     }
   };
   wall(mainRun, true);
