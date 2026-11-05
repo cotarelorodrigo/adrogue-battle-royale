@@ -30,8 +30,9 @@ export interface InView {
   /** Las que están a menos de esto (m, en planta) de la cámara van en `near`, se vean o no. 0: ninguna. */
   around: number;
   /** Elige: en `near`, las de alrededor; en `far`, las otras cuya esfera toca el frustum de `camera` (y, con `keep`,
-   *  pasan `keep`: desde adentro de un interior, lo que se ve por sus aberturas). Si una malla queda con las mismas que
-   *  la vez anterior, no sube nada. */
+   *  pasan `keep`: desde adentro de un interior, lo que se ve por sus aberturas). Con la misma cámara (lugar y
+   *  proyección), el mismo `around` y `keep` o no como la vez anterior, no hace nada; si una malla queda con las mismas
+   *  que la vez anterior, no sube nada. */
   update(camera: THREE.Camera, keep?: (s: THREE.Sphere) => boolean): void;
 }
 
@@ -115,12 +116,21 @@ export function inViewInstances(mesh: THREE.InstancedMesh, around = 0): InView {
   // la esfera de cada copia: la de la geometría, puesta con su matriz (con su escala más grande)
   const spheres = Array.from({ length: total }, (_, i) => g.boundingSphere!.clone().applyMatrix4(new THREE.Matrix4().fromArray(matrices, i * 16)));
   const frustum = new THREE.Frustum(), viewProj = new THREE.Matrix4(), eye = new THREE.Vector3();
+  // lo que decidió la elección anterior: la cámara (su lugar y su proyección), `around` y si hubo `keep`. Si nada de eso
+  // cambió, la elección tampoco (keep, desde adentro, depende solo de dónde está la cámara): no se recorre nada (H5)
+  const last = new Float64Array(34).fill(NaN), now = new Float64Array(34);
   const view: InView = {
     near: mesh,
     far,
     around,
     update(camera, keep) {
       camera.updateMatrixWorld();
+      now.set(camera.matrixWorld.elements, 0);
+      now.set(camera.projectionMatrix.elements, 16);
+      now[32] = view.around;
+      now[33] = keep ? 1 : 0;
+      if (now.every((v, k) => v === last[k])) return;
+      last.set(now);
       camera.getWorldPosition(eye);
       frustum.setFromProjectionMatrix(viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
       const a2 = view.around * view.around;

@@ -150,7 +150,7 @@ describe('lo que cuesta', () => {
         tris += trianglesOf(o);
       }
     });
-    const ext = exteriorGeometry(i);
+    const ext = exteriorGeometry(i, b.height);
     const out = (ext.index?.count ?? ext.getAttribute('position').count) / 3;
     expect(meshes).toBeLessThanOrEqual(QUALITY.baja.interiors.calls);
     expect(tris + out, `interior ${tris} + afuera ${out}`).toBeLessThanOrEqual(8000);

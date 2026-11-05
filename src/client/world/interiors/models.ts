@@ -426,11 +426,13 @@ export const ITEM_GLASS: Partial<Record<ItemModel, () => THREE.BufferGeometry>> 
 
 /** Lo que se ve de lejos de los muebles sólidos que van al aire libre, en los patios (T11b): los interiores se dibujan
  *  hasta 60 m y más lejos su caja de MODEL_BOX seguía frenando balas sin que se viera nada. Estas piezas van con el
- *  chunk (exteriorGeometry), siempre, 1 cm adentro de las del modelo: de cerca, con el interior dibujado, no se ven. Las
- *  del molinete, el gabinete (los brazos de caño, de lejos, no llegan a un píxel); las de las mesas, la tapa y las
- *  patas (la mesa alta, el pie). */
+ *  chunk (exteriorGeometry), siempre, adentro del modelo o pegadas a él: de cerca, con el interior dibujado, casi no se
+ *  ven. Cubren la caja sólida del mueble (MODEL_BOX) a lo largo y a lo ancho. Las del molinete, el gabinete y una barra
+ *  de 4 cm que envuelve el brazo de arriba (el de 0,84 m) de punta a punta del paso: su caja sólida es el gabinete y el
+ *  paso (H1 de la revisión de la T11b); las de las mesas, la tapa y las patas (la mesa alta, el pie). */
 export const ITEM_FAR: Partial<Record<ItemModel, () => THREE.BufferGeometry[]>> = {
-  molinete: () => [box(0.26, 0.86, 0.88, [0.3, 0.01, 0], INOX_M), box(0.26, 0.06, 0.88, [0.3, 0.89, 0], INOX_LID)],
+  molinete: () => [box(0.26, 0.86, 0.88, [0.3, 0.01, 0], INOX_M), box(0.26, 0.06, 0.88, [0.3, 0.89, 0], INOX_LID),
+    box(0.59, 0.04, 0.04, [-0.135, 0.82, 0.05], ARM)],
   mesa: () => [box(1.18, 0.02, 0.78, [0, 0.72, 0], '#ffffff'),
     ...[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sz]) => box(0.03, 0.69, 0.03, [sx * 0.575, 0.01, sz * 0.375], FRAME_BLACK))],
   // girados para que sus vértices caigan entre los del modelo (la tapa de 12 lados, el pie de 6)

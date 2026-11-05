@@ -133,7 +133,7 @@ export function buildChunks(map: MapData, materials: WorldMaterials, interiors: 
     add(ij, 'roof', e.roof);
     add(ij, 'parapet', e.parapet);
     if (!interior) continue;
-    add(ij, 'parapet', exteriorGeometry(interior));
+    add(ij, 'parapet', exteriorGeometry(interior, b.height));
     for (const [mat, geometry] of Object.entries(e.tapas) as [keyof WorldMaterials, THREE.BufferGeometry][]) {
       tapaParts.push({ ij, placeId: interior.placeId, mat, geometry });
     }

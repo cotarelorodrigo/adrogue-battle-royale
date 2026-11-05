@@ -261,6 +261,8 @@ async function run(boot: Boot): Promise<void> {
     ...climbProps,
   ];
   scene.addStatic(outside);
+  // con las afueras: su caja es la del borde del mapa, pero sin ninguna abertura a la vista (mirando una pared) se recortan
+  // como todo (15.158 triángulos menos en ci-afiches; H5 de la revisión de la T11b)
   interiorViews.cullOutside([...chunks.groups, ...outside, scene.outskirts]);
   // los durmientes y las barandas de las escaleras, solo cerca de la cámara; de los contenedores, los que se ven (T11b)
   const details = nearOf(outside);

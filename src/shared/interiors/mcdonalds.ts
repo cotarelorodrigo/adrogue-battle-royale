@@ -308,6 +308,9 @@ function patio(k: Kit, ring: Vec2[]): void {
     k.block(wall, 0, H, 'solid', 'otro', { side: LADRILLO, top: LADRILLO }, { hide: [0] });
     const o = side(a, b);
     k.block([add(a, o, -0.03), add(b, o, -0.03), b, a], 0, H, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, { out: true, hide: [2] });
+    // y la tapa, 2 cm sobre el ladrillo (`out`): desde un techo, de lejos, el muro se ve entero y no solo su cara de afuera
+    // (T11b, H3 de su revisión)
+    k.block(wall, H, H + 0.02, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, true);
   }
   for (const u of [3.2, 6.6, 10.0]) {
     k.furniture('mesa-picnic', [u, 26.35], 0, 0);

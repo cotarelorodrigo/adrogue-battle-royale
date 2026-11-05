@@ -134,6 +134,42 @@ describe('inViewInstances', () => {
     expect([mesh.visible, view.far.count, view.far.visible]).toEqual([false, 0, false]);
   });
 
+  // H5 de la revisión de la T11b: quieto, cada cuadro recorría las ~700 copias (y, desde adentro, keep contra cada portal)
+  test('con la misma cámara, el mismo around y keep o no igual que antes, update no recorre nada; si algo de eso cambia, sí', () => {
+    const mesh = line();
+    const view = inViewInstances(mesh);
+    look(500, 3, 1000, 3);
+    let calls = 0;
+    const keep = (s: THREE.Sphere): boolean => { calls++; return s.center.x < 600; };
+    view.update(cam, keep);
+    const first = calls;
+    expect(first).toBeGreaterThan(0);
+    view.update(cam, keep);
+    expect(calls, 'la misma cámara: keep no se vuelve a llamar').toBe(first);
+    cam.rotateY(0.01);
+    cam.updateMatrixWorld();
+    view.update(cam, keep);
+    expect(calls, 'girada: sí').toBeGreaterThan(first);
+    // la misma cámara, ya sin keep (salió del interior): vuelve a elegir, y entran las de x ≥ 600
+    view.update(cam);
+    expect(Math.max(...xs(view.far))).toBeGreaterThan(600);
+    // la misma cámara, con otro around (cambió la calidad): también
+    view.around = 55;
+    view.update(cam);
+    expect(mesh.count).toBeGreaterThan(0);
+    // y con otra proyección (otro aspecto de la ventana)
+    view.update(cam, keep);
+    const before = calls;
+    view.update(cam, keep);
+    expect(calls, 'igual que antes').toBe(before);
+    cam.aspect = 1;
+    cam.updateProjectionMatrix();
+    view.update(cam, keep);
+    expect(calls, 'otro aspecto').toBeGreaterThan(before);
+    cam.aspect = 16 / 9;
+    cam.updateProjectionMatrix();
+  });
+
   test('con keep (desde adentro de un interior: lo que se ve por sus aberturas), de las del cuadro solo las que pasan', () => {
     const mesh = line();
     const view = inViewInstances(mesh);

@@ -278,10 +278,11 @@ function lucernario(k: Kit, [u0, v0, u1, v1]: Rect, H: number): void {
   }
   const yr = top - BAJO_VIDRIO - CORREA_W * (CUMBRERA / half) - 0.004;
   k.bar([mid, yr, v0], [mid, yr, v1], 2 * CORREA_W, CABIO_H, ESTRUCTURA, sky);
-  // el cordón alrededor del hueco, sobre el techo: se pisa (un escalón)
+  // el cordón alrededor del hueco, sobre el techo: se pisa (un escalón). Es `out` (T11b, H2 de su revisión): sólido y a
+  // cielo abierto, se ve desde los techos de lejos, con el edificio
   const w = CORDON.w;
   for (const r of [[u0 - w, v0 - w, u0, v1 + w], [u1, v0 - w, u1 + w, v1 + w], [u0, v0 - w, u1, v0], [u0, v1, u1, v1 + w]] as Rect[]) {
-    k.block(rect(r), H, H + CORDON.h, 'solid', 'otro', { top: ESTRUCTURA, side: ESTRUCTURA }, { sky: true });
+    k.block(rect(r), H, H + CORDON.h, 'solid', 'otro', { top: ESTRUCTURA, side: ESTRUCTURA }, { sky: true, out: true });
   }
 }
 

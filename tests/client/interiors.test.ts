@@ -194,7 +194,7 @@ describe('buildInterior3D', () => {
 
   test('los carteles de adentro van en una malla por página; los bloques y carteles `out`, no (son del chunk)', () => {
     const look = { fondo: '#123456', letra: '#ffffff', marco: '#123456', fuente: 'sans' as const };
-    const { interior: i } = testInterior({ extra: (k) => {
+    const { interior: i, b } = testInterior({ extra: (k) => {
       k.label('CAJA', [5, 14.8], 2.2, [0, -1], 1.6, 0.4, look);
       k.label('AFUERA', [5, -0.06], 2.8, [0, -1], 3, 0.9, look, { out: true });
       k.block([[0, -1.2], [10, -1.2], [10, 0], [0, 0]], 3.0, 3.2, 'solid', 'otro', { top: LOOKS.pared, side: LOOKS.pared }, true);
@@ -207,16 +207,16 @@ describe('buildInterior3D', () => {
     }
     // los carteles salen sin armar la geometría (H7: main solo necesita los carteles; la geometría es del chunk)
     expect(exteriorSigns(i)).toEqual([{ text: 'AFUERA', anchor: [5, -0.06], normal: [0, -1], width: 3, bottomY: 2.8 - 0.45, height: 0.9, look }]);
-    const out = exteriorGeometry(i);
+    const out = exteriorGeometry(i, b.height);
     expect(areaOf(triangles(out))).toBeCloseTo(10 * 1.2 + 2 * (10 + 1.2) * 0.2, 4); // tope y costados
     expect(Object.keys(out.attributes).sort()).toEqual(['color', 'normal', 'position', 'uv']);
   });
 
   test('un paño out (el pasamanos de una escalera out) va con el edificio: en exteriorGeometry, con su color, y no en el interior', () => {
     const caño = { mat: 'metal', color: '#2c4a36' } as const;
-    const { interior: i } = testInterior({ extra: (k) => k.pane([[1, 1, -1], [3, 1, -1], [3, 2, -1], [1, 2, -1]], [0, 0, -1], caño, { out: true }) });
+    const { interior: i, b } = testInterior({ extra: (k) => k.pane([[1, 1, -1], [3, 1, -1], [3, 2, -1], [1, 2, -1]], [0, 0, -1], caño, { out: true }) });
     expect(i.panes.filter((p) => p.out)).toHaveLength(1);
-    const out = exteriorGeometry(i);
+    const out = exteriorGeometry(i, b.height);
     const ts = triangles(out);
     expect(areaOf(ts)).toBeCloseTo(2, 4);
     // de frente hacia −z, como su normal

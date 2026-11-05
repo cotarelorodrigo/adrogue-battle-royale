@@ -1,6 +1,7 @@
 // Lo de un interior que se ve siempre, con su edificio (`out`): los bloques y los paños van con el material `parapet`
 // del chunk (revoque teñido por vértice, con sol: sin draw calls nuevos) y los carteles, como un Sign más del mapa. Los muebles
-// de afuera se dibujan con el interior, de cerca; de los sólidos de los patios va además su pieza de lejos (ITEM_FAR).
+// de afuera se dibujan con el interior, de cerca; de los sólidos al aire libre (en los patios y arriba del techo: la
+// terraza) va además su pieza de lejos (ITEM_FAR).
 import * as THREE from 'three';
 import { pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
 import type { Interior } from '../../../shared/interiors/types.ts';
@@ -13,8 +14,10 @@ import { ITEM_FAR } from './models.ts';
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
 const PLANAR_UV = 4;
 
-/** Los bloques y los paños `out` del interior, en una geometría para el merge `parapet` de su chunk. */
-export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
+/** Los bloques y los paños `out` del interior, y las piezas de lejos de sus muebles al aire libre (afuera de su planta, o
+ *  arriba de `roof`, el alto del edificio: H2 de la revisión de la T11b), en una geometría para el merge `parapet` de su
+ *  chunk. */
+export function exteriorGeometry(i: Interior, roof: number): THREE.BufferGeometry {
   const b = newBuilder(true);
   for (const block of i.blocks) {
     if (!block.out) continue;
@@ -45,11 +48,11 @@ export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
         [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], [-ez, 0, ex], c);
     }
   }
-  // las piezas de lejos de los muebles sólidos de los patios (ITEM_FAR): adentro de su modelo, con su color (por el del
-  // mueble) y uv en metros del mundo, como los paños
+  // las piezas de lejos de los muebles sólidos al aire libre (ITEM_FAR): adentro de su modelo o pegadas a él, con su
+  // color (por el del mueble) y uv en metros del mundo, como los paños
   for (const it of i.items) {
     const far = ITEM_FAR[it.model];
-    if (!far || pointInPolygon([it.at[0], it.at[2]], i.footprint)) continue;
+    if (!far || (pointInPolygon([it.at[0], it.at[2]], i.footprint) && it.at[1] < roof - 0.01)) continue;
     const place = new THREE.Matrix4().makeRotationY(it.yaw).setPosition(it.at[0], it.at[1], it.at[2]);
     const tint = new THREE.Color(it.color ?? '#ffffff');
     for (const g of far()) {
