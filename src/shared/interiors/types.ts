@@ -17,6 +17,11 @@ export type Role = 'pared' | 'tabique' | 'losa' | 'escalon' | 'baranda' | 'dinte
  *  lucernario y su estructura): su vidrio da al cielo (es fuente de luz y se ve como vidrio de afuera) y no cuenta para
  *  saber si la cámara está adentro. */
 export interface Block { polygon: Vec2[]; y0: number; y1: number; collide: Collide; role: Role; top?: Look; bottom?: Look; side?: Look; hide?: number[]; out?: true; sky?: true }
+/** Un paño plano que solo se dibuja (no choca ni tapa la luz): 3 o 4 esquinas en un plano (mundo) y la normal (unitaria)
+ *  de su frente. Es lo que va inclinado: el vidrio y la estructura de un lucernario, el pasamanos de una escalera (H1 de
+ *  la tarea 7); lo que se pisa o frena va aparte, en bloques. `back`: también se ve de atrás. `sky`: está arriba del
+ *  techo, sobre un hueco (D13): su frente da al cielo y su espalda, al interior. */
+export interface Pane { corners: Vec3[]; normal: Vec3; look: Look; back?: true; sky?: true }
 /** Base; cada tarea de interior suma los suyos. Bancos (tarea 6): el cajero automático, el escritorio con sus dos sillas,
  *  el turnero colgado, el puesto de caja (su tramo de mostrador, con el cajero sentado detrás) y una fila de 4 sillas de
  *  espera unidas. Casa de la Cultura (tarea 7): el plafón colgado bajo el lucernario (su cara pintada es un cartel), la
@@ -47,5 +52,5 @@ export interface Viewpoint { id: string; pos: Vec3; yaw: number }
  *  es `out`; los usa validateInterior. `roofHoles`: los huecos (mundo, antihorarios) que el interior le abre al techo
  *  del edificio (D13: el atrio de la Casa de la Cultura); el chunk los abre en su techo y en la cáscara de sombra. */
 export interface Interior { placeId: string; buildingId: string; publicFloors: number; terrace: boolean; ambient: number;
-  blocks: Block[]; items: Item[]; labels: Label[]; lamps: Lamp[]; floors: FloorArea[]; stairs: StairRun[]; doors: Door[];
+  blocks: Block[]; panes: Pane[]; items: Item[]; labels: Label[]; lamps: Lamp[]; floors: FloorArea[]; stairs: StairRun[]; doors: Door[];
   views: Viewpoint[]; marks: Record<string, Vec3>; footprint: Vec2[]; patios: Vec2[][]; roofHoles: Vec2[][] }

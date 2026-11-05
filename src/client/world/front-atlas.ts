@@ -72,19 +72,22 @@ function texFill(c: Ctx, img: Img, fallback: string, x: number, y: number, w: nu
  *  sRGB, a 59 y a 61 m). Los pisos de arriba, también el vidriado, siguen con el de las ventanas (N5). */
 export const SHOP_GLASS: GlassStops = ['#a6b8c4', '#7d8f9b', '#62717b'];
 
+/** El ancho (m) del marco de un vidrio pintado, centrado en su borde, y el de sus parteluces, centrados en su recta. */
+export const FRAME_T = 0.1, MULLION_T = 0.05;
+
 /** Vidrio con parteluces verticales (`mullions` paños) y su marco; de vidriera salvo que se pida otro. */
 function drawGlazing(p: Pen, x: number, y: number, w: number, h: number, mullions: number, frameColor: string, stops = SHOP_GLASS): void {
   const { c, u } = p;
   glass(c, x, y, w, h, stops);
   c.strokeStyle = frameColor;
-  c.lineWidth = 0.05 * u;
+  c.lineWidth = MULLION_T * u;
   for (let i = 1; i < mullions; i++) {
     c.beginPath();
     c.moveTo(x + (w * i) / mullions, y);
     c.lineTo(x + (w * i) / mullions, y + h);
     c.stroke();
   }
-  frame(c, x, y, w, h, 0.1 * u, frameColor);
+  frame(c, x, y, w, h, FRAME_T * u, frameColor);
   unpaint(p, x - 0.05 * u, y - 0.05 * u, w + 0.1 * u, h + 0.1 * u);
 }
 
@@ -116,6 +119,9 @@ const OPENING_LOOK: Record<LotCell, { frame: string; pane: number }> = {
   acceso: { frame: '#3a3a3a', pane: 1.4 },
 };
 
+/** En cuántos paños iguales se pinta el vidrio `o` de una celda de lote (los parteluces van entre uno y otro). */
+export const panesOf = (cell: LotCell, o: { x0: number; x1: number }): number => Math.max(1, Math.round((o.x1 - o.x0) / OPENING_LOOK[cell].pane));
+
 /** Las aberturas de una celda de lote, exactamente en los rectángulos de LOT_OPENINGS: lo pintado coincide con el hueco
  *  del interior. */
 function drawOpenings(p: Pen, cell: LotCell): void {
@@ -124,7 +130,7 @@ function drawOpenings(p: Pen, cell: LotCell): void {
   for (const o of LOT_OPENINGS[cell]) {
     const [x, y, w, h] = [o.x0 * u, (FLOOR_H - o.y1) * u, (o.x1 - o.x0) * u, (o.y1 - o.y0) * u];
     if (o.kind === 'puerta') drawDoor(p, x, y, w, h, look.frame);
-    else drawGlazing(p, x, y, w, h, Math.max(1, Math.round((o.x1 - o.x0) / look.pane)), look.frame);
+    else drawGlazing(p, x, y, w, h, panesOf(cell, o), look.frame);
   }
 }
 

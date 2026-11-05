@@ -2,6 +2,7 @@
 // plan o, mientras no tenga, la caja de §2.1), su validación (§2.1 y §2.3) y el piso público que cuenta para el botín
 // (D11). collision.ts arma los sólidos con esto; acá no se importa la colisión.
 import polygonClipping from 'polygon-clipping';
+import { pointInPolygon } from '../geo.ts';
 import type { Vec2 } from '../geo.ts';
 import type { Building, InteriorInput, MapData } from '../mapdata.ts';
 import { LINTEL_MIN } from './openings.ts';
@@ -80,7 +81,7 @@ const closed = (r: Vec2[]): [[number, number][]] => [[...r, r[0]].map((p): [numb
  * - dinteles a ≥ LINTEL_MIN de su piso; barandas de RAIL_H ± 0,01;
  * - paredes de WALL_OUT ± 0,01 y tabiques de WALL_IN ± 0,01;
  * - cada mueble de MODEL_BOX con su caja `mueble`;
- * - todo bloque que no es `out`, adentro de la planta o de un patio.
+ * - todo bloque que no es `out`, y todo paño, adentro de la planta o de un patio.
  */
 export function validateInterior(i: Interior): string[] {
   const out: string[] = [];
@@ -117,6 +118,15 @@ export function validateInterior(i: Interior): string[] {
     if (b.out) continue;
     const off = areaOf(polygonClipping.difference(closed(b.polygon), room));
     if (off > 1e-3) say(`un bloque (${b.role}) sale de la planta ${where(centroid(b.polygon))}: ${fmt(off)} m² afuera`);
+  }
+  for (const p of i.panes) {
+    // una esquina sobre el borde cuenta como adentro: se mira un poco hacia el medio del paño
+    const c = centroid(p.corners.map((q): Vec2 => [q[0], q[2]]));
+    const off = p.corners.find((q) => {
+      const r: Vec2 = [q[0] + (c[0] - q[0]) * 1e-3, q[2] + (c[1] - q[2]) * 1e-3];
+      return !pointInPolygon(r, i.footprint) && !i.patios.some((pt) => pointInPolygon(r, pt));
+    });
+    if (off) say(`un paño (${p.look.mat}) sale de la planta ${where([off[0], off[2]])}`);
   }
   return out;
 }

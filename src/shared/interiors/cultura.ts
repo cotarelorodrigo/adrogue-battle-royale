@@ -11,11 +11,14 @@
 // - En la planta baja, a los costados del atrio, dos salas de muestras (paneles sueltos, cuadros abstractos y tarimas
 //   bajas) detrás de la galería de las columnas; al fondo, el foyer y el auditorio de doble altura, con las filas de
 //   butacas (se cruzan caminando) y el escenario, al que se sube por los escalones de los costados.
-// - Arriba del auditorio, en el piso 2, la Sala 3. En los balcones, más cuadros y paneles.
+// - Arriba del auditorio, en el piso 2, la Sala 3. En los balcones, más cuadros y paneles; el frente de los pisos 1 y 2
+//   es un ventanal (por adentro, la luz de día de su vidrio).
+// - Lo inclinado (el vidrio y la estructura del lucernario, el pasamanos de las escaleras) se dibuja en pendiente, con
+//   paños (Kit.pane); lo que se pisa o frena va aparte, en bloques escalonados (D13).
 // Todo va en el marco local del Kit: U a lo largo del frente y V hacia adentro (0 mira a +V y π/2 a +U). Si el edificio
 // no es el del mapa (si la planta no da para el atrio, las salas y el auditorio), queda la caja de un piso.
 import { pointInPolygon } from '../geo.ts';
-import type { Vec2 } from '../geo.ts';
+import type { Vec2, Vec3 } from '../geo.ts';
 import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { RAIL_H, TREAD, WALL_IN } from './kit.ts';
@@ -30,6 +33,8 @@ const PARED: Look = { mat: 'liso', color: '#f1eee7' };
 const TECHO: Look = { mat: 'liso', color: '#f5f3ee' };
 const PISO_PB: Look = { mat: 'porcelanato', color: '#efede8' };
 const PISO_ALTO: Look = { mat: 'porcelanato', color: '#e6dcc6' };
+/** Las guardas crema del porcelanato de la planta baja (el mismo crema de los balcones). */
+const CREMA: Look = { mat: 'porcelanato', color: '#e6dcc6' };
 /** La guarda redonda del piso del atrio, debajo del plafón, y su filete. */
 const GUARDA: Look = { mat: 'porcelanato', color: '#d8c6a0' };
 const FILETE: Look = { mat: 'porcelanato', color: '#8c7a5c' };
@@ -52,6 +57,9 @@ const TARIMA: Look = { mat: 'liso', color: '#e9e6df' };
 const BRONCE: Look = { mat: 'liso', color: '#7a5a3a' };
 /** Los paneles de luz del cielorraso (brillan: van sin hornear). */
 const PANEL_LUZ: Look = { mat: 'luz', color: '#dedcd4' };
+/** El vidrio del ventanal del frente visto de adentro: luz de día por un vidrio con reflejo, un blanco azulado que no
+ *  llega al blanco de los paneles de luz (sin hornear: a la exposición de adentro se ve ≈ (214, 226, 234)). */
+const VENTANAL: Look = { mat: 'luz', color: '#83a1ba' };
 
 /** El plafón: fondo crema y el aro oscuro del borde (drawings.ts pinta el resto). */
 const PLAFON_LOOK: SignLook = { fondo: '#efe6d2', letra: '#3a3530', marco: '#3a3530', fuente: 'sans' };
@@ -94,8 +102,15 @@ const AUDITORIO_V = 29, ESCENARIO_V = 40.5, ESCENARIO_H = 0.8, ESCALON_W = 1.2, 
 const PLAFON_BAJA = 2.6, PLAFON_D = 7;
 /** El lucernario: franjas de 0,2 m a lo largo del atrio, la cumbrera 1,6 m arriba del techo; el cordón de 0,15 m. */
 const FRANJA = 0.2, CUMBRERA = 1.6, CORDON = { w: 0.15, h: 0.15 };
-/** Los cabios blancos del lucernario (a través, cada ~4 m), las correas (a lo largo) y su sección. */
-const CABIOS = 6, CABIO_W = 0.08, CABIO_H = 0.12, CORREA_W = 0.08;
+/** Los cabios blancos del lucernario (6 por agua, del borde a la cumbrera), las correas (a lo largo) y su sección; la
+ *  estructura queda apenas debajo del vidrio. */
+const CABIOS = 6, CABIO_W = 0.08, CABIO_H = 0.12, CORREA_W = 0.08, CORREA_H = 0.1, BAJO_VIDRIO = 0.004;
+/** El ventanal del frente: los montantes, a lo sumo cada tanto (m), y la sección de los perfiles (de frente y de fondo);
+ *  el travesaño, a 1,0 m del piso. */
+const MONTANTE_CADA = 1.5, PERFIL = { w: 0.05, d: 0.06 }, TRAVESAÑO = 1.0;
+/** Las guardas crema de la planta baja: la de la galería, centrada en la línea de las columnas, y el borde del hall, a
+ *  tanto de las paredes. */
+const GUARDA_GALERIA = 0.6, GUARDA_HALL = { w: 0.3, aire: 0.6 };
 /** Puertas de adentro: ancho y alto. */
 const PUERTA = { w: 1.6, h: 2.3 };
 
@@ -147,6 +162,43 @@ function sobre(path: Vec2[], s: number): Vec2 {
 }
 const largo = (path: Vec2[]): number => path.slice(1).reduce((t, p, j) => t + len(sub(p, path[j])), 0);
 
+/** Una barra que solo se dibuja (paños): de `a` a `b` (marco local, [u, y, v]: el medio de su cara de arriba en cada
+ *  punta), de `ancho` de través (horizontal) y `alto` hacia abajo, de canto a a → b; para lo inclinado (un cabio, un
+ *  pasamanos). Con `puntas`, también las tapas de las puntas. a → b no puede ser vertical. */
+function barra(k: Kit, a: Vec3, b: Vec3, ancho: number, alto: number, look: Look, o: { sky?: true; puntas?: true } = {}): void {
+  const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const l = Math.hypot(...d), h = Math.hypot(d[0], d[2]);
+  const e: Vec3 = [d[0] / l, d[1] / l, d[2] / l], t: Vec3 = [-d[2] / h, 0, d[0] / h];
+  // arriba: perpendicular a a → b y al través (t × e o e × t, el que sube)
+  const c: Vec3 = [t[1] * e[2] - t[2] * e[1], t[2] * e[0] - t[0] * e[2], t[0] * e[1] - t[1] * e[0]];
+  const up: Vec3 = c[1] >= 0 ? c : [-c[0], -c[1], -c[2]];
+  const at = (p: Vec3, s: number, y: number): Vec3 => [p[0] + t[0] * s - up[0] * y, p[1] - up[1] * y, p[2] + t[2] * s - up[2] * y];
+  const neg = (v: Vec3): Vec3 => [-v[0], -v[1], -v[2]];
+  const w = ancho / 2, f = o.sky ? { sky: true as const } : {};
+  k.pane([at(a, -w, 0), at(b, -w, 0), at(b, w, 0), at(a, w, 0)], up, look, f);
+  k.pane([at(a, -w, alto), at(a, w, alto), at(b, w, alto), at(b, -w, alto)], neg(up), look, f);
+  k.pane([at(a, w, 0), at(b, w, 0), at(b, w, alto), at(a, w, alto)], t, look, f);
+  k.pane([at(a, -w, 0), at(a, -w, alto), at(b, -w, alto), at(b, -w, 0)], neg(t), look, f);
+  if (!o.puntas) return;
+  k.pane([at(a, -w, 0), at(a, w, 0), at(a, w, alto), at(a, -w, alto)], neg(e), look, f);
+  k.pane([at(b, -w, 0), at(b, -w, alto), at(b, w, alto), at(b, w, 0)], e, look, f);
+}
+
+/** Las caras `caras` de una caja que solo se dibuja (paños), de planta [u0, v0, u1, v1] (marco local) entre y0 e y1: las
+ *  de los costados por el lado que miran (u0 mira a −U, v1 a +V…), el tope y el fondo. */
+type Cara = 'u0' | 'u1' | 'v0' | 'v1' | 'tope' | 'fondo';
+function caja(k: Kit, [u0, v0, u1, v1]: Rect, y0: number, y1: number, look: Look, caras: Cara[]): void {
+  const quads: Record<Cara, [Vec3[], Vec3]> = {
+    u0: [[[u0, y0, v0], [u0, y0, v1], [u0, y1, v1], [u0, y1, v0]], [-1, 0, 0]],
+    u1: [[[u1, y0, v0], [u1, y1, v0], [u1, y1, v1], [u1, y0, v1]], [1, 0, 0]],
+    v0: [[[u0, y0, v0], [u0, y1, v0], [u1, y1, v0], [u1, y0, v0]], [0, 0, -1]],
+    v1: [[[u0, y0, v1], [u1, y0, v1], [u1, y1, v1], [u0, y1, v1]], [0, 0, 1]],
+    tope: [[[u0, y1, v0], [u0, y1, v1], [u1, y1, v1], [u1, y1, v0]], [0, 1, 0]],
+    fondo: [[[u0, y0, v0], [u1, y0, v0], [u1, y0, v1], [u0, y0, v1]], [0, -1, 0]],
+  };
+  for (const cara of caras) k.pane(quads[cara][0], quads[cara][1], look);
+}
+
 // ---------- piezas ----------
 
 /** Una columna blanca de piso a cielorraso en `c`: base cuadrada, fuste de 12 lados y el capitel (equino y ábaco). */
@@ -193,8 +245,8 @@ function curvaDeReja(k: Kit, arco: Vec2[], level: number): void {
 }
 
 /** La baranda de vidrio de un costado de una escalera (`lado` ±1 respecto de su subida): un paño por escalón, sobre su
- *  huella, y el pasamanos negro siguiendo la pendiente (la línea de las narices de los escalones, PASAMANOS_ESCALERA
- *  arriba) en tramos de un tercio de huella, con un parante cada tres escalones. */
+ *  huella, y el pasamanos negro en pendiente, una sola barra de la nariz del primer escalón al borde de la llegada
+ *  (PASAMANOS_ESCALERA arriba de la línea de las narices), con un parante cada tres escalones. */
 function barandaDeEscalera(k: Kit, foot: Vec2, dir: Vec2, width: number, y0: number, y1: number, lado: 1 | -1): void {
   const n = Math.ceil((y1 - y0) / 0.2 - 1e-9), r = (y1 - y0) / n;
   const side: Vec2 = [-dir[1] * lado, dir[0] * lado], q = width / 2 + RAIL_T / 2;
@@ -204,21 +256,19 @@ function barandaDeEscalera(k: Kit, foot: Vec2, dir: Vec2, width: number, y0: num
   for (let i = 1; i < n; i++) {
     const s0 = (i - 1) * TREAD;
     k.railing([at(s0), at(i * TREAD)], 0, VIDRIO, { y: y0 + i * r });
-    for (let j = 0; j < 3; j++) {
-      const [a, b] = [s0 + (TREAD * j) / 3, s0 + (TREAD * (j + 1)) / 3];
-      tramo(k, at(a), at(b), tope(a) - (PASAMANOS.y1 - PASAMANOS.y0), tope(b), PASAMANOS.w, 'none', 'otro', NEGRO);
-    }
     if ((i - 1) % 3 === 0 || i === n - 1) {
       const m = at(s0 + TREAD / 2), h = PARANTE / 2;
-      k.block(rect([m[0] - h, m[1] - h, m[0] + h, m[1] + h]), y0 + i * r, tope(s0 + TREAD / 2) - 0.06, 'none', 'otro', { side: NEGRO });
+      k.block(rect([m[0] - h, m[1] - h, m[0] + h, m[1] + h]), y0 + i * r, tope(s0 + TREAD / 2) - (PASAMANOS.y1 - PASAMANOS.y0), 'none', 'otro', { side: NEGRO });
     }
   }
+  const fin = (n - 1) * TREAD, [a, b] = [at(0), at(fin)];
+  barra(k, [a[0], tope(0), a[1]], [b[0], tope(fin), b[1]], PASAMANOS.w, PASAMANOS.y1 - PASAMANOS.y0, NEGRO, { puntas: true });
 }
 
-/** Un cuadro abstracto (drawings.ts lo pinta con el texto de semilla) colgado en `p`, mirando a `normal`. */
-let cuadros = 0;
-function cuadro(k: Kit, p: Vec2, y: number, normal: Vec2, w = 1.3, h = 1.0): void {
-  k.label(`Cuadro ${++cuadros}`, p, y, normal, w, h, CUADRO_LOOK, { drawing: 'cuadro' });
+/** Un cuadro abstracto colgado en `p` (marco local), a la altura `y`, mirando a `normal`. drawings.ts lo pinta con el
+ *  texto de semilla, que sale del lugar: agregar o sacar un cuadro no cambia los demás. (Se exporta para los tests.) */
+export function cuadro(k: Kit, p: Vec2, y: number, normal: Vec2, w = 1.3, h = 1.0): void {
+  k.label(`Cuadro ${y.toFixed(2)} · ${p[0].toFixed(2)}, ${p[1].toFixed(2)}`, p, y, normal, w, h, CUADRO_LOOK, { drawing: 'cuadro' });
 }
 
 /** Un panel de muestra en `c` mirando a ±`yaw` con un cuadro en cada cara. */
@@ -243,37 +293,77 @@ function luces(k: Kit, [u0, v0, u1, v1]: Rect, techo: number, huecos: Vec2[][], 
   }
 }
 
-/** El lucernario a dos aguas sobre el hueco del techo (D13), arriba de `H`: franjas de vidrio de FRANJA m a lo largo del
- *  atrio (clase glass: se camina por encima), cada una a su alto; adentro de cada una, los cabios y las correas blancas
- *  (sin colisión), y alrededor el cordón. Todo `sky`. Las caras de costado que quedan adentro de la franja vecina, más
- *  alta (o del cordón), no se dibujan. */
+/** El lucernario a dos aguas sobre el hueco del techo (D13), arriba de `H`. Lo que se pisa son franjas de vidrio de
+ *  FRANJA m a lo largo del atrio (clase glass, cada una al alto de las aguas en su medio), que no se dibujan: lo que se
+ *  ve es el vidrio en pendiente, las dos aguas y los dos tímpanos (de los dos lados), y debajo la estructura blanca,
+ *  también en pendiente: los cabios de cada agua, las correas y la cumbrera. Alrededor, el cordón, que se pisa. Todo
+ *  `sky`. Lo que se ve y lo que se pisa difieren a lo sumo media franja de pendiente (0,03 m). */
 function lucernario(k: Kit, [u0, v0, u1, v1]: Rect, H: number): void {
-  const n = Math.round((u1 - u0) / FRANJA), mid = (u0 + u1) / 2, half = (u1 - u0) / 2;
-  const alto = (s: number): number => H + CUMBRERA * (1 - Math.abs(u0 + (s + 0.5) * FRANJA - mid) / half);
-  const sube = (s: number): boolean => u0 + (s + 0.5) * FRANJA < mid; // del lado de U0: sube hacia +U
-  const cabios = Array.from({ length: CABIOS }, (_, j) => v0 + CABIO_W / 2 + 0.01 + ((v1 - v0 - CABIO_W - 0.02) * j) / (CABIOS - 1));
-  const correas = new Set([Math.round(n * 0.17), Math.round(n * 0.33), n - 1 - Math.round(n * 0.33), n - 1 - Math.round(n * 0.17)]);
-  const vidrio = { top: VIDRIO, side: VIDRIO, bottom: VIDRIO };
-  const blanco = { top: ESTRUCTURA, side: ESTRUCTURA, bottom: ESTRUCTURA };
+  const n = Math.round((u1 - u0) / FRANJA), mid = (u0 + u1) / 2, half = (u1 - u0) / 2, top = H + CUMBRERA;
+  const aguas = (u: number): number => H + CUMBRERA * (1 - Math.abs(u - mid) / half);
   for (let s = 0; s < n; s++) {
-    const [a, b] = [u0 + s * FRANJA, s === n - 1 ? u1 : u0 + (s + 1) * FRANJA], t = alto(s);
-    // aristas de rect: 1 la de +U, 3 la de −U
-    const hide = sube(s) ? [1, ...(s === 0 ? [3] : [])] : [3, ...(s === n - 1 ? [1] : [])];
-    k.block(rect([a, v0, b, v1]), H, t, 'glass', 'vidrio', vidrio, { sky: true, hide });
-    const y0 = Math.max(H, t - CABIO_H), y1 = t - 0.004;
-    if (y1 - y0 < 0.02) continue;
-    // de cada cabio, la franja tiene un tramo: sin la cara que queda adentro del tramo de al lado, más alto
-    for (const v of cabios) k.block(rect([a, v - CABIO_W / 2, b, v + CABIO_W / 2]), y0, y1, 'none', 'otro', blanco, { sky: true, hide: [sube(s) ? 1 : 3] });
-    if (correas.has(s)) k.block(rect([(a + b) / 2 - CORREA_W / 2, v0, (a + b) / 2 + CORREA_W / 2, v1]), y0, y1, 'none', 'otro', blanco, { sky: true });
+    const [a, b] = [u0 + s * FRANJA, s === n - 1 ? u1 : u0 + (s + 1) * FRANJA];
+    k.block(rect([a, v0, b, v1]), H, aguas((a + b) / 2), 'glass', 'vidrio', {}, { sky: true });
   }
-  // la cumbrera, sobre las dos franjas del medio (las más altas, del mismo alto)
-  const top = alto(Math.floor(n / 2));
-  k.block(rect([mid - CORREA_W, v0, mid + CORREA_W, v1]), top - CABIO_H, top - 0.004, 'none', 'otro', blanco, { sky: true });
+  const o = { back: true, sky: true } as const;
+  k.pane([[u0, H, v0], [mid, top, v0], [mid, top, v1], [u0, H, v1]], [-CUMBRERA, half, 0], VIDRIO, o);
+  k.pane([[mid, top, v0], [u1, H, v0], [u1, H, v1], [mid, top, v1]], [CUMBRERA, half, 0], VIDRIO, o);
+  k.pane([[u0, H, v0], [u1, H, v0], [mid, top, v0]], [0, 0, -1], VIDRIO, o);
+  k.pane([[u0, H, v1], [mid, top, v1], [u1, H, v1]], [0, 0, 1], VIDRIO, o);
+  // los cabios, del borde del hueco a la cumbrera, con su cara de arriba pegada al vidrio
+  const sky = { sky: true } as const, y = (u: number): number => aguas(u) - BAJO_VIDRIO;
+  for (let j = 0; j < CABIOS; j++) {
+    const v = v0 + CABIO_W / 2 + 0.01 + ((v1 - v0 - CABIO_W - 0.02) * j) / (CABIOS - 1);
+    barra(k, [u0, y(u0), v], [mid, y(mid), v], CABIO_W, CABIO_H, ESTRUCTURA, sky);
+    barra(k, [mid, y(mid), v], [u1, y(u1), v], CABIO_W, CABIO_H, ESTRUCTURA, sky);
+  }
+  // las correas, a lo largo, a un sexto y a un tercio de cada borde: su tope es plano y el vidrio sube de través, así
+  // que van un poco más abajo; la cumbrera, en el medio, más ancha
+  for (const f of [0.17, 0.33, 0.67, 0.83]) {
+    const u = u0 + (u1 - u0) * f, yc = aguas(u) - BAJO_VIDRIO - (CORREA_W / 2) * (CUMBRERA / half) - 0.004;
+    barra(k, [u, yc, v0], [u, yc, v1], CORREA_W, CORREA_H, ESTRUCTURA, sky);
+  }
+  const yr = top - BAJO_VIDRIO - CORREA_W * (CUMBRERA / half) - 0.004;
+  barra(k, [mid, yr, v0], [mid, yr, v1], 2 * CORREA_W, CABIO_H, ESTRUCTURA, sky);
   // el cordón alrededor del hueco, sobre el techo: se pisa (un escalón)
   const w = CORDON.w;
   for (const r of [[u0 - w, v0 - w, u0, v1 + w], [u1, v0 - w, u1 + w, v1 + w], [u0, v0 - w, u1, v0], [u0, v1, u1, v1 + w]] as Rect[]) {
     k.block(rect(r), H, H + CORDON.h, 'solid', 'otro', { top: ESTRUCTURA, side: ESTRUCTURA }, { sky: true });
   }
+}
+
+/** El ventanal del frente de un piso de arriba, de `y` al cielorraso (H2). En la realidad el frente de los pisos 1 y 2
+ *  es un muro cortina con un bow-window; acá no tiene aberturas (la foto de la fachada lo dibuja de afuera), así que por
+ *  adentro se ve su vidrio como luz de día: un paño de luz contra la cara de adentro del frente, de lado a lado, con los
+ *  montantes negros cada ≤ MONTANTE_CADA, el travesaño y los perfiles de piso y de techo. Solo dibujo. */
+function ventanal(k: Kit, c: Caras, y: number, cielo: number): void {
+  const v = c.V0 + 0.01, f = v + PERFIL.d; // el vidrio, a 1 cm de la pared; el frente de los perfiles
+  k.pane([[c.U0, y, v], [c.U1, y, v], [c.U1, cielo, v], [c.U0, cielo, v]], [0, 0, 1], VENTANAL);
+  const n = Math.ceil((c.U1 - c.U0) / MONTANTE_CADA - 1e-9), h = PERFIL.w / 2;
+  for (let j = 1; j < n; j++) {
+    const u = c.U0 + ((c.U1 - c.U0) * j) / n;
+    caja(k, [u - h, v, u + h, f], y, cielo, NEGRO, ['v1', 'u0', 'u1']);
+  }
+  caja(k, [c.U0, v, c.U1, f], y + TRAVESAÑO - h, y + TRAVESAÑO + h, NEGRO, ['v1', 'tope', 'fondo']);
+  caja(k, [c.U0, v, c.U1, f], y, y + 0.08, NEGRO, ['v1', 'tope']);
+  caja(k, [c.U0, v, c.U1, f], cielo - 0.08, cielo, NEGRO, ['v1', 'fondo']);
+}
+
+/** Las guardas crema del porcelanato blanco de la planta baja (§4.4: blanco y crema): una banda bajo las columnas de la
+ *  galería, alrededor del atrio (cortada donde pisa la escalera central), y el borde del hall, a lo largo del frente y
+ *  de los costados. Bloques finos, como la guarda redonda. */
+function guardas(k: Kit, c: Caras, [A0, V0, A1, V1]: Rect, escalera: [number, number]): void {
+  const y0 = 0.02, y1 = 0.026, g = GUARDA_GALERIA / 2, [o0, o1] = [COL_AIRE - g, COL_AIRE + g];
+  const banda = (r: Rect): void => k.block(rect(r), y0, y1, 'none', 'otro', { top: CREMA });
+  banda([A0 - o1, V0 - o1, A0 - o0, V1 + o1]);
+  banda([A1 + o0, V0 - o1, A1 + o1, V1 + o1]);
+  banda([A0 - o0, V0 - o1, A1 + o0, V0 - o0]);
+  banda([A0 - o0, V1 + o0, escalera[0], V1 + o1]);
+  banda([escalera[1], V1 + o0, A1 + o0, V1 + o1]);
+  const { w, aire } = GUARDA_HALL, [a, b] = [c.V0 + aire, c.V0 + aire + w];
+  banda([c.U0 + aire, a, c.U1 - aire, b]);
+  banda([c.U0 + aire, b, c.U0 + aire + w, ATRIO_V0 - 0.1]);
+  banda([c.U1 - aire - w, b, c.U1 - aire, ATRIO_V0 - 0.1]);
 }
 
 /** Una sala de muestras de la planta baja, entre la pared de afuera (en `pared`) y el tabique de la galería: `s` (±1) es
@@ -355,7 +445,6 @@ function auditorio(k: Kit, c: Caras): { puerta: number } {
 }
 
 export const culturaPlan: InteriorPlan = (k) => {
-  cuadros = 0;
   const c = caras(k);
   if (c.U1 - c.U0 < 19 || c.V1 - c.V0 < 40) {
     k.shell({ publicFloors: 1, wall: PARED, floor: PISO_PB, ceiling: TECHO });
@@ -416,6 +505,7 @@ export const culturaPlan: InteriorPlan = (k) => {
   k.label('Plafón del atrio', centro, yPlafon, [0, 1], PLAFON_D, PLAFON_D, PLAFON_LOOK, { drawing: 'plafon', down: true, round: true });
   k.block(ngon(centro, 3.3, 40), 0.02, 0.026, 'none', 'otro', { top: FILETE });
   k.block(ngon(centro, 3.15, 40), 0.026, 0.03, 'none', 'otro', { top: GUARDA });
+  guardas(k, c, atrio, [mid - CENTRAL_W / 2, mid + CENTRAL_W / 2]);
 
   // ---- planta baja: el hall con la mesa de informes, las salas, las galerías, el foyer y el auditorio
   k.furniture('escritorio', [A0 - 0.6, 3.6], 0, MIRA.menosU);
@@ -427,11 +517,15 @@ export const culturaPlan: InteriorPlan = (k) => {
   luces(k, [c.U0, ATRIO_V1 + WALL_IN / 2, c.U1, AUDITORIO_V - WALL_IN / 2], techo[0], []);
   const aud = auditorio(k, c);
 
-  // ---- pisos 1 y 2: los balcones del frente (sobre el hall), de los costados y del fondo, con cuadros en las paredes
-  // de afuera; en el 1, además, dos paneles en el del frente y cuadros en la pared del auditorio
+  // ---- pisos 1 y 2: los balcones del frente (sobre el hall, contra el ventanal), de los costados y del fondo, con
+  // cuadros en las paredes de afuera; en el 1, además, dos paneles en el del frente y cuadros en la pared del auditorio
   for (const level of [1, 2]) {
     const y = level * LEVEL_H, ver = y + 1.5, cielo = techo[level];
-    for (const u of [c.U0 + 2.4, mid - 4.4, mid, mid + 4.4, c.U1 - 2.4]) cuadro(k, [u, c.V0], ver, [0, 1]);
+    ventanal(k, c, y, cielo);
+    for (const v of [2.4, 4.8]) {
+      cuadro(k, [c.U0, v], ver, [1, 0]);
+      cuadro(k, [c.U1, v], ver, [-1, 0]);
+    }
     for (const v of [9.0, 13.2, 17.4, 21.6, 25.6]) cuadro(k, [c.U0, v], ver, [1, 0]);
     for (const v of [17.8, 21.8, 25.6]) cuadro(k, [c.U1, v], ver, [-1, 0]);
     const fondo = AUDITORIO_V - WALL_IN / 2;

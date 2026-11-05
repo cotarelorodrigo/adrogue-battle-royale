@@ -53,9 +53,9 @@ export const exteriorSigns = (i: Interior): Sign[] => i.labels.filter((l) => l.o
   text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - SIGN_H / 2, look: l.look,
 }));
 
-/** Lo que el interior le abre al techo de su edificio (D13): sus huecos y las franjas de vidrio del lucernario que los
- *  tapan desde arriba del techo (los bloques `sky` de vidrio), para extrudeBuilding. */
+/** Lo que el interior le abre al techo de su edificio (D13): sus huecos y los paños de vidrio del lucernario que los
+ *  tapan desde arriba del techo (los Pane `sky` de vidrio), para extrudeBuilding. */
 export const roofCut = (i: Interior): RoofCut => ({
   holes: i.roofHoles,
-  skylight: i.blocks.filter((b) => b.sky && b.role === 'vidrio').map((b) => ({ polygon: b.polygon, y0: b.y0, y1: b.y1 })),
+  skylight: i.panes.filter((p) => p.sky && p.look.mat === 'vidrio').map((p) => ({ corners: p.corners, normal: p.normal })),
 });

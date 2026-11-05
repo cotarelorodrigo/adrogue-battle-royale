@@ -7,8 +7,8 @@
 //   afuera y parado encima no se está adentro;
 // - el plafón: un cartel redondo que mira para abajo, pintado en canvas con un PRNG con semilla.
 import * as THREE from 'three';
-import { extrudeBuilding } from '../../src/client/world/geometry.ts';
-import { cellRect } from '../../src/client/world/front-atlas.ts';
+import { extrudeBuilding, SKY_GLASS_UV } from '../../src/client/world/geometry.ts';
+import { cellRect, FRAME_T, MULLION_T, panesOf } from '../../src/client/world/front-atlas.ts';
 import { lightAt } from '../../src/client/world/interiors/bake.ts';
 import { buildInterior3D } from '../../src/client/world/interiors/build.ts';
 import { LABEL_DRAWINGS } from '../../src/client/world/interiors/drawings.ts';
@@ -20,6 +20,7 @@ import { pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { Kit } from '../../src/shared/interiors/kit.ts';
 import type { Interior, Look } from '../../src/shared/interiors/types.ts';
+import { LOT_OPENINGS } from '../../src/shared/interiors/openings.ts';
 import type { Building, InteriorInput } from '../../src/shared/mapdata.ts';
 import { LOOKS, testInterior } from '../shared/interiors/fixture.ts';
 import { stubCanvas } from './canvas-stub.ts';
@@ -69,19 +70,25 @@ const HOLE: Vec2[] = [[3, 4], [7, 4], [7, 11], [3, 11]];
 const RISE = 0.4;
 
 /** El local de prueba (10 × 15 m, 7 m de alto, 2 pisos) con un piso público y un hueco de 4 × 7 m que atraviesa el
- *  bloque cerrado (D13) y, con `sky`, su lucernario: 20 franjas de vidrio de 0,2 m a dos aguas, de height a
- *  height + RISE en el medio, que dan al cielo. */
+ *  bloque cerrado (D13) y, con `sky`, su lucernario a dos aguas, de height a height + RISE en el medio, que da al cielo:
+ *  la colisión son 20 franjas de vidrio de 0,2 m (sin dibujo) y lo que se ve, los dos paños inclinados y los dos
+ *  tímpanos (H1). */
 function skylit(sky: boolean, b0?: Building): { b: Building; input: InteriorInput; interior: Interior } {
   const { b: base, input } = testInterior();
   const b = b0 ?? base;
   const k = new Kit(b, input);
   k.shell({ publicFloors: 1, holes: [{ level: 1, polygon: HOLE }], wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
   if (sky) {
+    const [H, top] = [b.height, b.height + RISE];
     for (let s = 0; s < 20; s++) {
       const u = 3 + s * 0.2;
-      const top = b.height + RISE * (1 - Math.abs(u + 0.1 - 5) / 2);
-      k.block([[u, 4], [u + 0.2, 4], [u + 0.2, 11], [u, 11]], b.height, top, 'glass', 'vidrio', { top: GLASS, side: GLASS, bottom: GLASS }, { sky: true });
+      k.block([[u, 4], [u + 0.2, 4], [u + 0.2, 11], [u, 11]], H, H + RISE * (1 - Math.abs(u + 0.1 - 5) / 2), 'glass', 'vidrio', {}, { sky: true });
     }
+    const o = { back: true, sky: true } as const;
+    k.pane([[3, H, 4], [5, top, 4], [5, top, 11], [3, H, 11]], [-RISE, 2, 0], GLASS, o);
+    k.pane([[5, top, 4], [7, H, 4], [7, H, 11], [5, top, 11]], [RISE, 2, 0], GLASS, o);
+    k.pane([[3, H, 4], [7, H, 4], [5, top, 4]], [0, 0, -1], GLASS, o);
+    k.pane([[3, H, 11], [5, top, 11], [7, H, 11]], [0, 0, 1], GLASS, o);
   }
   return { b, input, interior: k.done(0.8) };
 }
@@ -113,7 +120,7 @@ describe('el techo con hueco (D13): el chunk, la cáscara y la tapa', () => {
     expect(Object.keys(extrudeBuilding(b, input.openings).tapas)).not.toContain('roof');
   });
 
-  test('con lucernario: la tapa sigue sus franjas (a dos aguas) con el color del vidrio, sin material nuevo', () => {
+  test('con lucernario: la tapa sigue sus paños (a dos aguas, en pendiente) con el color del vidrio, sin material nuevo', () => {
     const { b, input, interior } = skylit(true);
     const e = extrudeBuilding(b, input.openings, roofCut(interior));
     expect(topAt(triangles(e.roof), 5, 7.5)).toBeNull();
@@ -127,6 +134,11 @@ describe('el techo con hueco (D13): el chunk, la cáscara y la tapa', () => {
     expect(topAt(tapa, 3.05, 7.5)!).toBeLessThan(b.height + 0.05);
     expect(topAt(tapa, 3.05, 7.5)!).toBeGreaterThan(b.height);
     expect(upArea(tapa)).toBeCloseTo(4 * 7, 4);
+    // en pendiente (H1): dos aguas y dos tímpanos, no un escalón por franja
+    expect(tapa.length, 'triángulos de la tapa').toBeLessThanOrEqual(8);
+    for (const u of [3.3, 3.9, 4.5, 5.5, 6.1, 6.7]) {
+      expect(topAt(tapa, u, 7.5)!, `u ${u}`).toBeCloseTo(b.height + RISE * (1 - Math.abs(u - 5) / 2), 4);
+    }
     const col = g.getAttribute('color');
     for (let k = 0; k < col.count; k++) expect(col.getZ(k), 'azulado').toBeGreaterThan(col.getX(k));
     // un lote: en el atlas del frente (la tapa de sus aberturas ya está: ninguna malla nueva), con uv en el vidrio de
@@ -139,19 +151,30 @@ describe('el techo con hueco (D13): el chunk, la cáscara y la tapa', () => {
     const front = el.tapas.front!;
     const over = triangles(front);
     expect(topAt(over, 5, 7.5)!).toBeGreaterThan(b.height + RISE - 0.05);
-    const cell = cellRect('vidriera');
     const uv = front.getAttribute('uv'), pos = front.getAttribute('position');
     let gable = 0;
     for (let k = 0; k < pos.count; k++) {
       if (pos.getY(k) < b.height - 1e-6) continue; // las de las aberturas
       gable++;
-      const [u, v] = [(uv.getX(k) - cell.u0) / (cell.u1 - cell.u0), (uv.getY(k) - cell.v0) / (cell.v1 - cell.v0)];
-      expect(u * 3).toBeGreaterThan(0.2);
-      expect(u * 3).toBeLessThan(2.8);
-      expect(v * 3.2).toBeGreaterThan(0.35);
-      expect(v * 3.2).toBeLessThan(2.25);
+      expect(uv.getX(k)).toBeCloseTo(SKY_GLASS_UV[0], 6);
+      expect(uv.getY(k)).toBeCloseTo(SKY_GLASS_UV[1], 6);
     }
     expect(gable).toBeGreaterThan(0);
+  });
+
+  test('el vidrio de la tapa (H6): SKY_GLASS_UV cae en un paño de la vidriera, a ≥ 0,1 m del marco y de cada parteluz', () => {
+    const cell = cellRect('vidriera');
+    // en metros dentro de la celda: x desde la izquierda (BAY_W = 3) e y desde el piso (FLOOR_H = 3,2)
+    const x = ((SKY_GLASS_UV[0] - cell.u0) / (cell.u1 - cell.u0)) * 3, y = ((SKY_GLASS_UV[1] - cell.v0) / (cell.v1 - cell.v0)) * 3.2;
+    const glass = LOT_OPENINGS.vidriera.filter((o) => o.kind === 'vidrio');
+    const o = glass.find((g) => x > g.x0 && x < g.x1 && y > g.y0 && y < g.y1);
+    expect(o, `(${x.toFixed(2)}, ${y.toFixed(2)}) en un vidrio`).toBeDefined();
+    const n = panesOf('vidriera', o!);
+    const mullions = Array.from({ length: n - 1 }, (_, j) => o!.x0 + ((o!.x1 - o!.x0) * (j + 1)) / n);
+    const clear = 0.1;
+    for (const edge of [o!.x0, o!.x1]) expect(Math.abs(x - edge) - FRAME_T / 2, 'al marco').toBeGreaterThanOrEqual(clear);
+    for (const edge of [o!.y0, o!.y1]) expect(Math.abs(y - edge) - FRAME_T / 2, 'al marco').toBeGreaterThanOrEqual(clear);
+    for (const m of mullions) expect(Math.abs(x - m) - MULLION_T / 2, `al parteluz de ${m.toFixed(2)}`).toBeGreaterThanOrEqual(clear);
   });
 
   test('la tapa del techo se esconde cuando el interior se dibuja, y se ve cuando no', () => {
@@ -202,19 +225,40 @@ describe('el lucernario en el interior', () => {
     const { b, interior } = skylit(true);
     const glass = meshesOf(buildInterior3D(interior, fakeMaterials(), 'alta').group).find((x) => x.name === 'in_vidrio')!;
     const [pos, nor, col] = ['position', 'normal', 'color'].map((a) => glass.geometry.getAttribute(a));
-    let above = 0, below = 0;
+    // la cara que mira hacia el medio del hueco (abajo de las aguas, adentro de los tímpanos) es la de adentro
+    const mid: Vec3 = [5, b.height, 7.5];
+    let outside = 0, inside = 0;
     for (let k = 0; k < pos.count; k++) {
       if (pos.getY(k) < b.height - 1e-6) continue; // las vidrieras del frente
-      if (nor.getY(k) < -0.5) {
-        below++;
+      const toMid = nor.getX(k) * (mid[0] - pos.getX(k)) + nor.getY(k) * (mid[1] - pos.getY(k)) + nor.getZ(k) * (mid[2] - pos.getZ(k));
+      if (toMid > 0) {
+        inside++;
         expect(col.getX(k)).toBeCloseTo(GLASS_INSIDE, 6);
       } else {
-        above++;
+        outside++;
         expect(col.getX(k)).toBeCloseTo(GLASS_OUTSIDE, 6);
       }
     }
-    expect(above).toBeGreaterThan(0);
-    expect(below).toBeGreaterThan(0);
+    expect(outside).toBeGreaterThan(0);
+    expect(inside).toBeGreaterThan(0);
+  });
+
+  test('las muestras de la luz de cielo van en el marco del hueco (H5): un hueco angosto girado 30° da la misma luz (± 5 %) que sin girar', () => {
+    /** El local girado `a` alrededor del origen (planta y marco), con un hueco de escalera de 1,2 × 5,1 m en el techo. */
+    const narrow = (a: number): Interior => {
+      const { b, input } = testInterior();
+      const rot = ([x, z]: Vec2): Vec2 => [x * Math.cos(a) - z * Math.sin(a), x * Math.sin(a) + z * Math.cos(a)];
+      const k = new Kit({ ...b, footprint: b.footprint.map(rot) }, { ...input, frame: { origin: [0, 0], u: rot([1, 0]), v: rot([0, 1]) } });
+      k.shell({ publicFloors: 1, holes: [{ level: 1, polygon: [[4.4, 5], [5.6, 5], [5.6, 10.1], [4.4, 10.1]] }], wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+      return { ...k.done(0.05), lamps: [] };
+    };
+    const [plain, turned] = [narrow(0), narrow(Math.PI / 6)];
+    const rot = ([x, y, z]: Vec3): Vec3 => [x * Math.cos(Math.PI / 6) - z * Math.sin(Math.PI / 6), y, x * Math.sin(Math.PI / 6) + z * Math.cos(Math.PI / 6)];
+    for (const p of [[5, 0.02, 7.55], [5, 0.02, 5.5], [5, 0.02, 9.6], [3.5, 0.02, 8]] as Vec3[]) {
+      const [a, c] = [lightAt(plain, p, up) - 0.05, lightAt(turned, rot(p), up) - 0.05];
+      expect(a, p.join(', ')).toBeGreaterThan(0.05);
+      expect(Math.abs(c - a) / a, `${p.join(', ')}: ${a.toFixed(3)} sin girar, ${c.toFixed(3)} girado`).toBeLessThanOrEqual(0.05);
+    }
   });
 
   test('parado sobre el lucernario no se está adentro; en el piso de abajo del hueco, sí', () => {

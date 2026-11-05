@@ -1,14 +1,15 @@
 import polygonClipping from 'polygon-clipping';
 import * as THREE from 'three';
 import { PARAPET_H, parapetEdges } from '../../shared/collision.ts';
-import type { Vec2 } from '../../shared/geo.ts';
+import type { Vec2, Vec3 } from '../../shared/geo.ts';
 import { ensureCCW, pointInPolygon } from '../../shared/geo.ts';
 import type { Building, FacadeGround, Opening } from '../../shared/mapdata.ts';
 import { SUN_DIR } from '../render/sun.ts';
-import { SHOP_GLASS, cellRect } from './front-atlas.ts';
+import { LOT_OPENINGS } from '../../shared/interiors/openings.ts';
+import { SHOP_GLASS, cellRect, panesOf } from './front-atlas.ts';
 import { frontGeometry } from './fronts.ts';
 import type { WorldMaterials } from './types.ts';
-import { BAY_W, cutRect, edgeHoles, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
+import { BAY_W, cutRect, edgeHoles, facing, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
 import type { Builder, Rect } from './wall-kit.ts';
 
 export { FLOOR_H, BAY_W };
@@ -30,8 +31,9 @@ export function triangulateUp(poly: Vec2[], base: number, idx: number[], holes: 
 }
 
 /** Lo que un interior le abre al techo de su edificio (D13, Interior.roofHoles): sus huecos (mundo) y, si un lucernario
- *  los tapa y sobresale del techo, sus franjas (prismas de y0 a y1, mundo). */
-export interface RoofCut { holes: Vec2[][]; skylight: { polygon: Vec2[]; y0: number; y1: number }[] }
+ *  los tapa y sobresale del techo, sus paños de vidrio (los Pane `sky`: las aguas y los tímpanos; las esquinas en el
+ *  mundo y la normal del lado de afuera). */
+export interface RoofCut { holes: Vec2[][]; skylight: { corners: Vec3[]; normal: Vec3 }[] }
 const NO_CUT: RoofCut = { holes: [], skylight: [] };
 
 /** La planta menos los huecos: en pedazos, cada uno con su contorno y sus agujeros. Sin huecos, la planta tal cual. */
@@ -56,48 +58,43 @@ function roofCap(b: Builder, fp: Vec2[], y: number, color: THREE.Color, down = f
   }
 }
 
-/** El vidrio de la tapa de un lucernario en el atlas del frente: un punto fijo adentro del primer paño de la vidriera
- *  (entre el marco y el primer parteluz, a media altura), así toda la tapa toma ese color (con uv constante no hay
- *  mipmaps que lo mezclen con el marco). */
-const SKY_GLASS_UV: [number, number] = (() => {
+/** El vidrio de la tapa de un lucernario en el atlas del frente: el medio del primer paño de la vidriera (entre el
+ *  marco y el primer parteluz, a media altura), sacado de LOT_OPENINGS y del ancho de paño con que la pinta el atlas.
+ *  Toda la tapa toma ese color (con uv constante no hay mipmaps que lo mezclen con el marco). */
+export const SKY_GLASS_UV: [number, number] = (() => {
   const r = cellRect('vidriera');
-  return [r.u0 + ((r.u1 - r.u0) * 0.6) / BAY_W, r.v0 + ((r.v1 - r.v0) * 1.3) / FLOOR_H];
+  const o = LOT_OPENINGS.vidriera.find((x) => x.kind === 'vidrio')!;
+  const [x, y] = [o.x0 + (o.x1 - o.x0) / panesOf('vidriera', o) / 2, (o.y0 + o.y1) / 2];
+  return [r.u0 + ((r.u1 - r.u0) * x) / BAY_W, r.v0 + ((r.v1 - r.v0) * y) / FLOOR_H];
 })();
 
 /**
- * La tapa de los huecos del techo (D6, D13): de lejos, mientras el interior no se dibuja. Un hueco sin lucernario se
- * tapa con el techo, plano y a la altura del techo (material `roof`). Uno con lucernario, con sus franjas (el tope y los
- * costados de cada una, del alto que sobresalen) y el color del vidrio: en un lote, en el atlas del frente con el vidrio
- * de la vidriera (la tapa de sus aberturas ya es de ese material: no suma mallas); si no, en `parapet`, con el vértice
- * del color del vidrio.
+ * La tapa de los huecos del techo (D6, D13): de lejos, mientras el interior no se dibuja. Un hueco sin lucernario (el
+ * de una escalera que llega a la terraza) se tapa con el techo, plano y a la altura del techo (material `roof`). Uno con
+ * lucernario, con sus paños de vidrio (en pendiente: las aguas y los tímpanos, por el lado de afuera) y el color del
+ * vidrio: en un lote, en el atlas del frente con el vidrio de la vidriera (la tapa de sus aberturas ya es de ese
+ * material: no suma mallas); si no, en `parapet`, con el vértice del color del vidrio.
  */
 function roofTapa(bd: Building, roof: RoofCut, color: THREE.Color, tapa: (mat: keyof WorldMaterials) => () => Builder): void {
   const lot = bd.front !== undefined;
   const glass = lot ? new THREE.Color(1, 1, 1) : tintColor(SHOP_GLASS[1]);
   for (const hole of roof.holes) {
-    const strips = roof.skylight.filter((s) => {
-      const c = s.polygon.reduce<Vec2>((a, p) => [a[0] + p[0] / s.polygon.length, a[1] + p[1] / s.polygon.length], [0, 0]);
-      return pointInPolygon(c, hole);
+    // un paño es de este hueco si su medio, corrido un poco hacia adentro (contra su normal), cae en el hueco: el de un
+    // tímpano está justo sobre el borde
+    const panes = roof.skylight.filter((s) => {
+      const c = s.corners.reduce<Vec3>((a, p) => [a[0] + p[0] / s.corners.length, a[1], a[2] + p[2] / s.corners.length], [0, 0, 0]);
+      return pointInPolygon([c[0] - s.normal[0] * 0.05, c[2] - s.normal[2] * 0.05], hole);
     });
-    if (strips.length === 0) {
+    if (panes.length === 0) {
       roofCap(tapa('roof')(), hole, bd.height, color);
       continue;
     }
     const t = tapa(lot ? 'front' : 'parapet')();
-    const uv = (x: number, z: number): [number, number] => (lot ? SKY_GLASS_UV : [x / PLANAR_UV, z / PLANAR_UV]);
-    for (const s of strips) {
-      const poly = ensureCCW(s.polygon);
-      const base = t.pos.length / 3;
-      for (const [x, z] of poly) vert(t, [x, s.y1, z], [0, 1, 0], uv(x, z), glass);
-      triangulateUp(poly, base, t.idx);
-      poly.forEach((p, k) => {
-        const q = poly[(k + 1) % poly.length];
-        const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (len < 1e-6) return;
-        const n: [number, number, number] = [-(q[1] - p[1]) / len, 0, (q[0] - p[0]) / len];
-        quad(t, [[p[0], s.y0, p[1]], [q[0], s.y0, q[1]], [q[0], s.y1, q[1]], [p[0], s.y1, p[1]]],
-          [uv(p[0], s.y0), uv(q[0], s.y0), uv(q[0], s.y1), uv(p[0], s.y1)], n, glass);
-      });
+    const uv = (p: Vec3): [number, number] => (lot ? SKY_GLASS_UV : [p[0] / PLANAR_UV, p[2] / PLANAR_UV]);
+    for (const s of panes) {
+      const corners = facing(s.corners, s.normal), base = t.pos.length / 3;
+      for (const p of corners) vert(t, p, s.normal, uv(p), glass);
+      for (let k = 1; k + 1 < corners.length; k++) t.idx.push(base, base + k, base + k + 1);
     }
   }
 }

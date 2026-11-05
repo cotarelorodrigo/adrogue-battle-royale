@@ -223,4 +223,58 @@ describe('el techo de la Casa de la Cultura (D13, tarea 7)', () => {
     expect(own[0].visible).toBe(true);
     views.dispose();
   });
+
+  /** El plano del lucernario de la Casa: H + R · (1 − |de través| / medio ancho), con R lo que sube la cumbrera. */
+  function slope(): { H: number; hole: Vec2[]; at: (x: number, z: number) => number } {
+    const casa = interiors.find((i) => i.placeId === 'casa-de-la-cultura')!;
+    const H = map.buildings.find((x) => x.id === casa.buildingId)!.height;
+    const hole = casa.roofHoles[0];
+    const c: Vec2 = [hole.reduce((s, p) => s + p[0], 0) / hole.length, hole.reduce((s, p) => s + p[1], 0) / hole.length];
+    const d = casa.doors[0].normal, along: Vec2 = [-d[1], d[0]];
+    const across = (x: number, z: number): number => Math.abs((x - c[0]) * along[0] + (z - c[1]) * along[1]);
+    const half = Math.max(...hole.map((p) => across(p[0], p[1])));
+    const R = Math.max(...casa.panes.filter((p) => p.sky).flatMap((p) => p.corners.map((q) => q[1]))) - H;
+    return { H, hole, at: (x, z) => H + R * (1 - across(x, z) / half) };
+  }
+
+  test('el lucernario dibujado va en pendiente (H1): el vidrio en el plano de las aguas (± 0,01) y la estructura debajo, en pocos triángulos', () => {
+    const casa = interiors.find((i) => i.placeId === 'casa-de-la-cultura')!;
+    const { H, hole, at } = slope();
+    const meshes = new Map<string, THREE.Mesh>();
+    buildInterior3D({ ...casa }, materials, 'alta').group.traverse((o) => { if (o instanceof THREE.Mesh) meshes.set(o.name, o); });
+    const glass = triangles(meshes.get('in_vidrio')!.geometry).filter((t) => [t.a, t.b, t.c].some((p) => p.y > H + 0.01));
+    expect(glass.length).toBeGreaterThan(0);
+    expect(glass.length, 'triángulos del vidrio del lucernario').toBeLessThanOrEqual(12);
+    for (const t of glass) for (const p of [t.a, t.b, t.c]) expect(Math.abs(p.y - at(p.x, p.z)), `${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}`).toBeLessThanOrEqual(0.01);
+    // la estructura: lo de in_luz arriba del cordón y adentro del hueco, debajo del vidrio y pegado a él
+    const frame = triangles(meshes.get('in_luz')!.geometry).filter((t) => [t.a, t.b, t.c].every((p) => p.y > H + 0.16 && pointInPolygon([p.x, p.z], hole)));
+    expect(frame.length).toBeGreaterThan(0);
+    expect(frame.length, 'triángulos de la estructura').toBeLessThanOrEqual(200);
+    for (const t of frame) {
+      for (const p of [t.a, t.b, t.c]) {
+        expect(p.y, 'debajo del vidrio').toBeLessThanOrEqual(at(p.x, p.z) + 1e-3);
+        expect(p.y, 'pegada al vidrio').toBeGreaterThanOrEqual(at(p.x, p.z) - 0.25);
+      }
+    }
+  });
+
+  test('la tapa de lejos del lucernario va en pendiente (H1): ≤ 8 triángulos, en el plano de las aguas, más alta en el medio', () => {
+    const { H, at } = slope();
+    const { tapas } = buildChunks(map, fake, interiors);
+    const sky = triangles(tapas.get('casa-de-la-cultura')![0].geometry).filter((t) => [t.a, t.b, t.c].every((p) => p.y > H - 1e-3));
+    expect(sky.length).toBeGreaterThan(0);
+    expect(sky.length, 'triángulos de la tapa del lucernario').toBeLessThanOrEqual(8);
+    for (const t of sky) for (const p of [t.a, t.b, t.c]) expect(Math.abs(p.y - at(p.x, p.z))).toBeLessThanOrEqual(0.01);
+    expect(Math.max(...sky.flatMap((t) => [t.a.y, t.b.y, t.c.y]))).toBeGreaterThan(H + 1);
+  });
+
+  test('la Casa no baja del nivel de compactación de hoy (H8): 0 en media y alta; en baja, 1 (los muebles juntos, con sus texturas)', () => {
+    const casa = interiors.find((i) => i.placeId === 'casa-de-la-cultura')!;
+    const today = { baja: 1, media: 0, alta: 0 } as const;
+    for (const q of ['baja', 'media', 'alta'] as const) {
+      const { group } = buildInterior3D({ ...casa }, materials, q);
+      expect(group.userData.level, `${q}: si un material más la obliga a compactar más, falla`).toBeLessThanOrEqual(today[q]);
+      if (q === 'baja') expect(group.children.map((m) => m.name)).toContain('in_porcelanato');
+    }
+  });
 });

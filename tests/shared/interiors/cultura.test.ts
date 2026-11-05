@@ -2,7 +2,8 @@
 // públicos alrededor del atrio, el piso 4 cerrado con el hueco (D13), el lucernario a dos aguas que se camina por
 // encima, la escalera central y la del costado, los balcones con sus columnas y barandas, las salas con tarimas y el
 // auditorio con su escenario.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import polygonClipping from 'polygon-clipping';
 import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
 import { buildCollisionWorld } from '../../../src/shared/collision.ts';
@@ -10,13 +11,15 @@ import { hitscan } from '../../../src/shared/combat.ts';
 import { SIM_HZ } from '../../../src/shared/fixed-step.ts';
 import { distPointSegment, pointInPolygon, polygonArea } from '../../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
+import { cuadro } from '../../../src/shared/interiors/cultura.ts';
 import { INTERIOR_PLANS, interiorOf } from '../../../src/shared/interiors/index.ts';
-import { MODEL_BOX, RAIL_H } from '../../../src/shared/interiors/kit.ts';
+import { MODEL_BOX, RAIL_H, TREAD, WALL_OUT } from '../../../src/shared/interiors/kit.ts';
 import { LEVEL_H } from '../../../src/shared/interiors/openings.ts';
-import type { Block, StairRun } from '../../../src/shared/interiors/types.ts';
+import type { Block, Pane, StairRun } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { initialState, stepPlayer } from '../../../src/shared/player.ts';
 import type { PlayerState } from '../../../src/shared/player.ts';
+import { testInterior } from './fixture.ts';
 import { walkTo } from './walk.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
@@ -58,10 +61,30 @@ function nearestOn(p: Vec2, ring: Vec2[]): Vec2 {
   return best;
 }
 
+/** El alto más alto en que la vertical por `p` corta los paños (los que no son verticales), o null. */
+function paneTop(panes: Pane[], p: Vec2): number | null {
+  let best: number | null = null;
+  for (const q of panes) {
+    const [c, n] = [q.corners[0], q.normal];
+    if (Math.abs(n[1]) < 0.1 || !pointInPolygon(p, q.corners.map(xz))) continue;
+    const y = c[1] - (n[0] * (p[0] - c[0]) + n[2] * (p[1] - c[2])) / n[1];
+    if (best === null || y > best) best = y;
+  }
+  return best;
+}
+const NEGRO = '#1b1b1c', CREMA = '#e6dcc6';
+
 // el marco de la casa: a lo largo del frente (el de la puerta) y hacia adentro
 const door = i.doors[0];
 const inward: Vec2 = [-door.normal[0], -door.normal[1]];
 const along: Vec2 = [-door.normal[1], door.normal[0]];
+/** Cuánto se mete `p` desde la cara de afuera del frente (la de la puerta). */
+const depth = (p: Vec2): number => (p[0] - door.at[0]) * inward[0] + (p[1] - door.at[1]) * inward[1];
+/** Lo que corre `p` a lo largo del frente desde la puerta. */
+const side = (p: Vec2): number => (p[0] - door.at[0]) * along[0] + (p[1] - door.at[1]) * along[1];
+/** Los fustes de las columnas del piso `level` (sólidos, angostos, de piso a casi el cielorraso, al borde del hueco). */
+const shaftsAt = (level: number): Block[] => i.blocks.filter((x) => x.collide === 'solid' && Math.abs(x.y0 - level * LEVEL_H) < 0.3 && x.y1 - x.y0 > 2.2
+  && extent(x.polygon, along) < 0.6 && extent(x.polygon, inward) < 0.6 && toRing(centroid(x.polygon), atrium(1)) < 0.6);
 
 function mark(name: string): Vec3 {
   const p = i.marks[name];
@@ -173,6 +196,28 @@ describe('el atrio', () => {
     for (let k = 0; k + 1 < sorted.length; k++) expect(Math.abs(sorted[k + 1].y1 - sorted[k].y1)).toBeLessThan(0.2);
   });
 
+  test('el lucernario se dibuja en pendiente (H1): dos aguas y dos tímpanos de vidrio, a ≤ 0,04 m del tope de colisión en 20 puntos de través', () => {
+    const glass = i.panes.filter((p) => p.sky && p.look.mat === 'vidrio');
+    expect(glass.length).toBeGreaterThanOrEqual(2);
+    expect(glass.length, 'dos aguas y dos tímpanos').toBeLessThanOrEqual(4);
+    expect(glass.every((p) => p.back), 'se ven de los dos lados').toBe(true);
+    // ninguna franja de colisión se dibuja: lo que se ve son los paños
+    expect(i.blocks.filter((x) => x.sky && x.role === 'vidrio' && (x.top || x.side || x.bottom))).toEqual([]);
+    const roof = i.roofHoles[0], c = centroid(roof), half = extent(roof, along) / 2;
+    for (let j = 0; j < 20; j++) {
+      const s = -half + (2 * half * (j + 0.5)) / 20;
+      const p: Vec2 = [c[0] + along[0] * s, c[1] + along[1] * s];
+      const drawn = paneTop(glass, p);
+      const hit = world.raycast([p[0], b.height + 5, p[1]], [0, -1, 0], 10);
+      expect(drawn, fmt(p)).not.toBeNull();
+      expect(hit, fmt(p)).not.toBeNull();
+      expect(Math.abs(drawn! - hit!.point[1]), `${fmt(p)}: dibujado a ${drawn!.toFixed(3)}, se pisa a ${hit!.point[1].toFixed(3)}`).toBeLessThanOrEqual(0.04);
+    }
+    // la estructura (cabios, correas y cumbrera) también va en pendiente: barras, no tramos de bloques
+    expect(i.blocks.filter((x) => x.sky && x.collide === 'none')).toEqual([]);
+    expect(i.panes.filter((p) => p.sky && p.look.mat !== 'vidrio').length).toBeGreaterThan(20);
+  });
+
   test('sobre el lucernario: desde techo-lucernario (a 1 m), con W 6 s lo cruza sin bajar nunca de height − 0,05', () => {
     const t = mark('techo-lucernario');
     expect(Math.abs(t[1] - b.height)).toBeLessThan(1e-6);
@@ -253,6 +298,69 @@ describe('escaleras y balcones', () => {
     }
   });
 
+  test('el pasamanos de las escaleras va en pendiente (H1): una barra por lado, a 0,93 ± 0,02 m sobre la línea de las narices', () => {
+    const tops = i.panes.filter((p) => p.look.color === NEGRO && p.normal[1] > 0.3 && p.normal[1] < 0.99);
+    for (const s of i.stairs) {
+      const d = unit([s.top[0] - s.foot[0], s.top[2] - s.foot[2]]), w = stairWidth(s);
+      const n = Math.ceil((s.top[1] - s.foot[1]) / 0.2 - 1e-9), r = (s.top[1] - s.foot[1]) / n;
+      // la línea de las narices: la del escalón k (de 1 a n − 1) está a 0,6 + (k − 1) · TREAD del pie, a k · r
+      const nose = (a: number): number => s.foot[1] + r + ((a - 0.6) * r) / TREAD;
+      const at = (q: Vec3): [number, number] => {
+        const [px, pz] = [q[0] - s.foot[0], q[2] - s.foot[2]];
+        return [px * d[0] + pz * d[1], -px * d[1] + pz * d[0]];
+      };
+      // la cara de arriba de cada pasamanos (larga: las tapas de las puntas también miran un poco para arriba)
+      const mine = tops.filter((p) => p.corners.every((q) => {
+        const [a, lat] = at(q);
+        return a > 0.4 && a < 0.6 + n * TREAD && Math.abs(lat) > w / 2 - 0.1 && Math.abs(lat) < w / 2 + 0.2;
+      }) && Math.max(...p.corners.map((q) => at(q)[0])) - Math.min(...p.corners.map((q) => at(q)[0])) > 1);
+      const name = `escalera del ${s.from} al ${s.to}`;
+      expect(mine.length, name).toBeGreaterThanOrEqual(1);
+      for (const sign of [1, -1]) {
+        const one = mine.filter((p) => Math.sign(at(p.corners[0])[1]) === sign);
+        expect(one.length, `${name}, lado ${sign}: una barra`).toBeLessThanOrEqual(1);
+        if (one.length === 0) continue;
+        const as = one[0].corners.map((q) => at(q)[0]);
+        expect(Math.min(...as), name).toBeLessThanOrEqual(0.6 + 0.05);
+        expect(Math.max(...as), name).toBeGreaterThanOrEqual(0.6 + (n - 2) * TREAD - 0.05);
+        for (const q of one[0].corners) {
+          const h = q[1] - nose(at(q)[0]);
+          expect(Math.abs(h - 0.93), `${name}: a ${h.toFixed(3)} m de las narices`).toBeLessThanOrEqual(0.02);
+        }
+      }
+    }
+  });
+
+  test('el frente de los pisos 1 y 2 es un ventanal (H2): un paño de luz de lado a lado contra la cara de adentro, montantes negros cada ≤ 1,6 m, un travesaño a 1,0 m y ningún cuadro', () => {
+    const front = (p: Vec3): boolean => depth(xz(p)) > WALL_OUT - 0.01 && depth(xz(p)) < WALL_OUT + 0.12;
+    const facingIn = (p: Pane): boolean => p.normal[0] * inward[0] + p.normal[2] * inward[1] > 0.99;
+    const wide = Math.max(...b.footprint.map((q) => side(q))) - Math.min(...b.footprint.map((q) => side(q)));
+    for (const level of [1, 2]) {
+      const y = level * LEVEL_H, ceiling = level === 1 ? 2 * LEVEL_H - 0.2 : 3 * LEVEL_H - 0.2;
+      const inLevel = (p: Pane): boolean => p.corners.every((q) => q[1] > y - 0.01 && q[1] < ceiling + 0.01 && front(q));
+      const glow = i.panes.filter((p) => p.look.mat === 'luz' && facingIn(p) && inLevel(p));
+      expect(glow.length, `nivel ${level}: el vidrio`).toBeGreaterThanOrEqual(1);
+      const span = (ps: Pane[]): number => Math.max(...ps.flatMap((p) => p.corners.map((q) => side(xz(q))))) - Math.min(...ps.flatMap((p) => p.corners.map((q) => side(xz(q)))));
+      expect(span(glow), `nivel ${level}: de lado a lado`).toBeGreaterThan(wide - 1.0);
+      expect(Math.max(...glow.flatMap((p) => p.corners.map((q) => q[1]))) - Math.min(...glow.flatMap((p) => p.corners.map((q) => q[1]))), `nivel ${level}: de alto`).toBeGreaterThan(2.6);
+      const black = i.panes.filter((p) => p.look.color === NEGRO && facingIn(p) && inLevel(p));
+      // los montantes: caras altas y angostas; entre uno y el siguiente, a lo sumo 1,6 m
+      const posts = black.filter((p) => {
+        const ys = p.corners.map((q) => q[1]), ss = p.corners.map((q) => side(xz(q)));
+        return Math.max(...ys) - Math.min(...ys) > 2.5 && Math.max(...ss) - Math.min(...ss) < 0.1;
+      }).map((p) => p.corners.reduce((t, q) => t + side(xz(q)), 0) / p.corners.length).sort((p, q) => p - q);
+      expect(posts.length, `nivel ${level}: montantes`).toBeGreaterThanOrEqual(10);
+      for (let k = 0; k + 1 < posts.length; k++) expect(posts[k + 1] - posts[k], `nivel ${level}`).toBeLessThanOrEqual(1.6);
+      // el travesaño: una cara larga y baja que pasa por y + 1,0
+      expect(black.some((p) => {
+        const ys = p.corners.map((q) => q[1]);
+        return span([p]) > wide - 1.5 && Math.min(...ys) <= y + 1.0 && Math.max(...ys) >= y + 1.0 && Math.max(...ys) - Math.min(...ys) < 0.12;
+      }), `nivel ${level}: travesaño`).toBe(true);
+      const hung = i.labels.filter((l) => l.drawing === 'cuadro' && l.at[1] > y && l.at[1] < ceiling && depth(xz(l.at)) < WALL_OUT + 0.3);
+      expect(hung.map((l) => fmt(l.at)), `nivel ${level}: cuadros en el frente`).toEqual([]);
+    }
+  });
+
   test('desde balcon-1 (a 1 m de la baranda), caminar 4 s hacia el atrio frena en la baranda y sigue a y = 3,2 (± 0,05)', () => {
     const p = mark('balcon-1');
     expect(Math.abs(p[1] - LEVEL_H)).toBeLessThan(1e-6);
@@ -299,6 +407,40 @@ describe('planta baja', () => {
     const s = walkTo(world, a, xz(e), 10);
     expect(Math.abs(s.pos[1] - e[1]), `termina en ${fmt(s.pos)}`).toBeLessThanOrEqual(0.05);
     expect(dist2(xz(s.pos), xz(e))).toBeLessThan(0.5);
+  });
+
+  test('el porcelanato de la planta baja es blanco y crema (H3): guardas crema bajo las columnas de la galería y un borde en el hall', () => {
+    const cream = i.blocks.filter((x) => x.top?.mat === 'porcelanato' && x.top.color.toLowerCase() === CREMA && x.collide === 'none'
+      && x.y0 >= 0.015 && x.y1 <= 0.04 && x.y1 - x.y0 <= 0.01);
+    const m2 = cream.reduce((t, x) => t + polygonArea(x.polygon), 0);
+    expect(m2, 'm² de guarda crema').toBeGreaterThanOrEqual(20);
+    // debajo de cada columna de la planta baja pasa una guarda
+    const shafts = shaftsAt(0);
+    expect(shafts.length).toBeGreaterThanOrEqual(4);
+    for (const s of shafts) expect(cream.some((x) => pointInPolygon(centroid(s.polygon), x.polygon)), `columna en ${fmt(centroid(s.polygon))}`).toBe(true);
+    // y en el hall, entre el frente y el atrio
+    const hall = cream.filter((x) => depth(centroid(x.polygon)) < 6);
+    expect(hall.reduce((t, x) => t + polygonArea(x.polygon), 0), 'm² de borde en el hall').toBeGreaterThanOrEqual(5);
+  });
+
+  test('los cuadros (H7): la semilla sale del lugar, no del orden (agregar uno antes no cambia los demás), y src/shared no tiene estado de módulo', () => {
+    const texts = i.labels.filter((l) => l.drawing === 'cuadro').map((l) => l.text);
+    expect(texts.length).toBeGreaterThan(30);
+    expect(new Set(texts).size, 'cada cuadro, su dibujo').toBe(texts.length);
+    const last = (first: boolean): string => {
+      const { interior } = testInterior({ extra: (k) => {
+        if (first) cuadro(k, [2, 14.9], 1.5, [0, -1]);
+        cuadro(k, [8, 14.9], 1.5, [0, -1]);
+      } });
+      return interior.labels[interior.labels.length - 1].text;
+    };
+    expect(last(true)).toBe(last(false));
+    // nada de `let` ni `var` sueltos en los módulos de src/shared: un plan sale igual se arme cuando se arme
+    const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
+      const p = join(dir, f);
+      return statSync(p).isDirectory() ? files(p) : p.endsWith('.ts') ? [p] : [];
+    });
+    for (const f of files('src/shared')) expect(readFileSync(f, 'utf8').match(/^(let|var) .*/gm) ?? [], f).toEqual([]);
   });
 
   test('el botín, las apariciones y el spawn del lugar alrededor de la casa siguen libres en el mundo hueco', () => {

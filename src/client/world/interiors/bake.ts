@@ -102,9 +102,19 @@ function skySource(hole: Vec2[], y: number, k: number): Source {
   }
   const total = cells.reduce((s, c) => s + c.area, 0);
   const centre: Vec3 = [cells.reduce((s, c) => s + c.at[0] * c.area, 0) / total, y, cells.reduce((s, c) => s + c.at[2] * c.area, 0) / total];
-  // las muestras de la visibilidad: el medio y, a lo largo del lado mayor, a un 30 % de cada punta
-  const along: Vec2 = x1 - x0 >= z1 - z0 ? [0.3 * (x1 - x0), 0] : [0, 0.3 * (z1 - z0)];
-  const samples: Vec3[] = [[centre[0] - along[0], y, centre[2] - along[1]], centre, [centre[0] + along[0], y, centre[2] + along[1]]];
+  // las muestras de la visibilidad, en el marco del propio hueco (H5 de la tarea 7: uno angosto y girado no se sale): el
+  // medio y, a lo largo de su arista más larga, a un 30 % del largo del hueco hacia cada punta; la que cae afuera, al medio
+  let e: Vec2 = [1, 0], best = 0;
+  hole.forEach((p, j) => {
+    const q = hole[(j + 1) % hole.length], l = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (l > best) [best, e] = [l, [(q[0] - p[0]) / l, (q[1] - p[1]) / l]];
+  });
+  const along = hole.map((p) => (p[0] - centre[0]) * e[0] + (p[1] - centre[2]) * e[1]);
+  const span = 0.3 * (Math.max(...along) - Math.min(...along));
+  const samples = [-span, 0, span].map((d): Vec3 => {
+    const p: Vec3 = [centre[0] + e[0] * d, y, centre[2] + e[1] * d];
+    return d === 0 || pointInPolygon([p[0], p[2]], hole) ? p : centre;
+  });
   return { k, normal: [0, -1, 0], twoSided: false, cells, samples, middle: [centre], disc: [{ at: centre, area: total }], size: Math.max(x1 - x0, z1 - z0) };
 }
 

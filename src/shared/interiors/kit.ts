@@ -8,7 +8,7 @@ import { ensureCCW, insetRing, pointInPolygon, polygonArea, signedAreaFromAbove,
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { Building, InteriorInput, Opening, SignLook } from '../mapdata.ts';
 import { LEVEL_H, LINTEL_MIN, doorsOf } from './openings.ts';
-import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, LabelDrawing, Lamp, Look, Role, StairRun, Viewpoint } from './types.ts';
+import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, LabelDrawing, Lamp, Look, Pane, Role, StairRun, Viewpoint } from './types.ts';
 
 /** Espesores (m): pared de afuera, tabique, losa entre pisos y techo. */
 export const WALL_OUT = 0.2, WALL_IN = 0.1, SLAB_T = 0.2, ROOF_T = 0.8;
@@ -101,6 +101,7 @@ export class Kit {
   private shellOpts: ShellOpts | null = null;
   private finished = false;
   private readonly blocks: Block[] = [];
+  private readonly panes: Pane[] = [];
   private readonly items: Item[] = [];
   private readonly labels: Label[] = [];
   private readonly lamps: Lamp[] = [];
@@ -242,6 +243,20 @@ export class Kit {
       ...(hide && hide.length > 0 ? { hide: hide.map((k) => (flipped ? (((n - 2 - k) % n) + n) % n : k)) } : {}) });
   }
 
+  /** Un paño que solo se dibuja (Pane): sus 3 o 4 esquinas y la normal de su frente en el marco local, como [u, y, v].
+   *  `back`: se ve también de atrás; `sky`: arriba del techo, sobre un hueco (D13). */
+  pane(corners: Vec3[], normal: Vec3, look: Look, o: { back?: true; sky?: true } = {}): void {
+    this.open();
+    if (corners.length < 3 || corners.length > 4) throw new Error(`${this.input.placeId}: un paño lleva 3 o 4 esquinas (tiene ${corners.length})`);
+    const world = corners.map(([u, y, v]): Vec3 => {
+      const [x, z] = this.at([u, v]);
+      return [x, y, z];
+    });
+    const [nx, nz] = this.vec([normal[0], normal[2]]), l = Math.hypot(nx, normal[1], nz);
+    if (l < EPS) throw new Error(`${this.input.placeId}: un paño necesita la normal de su frente`);
+    this.panes.push({ corners: world, normal: [nx / l, normal[1] / l, nz / l], look, ...(o.back ? { back: true as const } : {}), ...(o.sky ? { sky: true as const } : {}) });
+  }
+
   /** Un mueble en `p` sobre el piso `y`, mirando hacia `yaw` (local): su frente (el +z del modelo) va hacia ahí. Y su
    *  caja sólida de MODEL_BOX si la tiene. */
   furniture(model: ItemModel, p: Vec2, y: number, yaw: number, color?: string, detail?: 2): void {
@@ -313,7 +328,7 @@ export class Kit {
     this.finished = true;
     return {
       placeId: this.input.placeId, buildingId: this.b.id, publicFloors: pf, terrace: o.terrace === true, ambient,
-      blocks: this.blocks, items: this.items, labels: this.labels, lamps: this.lamps, floors, stairs: this.runs,
+      blocks: this.blocks, panes: this.panes, items: this.items, labels: this.labels, lamps: this.lamps, floors, stairs: this.runs,
       doors: doorsOf(this.b, this.input), views: this.views, marks: this.marks,
       footprint: this.fp, patios: this.input.patios.map((r) => ensureCCW(r.map((p): Vec2 => [p[0], p[1]]))),
       roofHoles: this.holesAt(pf).map((h) => this.toWorldRing(h)),

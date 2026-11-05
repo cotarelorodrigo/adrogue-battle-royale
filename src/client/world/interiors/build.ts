@@ -6,13 +6,13 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clipSegment, pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
-import type { Block, Interior, Item, ItemModel, Label, Look, Mat } from '../../../shared/interiors/types.ts';
+import type { Block, Interior, Item, ItemModel, Label, Look, Mat, Pane } from '../../../shared/interiors/types.ts';
 import { SIGN_H } from '../../../shared/mapdata.ts';
 import { QUALITY } from '../../render/quality.ts';
 import type { Quality } from '../../render/quality.ts';
 import { PAGE, packSigns, signTexture } from '../signs.ts';
 import type { InteriorKey, WorldMaterials } from '../types.ts';
-import { cutRect, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
+import { cutRect, facing, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
 import type { Builder, Rect } from '../wall-kit.ts';
 import { lightAt } from './bake.ts';
 import { LABEL_DRAWINGS } from './drawings.ts';
@@ -57,9 +57,10 @@ function baker(i: Interior): (p: Vec3, n: Vec3) => number {
 /** Lo que pinta una cara: su color, la luz horneada y el lado de las de vidrio. */
 interface Paint { look: Look; light: (p: Vec3, n: Vec3) => number; glass: (p: Vec3, n: Vec3) => number }
 
-/** Una cara de normal `n` con uv planas (metros / TILE_M): un rectángulo (`rect`, antihorario visto desde `n`) o un
- *  pedazo recortado de una cara horizontal, que se triangula. Lo que brilla va con su color pleno; el vidrio no se
- *  hornea: su color es el lado de la cara (glass.ts), uno por cara; lo demás, su color por la luz y INTERIOR_EXPOSURE. */
+/** Una cara de normal `n` con uv planas (metros / TILE_M): un polígono convexo (`rect`: un rectángulo o un paño,
+ *  antihorario visto desde `n`, en abanico) o un pedazo recortado de una cara horizontal, que se triangula. Lo que
+ *  brilla va con su color pleno; el vidrio no se hornea: su color es el lado de la cara (glass.ts), uno por cara; lo
+ *  demás, su color por la luz y INTERIOR_EXPOSURE. */
 function emit(b: Builder, corners: Vec3[], n: Vec3, uvOf: (p: Vec3) => [number, number], paint: Paint, rect: boolean): void {
   const { mat } = paint.look;
   const color = tintColor(paint.look.color);
@@ -74,7 +75,7 @@ function emit(b: Builder, corners: Vec3[], n: Vec3, uvOf: (p: Vec3) => [number, 
     }
   }
   if (rect) {
-    b.idx.push(first, first + 1, first + 2, first, first + 2, first + 3);
+    for (let k = 1; k + 1 < corners.length; k++) b.idx.push(first, first + k, first + k + 1);
     return;
   }
   const up = n[1] > 0;
@@ -150,7 +151,31 @@ function covered(p: Vec2, q: Vec2, y0: number, y1: number, others: Block[]): Rec
  *  dan al cielo (GLASS_OUTSIDE) y la de abajo, al atrio (GLASS_INSIDE). */
 const skyTone = (_p: Vec3, n: Vec3): number => (n[1] < -0.5 ? GLASS_INSIDE : GLASS_OUTSIDE);
 
-/** Las caras de los bloques que no son `out`, por Mat, partidas en la grilla de `step` m y horneadas con `light`. */
+/** Uv planas de un paño de normal `n`: las de arriba si es casi horizontal; si no, a lo largo de su recta en planta y
+ *  en alto. */
+function paneUv(n: Vec3): (p: Vec3) => [number, number] {
+  if (Math.abs(n[1]) > 0.7) return (p) => [p[0] / TILE_M, p[2] / TILE_M];
+  const e = unit(-n[2], n[0]);
+  return (p) => [(p[0] * e[0] + p[2] * e[1]) / TILE_M, p[1] / TILE_M];
+}
+
+/** Los paños (Pane): cada uno entero, sin partir (lo inclinado: el vidrio, la estructura blanca y los pasamanos, que no
+ *  piden más horneado que en sus esquinas). El vidrio de un lucernario (`sky`) da al cielo por el frente (GLASS_OUTSIDE)
+ *  y al interior por atrás (GLASS_INSIDE); otro vidrio, según de qué lado queda (glassTone). */
+function paneFaces(i: Interior, panes: Pane[], builder: (mat: Mat) => Builder, light: (p: Vec3, n: Vec3) => number): void {
+  for (const pn of panes) {
+    const front = facing(pn.corners, pn.normal);
+    const sides: [Vec3[], Vec3, number | null][] = [[front, pn.normal, pn.sky ? GLASS_OUTSIDE : null]];
+    if (pn.back) sides.push([[...front].reverse(), [-pn.normal[0], -pn.normal[1], -pn.normal[2]], pn.sky ? GLASS_INSIDE : null]);
+    for (const [corners, n, tone] of sides) {
+      const glass = (p: Vec3, m: Vec3): number => tone ?? glassTone(i, p, m);
+      emit(builder(pn.look.mat), corners, n, paneUv(n), { look: pn.look, light, glass }, true);
+    }
+  }
+}
+
+/** Las caras de los bloques que no son `out` y los paños, por Mat: los bloques partidos en la grilla de `step` m; todo
+ *  horneado con `light`. */
 function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) => number): Map<Mat, THREE.BufferGeometry> {
   const inGlass = (p: Vec3, n: Vec3): number => glassTone(i, p, n);
   const builders = new Map<Mat, Builder>();
@@ -206,6 +231,7 @@ function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) =>
       }
     }
   }
+  paneFaces(i, i.panes, builder, light);
   return new Map([...builders].map(([mat, b]) => [mat, toGeometry(b)]));
 }
 
@@ -423,12 +449,14 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   }
   const group = new THREE.Group();
   group.name = `interior:${i.placeId}`;
+  group.userData.level = level; // hasta dónde se compactó (para los tests: H8 de la tarea 7)
   group.add(...meshes);
   const box = new THREE.Box3();
   const top = Math.max(0, ...i.blocks.filter((b) => !b.out).map((b) => b.y1));
   for (const ring of [i.footprint, ...i.patios, ...i.blocks.filter((b) => !b.out).map((b) => b.polygon)]) {
     for (const [x, z] of ring) box.expandByPoint(new THREE.Vector3(x, 0, z)).expandByPoint(new THREE.Vector3(x, top, z));
   }
+  for (const pn of i.panes) for (const p of pn.corners) box.expandByPoint(new THREE.Vector3(...p));
   for (const it of i.items) box.expandByPoint(new THREE.Vector3(...it.at));
   return { group, box };
 }

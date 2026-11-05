@@ -35,6 +35,15 @@ export function quad(b: Builder, vs: [number, number, number][], uvs: [number, n
   b.idx.push(i[0], i[1], i[2], i[0], i[2], i[3]);
 }
 
+/** Las esquinas de un polígono plano (un paño de un interior) antihorarias vistas desde `n`, su frente: al revés si su
+ *  giro mira para el otro lado. */
+export function facing(corners: [number, number, number][], n: [number, number, number]): [number, number, number][] {
+  const [a, b, c] = corners;
+  const [ux, uy, uz, vx, vy, vz] = [b[0] - a[0], b[1] - a[1], b[2] - a[2], c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const dot = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2];
+  return dot >= 0 ? corners : [...corners].reverse();
+}
+
 /** Un rectángulo sobre una cara: `s` a lo largo de ella (m) e `y` de alto. */
 export interface Rect { s0: number; s1: number; y0: number; y1: number }
 
