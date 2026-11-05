@@ -22,6 +22,8 @@ export interface Road { id: string; kind: RoadKind; name?: string; width: number
 export interface Park { id: string; name?: string; polygon: Vec2[] }
 export interface Sign { text: string; anchor: Vec2; normal: Vec2; width: number; bottomY: number;
   look?: SignLook;
+  /** Alto de la caja (m); sin él, SIGN_H. Lo usan los carteles `out` de un interior (la "M" de una torre, el de un toldo). */
+  height?: number;
   /** Cartel de bandera: perpendicular a la fachada y de dos caras. */
   blade?: true }
 export interface Place { id: string; name: string; type: PlaceType; position: Vec2; enterable: boolean;

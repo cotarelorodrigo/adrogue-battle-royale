@@ -1,4 +1,4 @@
-import { exitPockets } from '../../../src/mapgen/pockets.ts';
+import { analyzeGround, exitPockets } from '../../../src/mapgen/pockets.ts';
 import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
 import { CollisionWorld, interiorPrisms } from '../../../src/shared/collision.ts';
 import type { Prism } from '../../../src/shared/collision.ts';
@@ -7,8 +7,8 @@ import { SIM_HZ } from '../../../src/shared/fixed-step.ts';
 import { ensureCCW, pointInPolygon, polygonArea, signedAreaFromAbove, toWorld } from '../../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
 import { publicFloorArea, validateInterior } from '../../../src/shared/interiors/index.ts';
-import { GROUND_Y, Kit, MODEL_BOX, RAIL_H, SOLID_MIN_H, TREAD, WALL_OUT } from '../../../src/shared/interiors/kit.ts';
-import type { Interior, ItemModel } from '../../../src/shared/interiors/types.ts';
+import { GROUND_Y, Kit, MODEL_BOX, RAIL_H, RAIL_T, SOLID_MIN_H, TREAD, WALL_OUT } from '../../../src/shared/interiors/kit.ts';
+import type { Block, Interior, ItemModel } from '../../../src/shared/interiors/types.ts';
 import type { Building, InteriorInput, MapData } from '../../../src/shared/mapdata.ts';
 import { PLAYER, initialState, stepPlayer } from '../../../src/shared/player.ts';
 import type { PlayerInput, PlayerState } from '../../../src/shared/player.ts';
@@ -185,8 +185,10 @@ describe('alturas', () => {
     const s = climbStair(world, i.stairs[0]);
     within(s.pos[1], 3.8);
     expect(s.onGround, where(s)).toBe(true);
-    // la terraza tiene la baldosa y su baranda alrededor del hueco
-    expect(i.blocks.some((x) => x.y1 === 3.8 && x.top?.mat === 'baldosa')).toBe(true);
+    // la terraza tiene la baldosa (GROUND_Y arriba del techo, sin sólido: no se pisa con el techo del chunk, H8) y su
+    // baranda alrededor del hueco; el techo, que apoya, no tiene cara de arriba
+    expect(i.blocks.some((x) => x.y0 === 3.8 && x.y1 === 3.8 + GROUND_Y && x.top?.mat === 'baldosa' && x.collide === 'none')).toBe(true);
+    expect(i.blocks.filter((x) => x.role === 'losa' && x.y1 === 3.8 && x.top !== undefined)).toEqual([]);
     expect(i.blocks.some((x) => x.role === 'baranda' && x.y0 === 3.8)).toBe(true);
   });
 
@@ -266,6 +268,28 @@ describe('escalera', () => {
     const arrival = walkTo(world, [9.2, 3.2, 10], [9.2, 6], 3);
     expect(arrival.pos[1]).toBeLessThan(2.5);
     expect(insideOf(b, arrival.pos)).toBe(true);
+  });
+
+  test('una baranda de caño (§4.7): el paño que frena no se ve; se ven el pasamanos, un intermedio y parantes cada ≤ 1,4 m', () => {
+    const BLANCO = { mat: 'metal', color: '#f2f2f2' } as const;
+    const { interior: i, world: w } = testInterior({ extra: (k) => k.railing([[1, 10], [7, 10]], 0, BLANCO, { caño: true }) });
+    const rails = i.blocks.filter((x) => x.role === 'baranda');
+    expect(rails).toHaveLength(1);
+    expect(rails[0].collide).toBe('glass');
+    expect(rails[0].side).toBeUndefined();
+    expect(rails[0].top).toBeUndefined();
+    const pipes = i.blocks.filter((x) => x.collide === 'none' && x.side?.color === BLANCO.color);
+    const len = (x: Block): number => Math.max(...x.polygon.map((p) => p[0])) - Math.min(...x.polygon.map((p) => p[0]));
+    const bars = pipes.filter((x) => len(x) > 5.9), posts = pipes.filter((x) => len(x) < 0.1);
+    expect(bars.map((x) => +x.y1.toFixed(3)).sort()).toEqual([0.55, RAIL_H]);
+    expect(posts.length).toBeGreaterThanOrEqual(Math.ceil(6 / 1.4) + 1);
+    const xs = posts.map((x) => (Math.min(...x.polygon.map((p) => p[0])) + Math.max(...x.polygon.map((p) => p[0]))) / 2).sort((p, q) => p - q);
+    for (let k = 0; k + 1 < xs.length; k++) expect(xs[k + 1] - xs[k]).toBeLessThanOrEqual(1.4 + 1e-9);
+    expect(xs[0]).toBeCloseTo(1, 6);
+    expect(xs[xs.length - 1]).toBeCloseTo(7, 6);
+    // frena como cualquier baranda
+    const s = walkTo(w, [4, 0, 12], [4, 8], 3);
+    expect(s.pos[2]).toBeGreaterThan(10.3);
   });
 
   test('el piso 1 cuenta sin el hueco de la escalera, y publicFloorArea suma los pisos (D11)', () => {
@@ -436,6 +460,27 @@ describe('colisión', () => {
   const mapOf = (b: Building, input: InteriorInput): MapData => ({
     version: 1, origin: { lat: 0, lon: 0 }, bounds: FIXTURE_BOUNDS, buildings: [b], outskirts: [], roads: [], railways: [], platforms: [],
     parks: [], places: [], signs: [], props: [], trees: [], randomSpawns: [], lootSpots: [], interiors: [input],
+  });
+
+  test('una escalera con `approach`: el hueco arranca antes del pie y el análisis de huecos del suelo la une con el piso', () => {
+    // sin approach, el borde de la losa cae sobre el primer escalón: parado ahí el disco toca la losa (arriba de 2,4 m)
+    // y el escalón (abajo de 1,8 m), y para el flood fill la escalera queda suelta (un hueco con 1-2 m² de escalones)
+    const before = testInterior({ publicFloors: 2, stair: true });
+    expect(analyzeGround(before.world, [before.b.footprint]).pockets).toHaveLength(1);
+    const a = 0.75;
+    const { b, interior, world } = testInterior({ publicFloors: 2, extra: (k) => k.stair({ from: 0, to: 1, foot: [9.2, 4], dir: [0, 1], width: 1.2, look: LOOKS.escalera, rail: LOOKS.baranda, approach: a }) });
+    expect(analyzeGround(world, [b.footprint]).pockets).toEqual([]);
+    expect(validateInterior(interior)).toEqual([]);
+    const inset = (10 - 2 * WALL_OUT) * (15 - 2 * WALL_OUT);
+    expect(interior.floors[1].area).toBeCloseTo(inset - 1.2 * (15 * TREAD + a), 6);
+    // los escalones no se mueven (el primero sigue en el pie) y la baranda de la punta de abajo va al borde nuevo
+    const steps = interior.blocks.filter((x) => x.role === 'escalon');
+    expect(Math.min(...steps.flatMap((x) => x.polygon.map((q) => q[1])))).toBeCloseTo(4, 9);
+    const rails = interior.blocks.filter((x) => x.role === 'baranda' && x.y0 === 3.2);
+    expect(rails.some((x) => x.polygon.every((q) => Math.abs(q[1] - (4 - a - RAIL_T / 2)) <= RAIL_T / 2 + 1e-9))).toBe(true);
+    // y se sube igual
+    const up = climbStair(world, interior.stairs[0]);
+    within(up.pos[1], 3.2);
   });
 
   test('exitPockets: el piso de adentro se une con la calle por la puerta (sin la puerta sería un hueco)', () => {

@@ -4,7 +4,6 @@
 import * as THREE from 'three';
 import { signedAreaFromAbove } from '../../../shared/geo.ts';
 import type { Interior } from '../../../shared/interiors/types.ts';
-import { SIGN_H } from '../../../shared/mapdata.ts';
 import type { Sign } from '../../../shared/mapdata.ts';
 import { triangulateUp } from '../geometry.ts';
 import type { RoofCut } from '../geometry.ts';
@@ -48,9 +47,9 @@ export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
   return toGeometry(b);
 }
 
-/** Los carteles `out` del interior, como Sign del mapa (los dibuja buildSigns con los demás). */
+/** Los carteles `out` del interior, como Sign del mapa (los dibuja buildSigns con los demás), de su alto. */
 export const exteriorSigns = (i: Interior): Sign[] => i.labels.filter((l) => l.out).map((l): Sign => ({
-  text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - SIGN_H / 2, look: l.look,
+  text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - l.height / 2, height: l.height, look: l.look,
 }));
 
 /** Lo que el interior le abre al techo de su edificio (D13): sus huecos y los paños de vidrio del lucernario que los

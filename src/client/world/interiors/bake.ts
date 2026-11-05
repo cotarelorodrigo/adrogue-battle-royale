@@ -5,6 +5,8 @@
 // vidrios de las paredes de afuera y los huecos del techo (D13: el lucernario, mirando para abajo): un vidrio de adentro
 // (la pared de vidrio de un vestíbulo, una mampara) no es una fuente.
 import polygonClipping from 'polygon-clipping';
+import * as THREE from 'three';
+import { SKY_LIGHT, SUN_DIR, SUN_LIGHT } from '../../render/sun.ts';
 import { pointInPolygon, polygonArea } from '../../../shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
 import { WALL_OUT } from '../../../shared/interiors/kit.ts';
@@ -364,6 +366,30 @@ function formFactor(s: Source, p: Vec3, n: Vec3): number {
     f += (c.area * face * cosS) / (Math.PI * d2 + c.area);
   }
   return f;
+}
+
+/** Luminancia de un color de la escena (lineal). */
+const lum = (hex: number): number => {
+  const c = new THREE.Color(hex);
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+};
+const SUN_K = SUN_LIGHT.intensity * lum(SUN_LIGHT.color), SKY_K = SKY_LIGHT.intensity * lum(SKY_LIGHT.sky), GROUND_K = SKY_LIGHT.intensity * lum(SKY_LIGHT.ground);
+
+/** La luz al aire libre en una cara de normal `n` (unitaria): la que le da la escena a un Lambert (el sol por el coseno
+ *  y el cielo de la HemisphereLight, sobre π), sin sombras. Va en vez de la horneada en lo que el interior tiene afuera
+ *  (outdoors): así una terraza o un patio se ven como lo de alrededor, con la exposición de la calle. */
+export function outdoorLight(n: Vec3): number {
+  const sun = Math.max(0, n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z);
+  const w = 0.5 * n[1] + 0.5;
+  return (SUN_K * sun + GROUND_K + (SKY_K - GROUND_K) * w) / Math.PI;
+}
+
+/** ¿El punto está al aire libre? Fuera de la planta (un patio, la vereda) o, con terraza, sobre el techo. */
+export function outdoors(i: Interior, p: Vec3): boolean {
+  if (!pointInPolygon([p[0], p[2]], i.footprint)) return true;
+  if (!i.terrace) return false;
+  const roof = i.floors.find((f) => f.level === i.publicFloors);
+  return roof !== undefined && p[1] >= roof.y - 0.01;
 }
 
 /** La luz (de 0 a 1) en el punto `p` de una cara de normal `n` (unitaria). */

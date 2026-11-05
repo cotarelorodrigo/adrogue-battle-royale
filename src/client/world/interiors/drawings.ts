@@ -246,6 +246,90 @@ function cuadro(look: SignLook, width: number, height: number, seed: string): HT
   return canvas;
 }
 
+/** Los colores de las fotos del menú (pan, carne, papas, lechuga, gaseosa, helado): planos, sin imagen. */
+const FOOD = ['#d99a3d', '#7a3d1f', '#f2c14e', '#6aa84f', '#b0302a', '#f4ede0'] as const;
+
+/**
+ * Una pantalla de menú (§4.5) propia, sin logos: el fondo (`look.fondo`) oscuro, una franja de título del color del marco
+ * con el nombre del cartel, y dos o tres productos con su foto (formas planas: el pan, la carne, las papas en su caja,
+ * el vaso) y su precio (`look.letra`). Brilla: la pinta el plan con `glow`.
+ */
+function menu(look: SignLook, width: number, height: number, seed: string): HTMLCanvasElement {
+  const { canvas, c, w, h } = sheet(width, height);
+  const rng = rngOf(seed);
+  c.fillStyle = look.fondo;
+  c.fillRect(0, 0, w, h);
+  const band = Math.round(h * 0.2);
+  c.fillStyle = look.marco;
+  c.fillRect(0, 0, w, band);
+  c.fillStyle = look.letra;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.font = `bold ${Math.round(band * 0.62)}px "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif`;
+  c.fillText(seed.replace(/\s*#\d+$/, ''), w / 2, band / 2, w * 0.92);
+  const n = w / h > 2.2 ? 3 : 2, cell = w / n;
+  for (let k = 0; k < n; k++) {
+    const x = cell * k + cell / 2, y = band + (h - band) * 0.42, r = Math.min(cell, h - band) * 0.26;
+    // la foto: una hamburguesa (pan, carne, lechuga), unas papas o un vaso, al azar
+    const kind = Math.floor(rng.next() * 3) % 3;
+    if (kind === 0) {
+      c.fillStyle = FOOD[0];
+      c.beginPath();
+      c.ellipse(x, y - r * 0.25, r, r * 0.55, 0, Math.PI, 0);
+      c.fill();
+      c.fillStyle = FOOD[3];
+      c.fillRect(x - r * 1.02, y - r * 0.12, r * 2.04, r * 0.14);
+      c.fillStyle = FOOD[1];
+      c.fillRect(x - r * 0.98, y + r * 0.02, r * 1.96, r * 0.28);
+      c.fillStyle = FOOD[0];
+      c.fillRect(x - r * 0.95, y + r * 0.3, r * 1.9, r * 0.22);
+    } else if (kind === 1) {
+      c.fillStyle = FOOD[2];
+      for (let j = -3; j <= 3; j++) c.fillRect(x + j * r * 0.16 - r * 0.05, y - r * (0.9 - Math.abs(j) * 0.08), r * 0.1, r * 0.9);
+      c.fillStyle = FOOD[4];
+      c.beginPath();
+      c.moveTo(x - r * 0.62, y - r * 0.2);
+      c.lineTo(x + r * 0.62, y - r * 0.2);
+      c.lineTo(x + r * 0.48, y + r * 0.6);
+      c.lineTo(x - r * 0.48, y + r * 0.6);
+      c.fill();
+    } else {
+      c.fillStyle = FOOD[5];
+      c.beginPath();
+      c.moveTo(x - r * 0.5, y - r * 0.8);
+      c.lineTo(x + r * 0.5, y - r * 0.8);
+      c.lineTo(x + r * 0.38, y + r * 0.6);
+      c.lineTo(x - r * 0.38, y + r * 0.6);
+      c.fill();
+      c.fillStyle = FOOD[4];
+      c.fillRect(x - r * 0.46, y - r * 0.35, r * 0.92, r * 0.3);
+    }
+    c.fillStyle = look.letra;
+    c.font = `bold ${Math.round((h - band) * 0.16)}px "Arial Rounded MT Bold", "Nunito", system-ui, sans-serif`;
+    c.fillText(`$ ${(4 + Math.floor(rng.next() * 9)) * 1000 + (rng.next() < 0.5 ? 500 : 900)}`, x, band + (h - band) * 0.84, cell * 0.9);
+  }
+  return canvas;
+}
+
+/** El tapizado en zigzag blanco y negro de los sillones del McDonald's (§4.5): franjas en V de `look.fondo` y `look.letra`. */
+function zigzag(look: SignLook, width: number, height: number): HTMLCanvasElement {
+  const { canvas, c, w, h } = sheet(width, height);
+  c.fillStyle = look.fondo;
+  c.fillRect(0, 0, w, h);
+  c.fillStyle = look.letra;
+  const step = Math.max(8, Math.round(0.12 * PX_PER_M)), amp = step * 0.5;
+  for (let y = -step; y < h + step; y += step) {
+    c.beginPath();
+    for (let x = 0, k = 0; x <= w + step; x += step / 2, k++) c.lineTo(x, y + (k % 2 === 0 ? 0 : amp));
+    for (let x = Math.floor((w + step) / (step / 2)) * (step / 2), k = Math.floor((w + step) / (step / 2)); x >= 0; x -= step / 2, k--) {
+      c.lineTo(x, y + step / 2 + (k % 2 === 0 ? 0 : amp));
+    }
+    c.closePath();
+    c.fill();
+  }
+  return canvas;
+}
+
 /** El dibujo de cada Label.drawing, al tamaño del cartel (ancho × alto en metros, a PX_PER_M), con el texto del cartel
- *  de semilla (el tesoro no la usa). */
-export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro };
+ *  de semilla (el tesoro y el zigzag no la usan). */
+export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro, menu, zigzag };

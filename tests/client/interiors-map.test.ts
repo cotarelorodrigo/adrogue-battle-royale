@@ -10,9 +10,10 @@ import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { buildChunks } from '../../src/client/world/chunks.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { buildInterior3D, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
+import { roofCut } from '../../src/client/world/interiors/exterior.ts';
 import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
-import { pointInPolygon, signedAreaFromAbove } from '../../src/shared/geo.ts';
+import { pointInPolygon, polygonArea, signedAreaFromAbove } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import { buildInteriors } from '../../src/shared/interiors/index.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
@@ -108,6 +109,36 @@ describe('los edificios de los interiores (H4)', () => {
   }
 });
 
+// M2 de la revisión de la tarea 5: el contorno corrido de la cáscara (sus esquinas cortadas con las vecinas) en las
+// plantas de verdad, también las agudas y la curva de La Veneciana, y con los huecos del techo (la escalera de la terraza).
+describe('el techo del chunk y el de la cáscara en el mapa real (M2)', () => {
+  for (const i of interiors) {
+    test(`${i.placeId}: el techo cubre la planta menos sus huecos; la cáscara, lo mismo menos lo corrido, mirando abajo y sin dar vueltas`, () => {
+      const b = map.buildings.find((x) => x.id === i.buildingId)!;
+      const inp = map.interiors.find((x) => x.placeId === i.placeId)!;
+      const e = extrudeBuilding(b, inp.openings, roofCut(i));
+      const holes = i.roofHoles.reduce((s, h) => s + polygonArea(h), 0);
+      const want = polygonArea(b.footprint) - holes;
+      const perimeter = b.footprint.reduce((s, p, k) => { const q = b.footprint[(k + 1) % b.footprint.length]; return s + Math.hypot(q[0] - p[0], q[1] - p[1]); }, 0);
+      const at = (y: number) => triangles(e.roof).filter((t) => [t.a, t.b, t.c].every((p) => Math.abs(p.y - y) < 1e-4));
+      const n = new THREE.Vector3();
+      const roof = at(b.height), shell = at(b.height - 0.05);
+      for (const t of roof) expect(t.getNormal(n).y, 'el techo mira arriba').toBeGreaterThan(0.99);
+      for (const t of shell) expect(t.getNormal(n).y, 'la cáscara mira abajo').toBeLessThan(-0.99);
+      expect(Math.abs(areaOf(roof) - want), `${i.placeId}: m² del techo`).toBeLessThan(0.01);
+      const got = areaOf(shell);
+      expect(got, `${i.placeId}: m² de la cáscara`).toBeLessThanOrEqual(want + 0.01);
+      expect(got, `${i.placeId}: m² de la cáscara`).toBeGreaterThanOrEqual(want - 0.15 * perimeter - 0.01);
+      // los huecos quedan abiertos en los dos
+      for (const h of i.roofHoles) {
+        const c: Vec2 = [h.reduce((s, p) => s + p[0], 0) / h.length, h.reduce((s, p) => s + p[1], 0) / h.length];
+        const ray = new THREE.Ray(new THREE.Vector3(c[0], 100, c[1]), new THREE.Vector3(0, -1, 0));
+        for (const t of [...roof, ...shell]) expect(ray.intersectTriangle(t.a, t.b, t.c, false, new THREE.Vector3()), `${i.placeId}: el hueco del techo`).toBeNull();
+      }
+    });
+  }
+});
+
 describe('sombra entera en el mapa real (H1)', () => {
   const WORLD = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
     'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
@@ -133,6 +164,8 @@ describe('sombra entera en el mapa real (H1)', () => {
       base.max.y = b.height + 2;
       const reach = base.clone().union(base.clone().translate(SUN_DIR.clone().multiplyScalar((b.height + 2) / SUN_DIR.y)));
       const near = casters.filter((c) => c.box.intersectsBox(reach));
+      /** Los huecos del techo (la escalera de la terraza): por ahí no hay nada macizo. */
+      const holes = interiors.find((x) => x.placeId === inp.placeId)?.roofHoles ?? [];
       /** Dónde corta el rayo la arista `e` (s en su largo e y), si la cruza entre t0 y t1. */
       const crossing = (o: THREE.Vector3, e: number, t0: number, t1: number): { t: number; s: number; y: number } | null => {
         const { a, d, len, n } = edge(fp, e);
@@ -162,6 +195,8 @@ describe('sombra entera en el mapa real (H1)', () => {
               if (x && (!exit || x.t < exit.t)) exit = { ...x, e };
             }
             if (exit && inOpening(exit.e, exit.s, exit.y)) continue; // dos aberturas alineadas: ahí da el sol
+            const top: Vec2 = [from.x + SUN_DIR.x * roofT, from.z + SUN_DIR.z * roofT];
+            if (!exit && holes.some((h) => pointInPolygon(top, h))) continue; // sale por el hueco del techo: ahí también
             rays++;
             const ray = new THREE.Ray(from, SUN_DIR.clone());
             const hit = near.some(({ t, box }) => ray.intersectsBox(box) && ray.intersectTriangle(t.a, t.b, t.c, false, new THREE.Vector3()) !== null);

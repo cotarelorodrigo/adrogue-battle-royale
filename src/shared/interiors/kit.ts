@@ -18,7 +18,9 @@ export const RISER_MAX = 0.2, TREAD = 0.3, STAIR_MIN_W = 1.2;
 export const RAIL_H = 1.0;
 /** Un mueble con cuerpo de este alto (m) o más es sólido (§2.3); las mesas también. */
 export const SOLID_MIN_H = 0.7;
-/** La planta baja se dibuja a este alto, sin sólido: el suelo del mundo (y = 0) es el que apoya. */
+/** La planta baja se dibuja a este alto, sin sólido: el suelo del mundo (y = 0) es el que apoya. La baldosa de una
+ *  terraza, igual: GROUND_Y arriba del techo (que apoya), así no se pisa con el techo del chunk, a height (H8 de la
+ *  revisión de la tarea 5). */
 export const GROUND_Y = 0.02;
 
 /** Las cajas sólidas de los muebles de §2.3: `w` sobre el +x del modelo, `d` sobre su +z y `h` de alto desde su `at`.
@@ -34,6 +36,13 @@ export const MODEL_BOX: Partial<Record<ItemModel, { w: number; d: number; h: num
   escritorio: { w: 1.4, d: 0.7, h: 0.75 },
   'puesto-caja': { w: 1.9, d: 0.6, h: 1.1 },
   'panel-muestra': { w: 1.6, d: 0.12, h: 2.2 },
+  // McDonald's y La Veneciana (tarea 8): la mesa redonda de 0,7 m, la freidora de una cuba (con su respaldo), la
+  // heladera de acero de dos puertas, la mesa de picnic con sus dos bancos y el metegol (sin las barras ni las manijas)
+  'mesa-redonda': { w: 0.7, d: 0.7, h: 0.75 },
+  freidora: { w: 0.5, d: 0.8, h: 1.1 },
+  heladera: { w: 0.75, d: 0.8, h: 2.0 },
+  'mesa-picnic': { w: 1.8, d: 1.5, h: 0.75 },
+  metegol: { w: 0.76, d: 1.42, h: 0.9 },
 };
 
 /** `holes`: huecos (marco local) en la losa de un nivel; los del nivel `publicFloors` atraviesan el bloque cerrado o el
@@ -42,8 +51,16 @@ export interface ShellOpts { publicFloors: number; terrace?: true; holes?: { lev
 /** Un tabique de `from` a `to` (marco local), centrado en esa recta. `gaps`: huecos con `at` (m desde `from`, al medio
  *  del hueco), `width` y `height` desde `y0`; arriba, dintel. `glassLeaf`: la hoja de vidrio dibujada abierta (D10). */
 export interface WallOpts { t?: number; y0?: number; y1?: number; gaps?: { at: number; width: number; height: number; glassLeaf?: true }[]; look: Look; collide?: Collide }
-/** Una escalera del nivel `from` al `to`: `foot` es el medio del primer escalón, en el piso de abajo, y sube hacia `dir`. */
-export interface StairOpts { from: number; to: number; foot: Vec2; dir: Vec2; width: number; look: Look; rail?: Look; out?: true }
+/** Una escalera del nivel `from` al `to`: `foot` es el medio del primer escalón, en el piso de abajo, y sube hacia `dir`.
+ *  `railStyle`: el de las barandas de su hueco (RailStyle). `approach`: el hueco de arriba arranca esos metros antes del
+ *  pie. Hace falta si el pie queda bajo la losa (no en un atrio): sin eso, el borde de la losa cae justo sobre el primer
+ *  escalón y el análisis de huecos del suelo (pockets.ts: parado sobre un sólido bajo, sin nada de 2,4 a 4,2 m) no une
+ *  la escalera con el piso; con ≥ 2 radios del jugador (0,75), sí. */
+export interface StairOpts { from: number; to: number; foot: Vec2; dir: Vec2; width: number; look: Look; rail?: Look; railStyle?: RailStyle; out?: true; approach?: number }
+/** Cómo se ve una baranda. Sin nada, un paño de RAIL_H con el look (el vidrio de un balcón). `caño`: de caño (la de la
+ *  terraza de La Veneciana, §4.7): el paño frena y no se ve, y se ven el pasamanos, un caño intermedio y los parantes
+ *  cada ≤ CAÑO.paso; con `out`, los caños se dibujan siempre, con el edificio (de lejos, sobre el pretil). */
+export interface RailStyle { caño?: true; out?: true }
 
 /** El inglete de la planta corrida: el del pretil (PARAPET_MITER de collision.ts), así coinciden. */
 const MITER = 2;
@@ -51,7 +68,10 @@ const MITER = 2;
 const GLASS_T = 0.04, GLASS_D = WALL_OUT / 2;
 const GLASS: Look = { mat: 'vidrio', color: '#b8d0d6' };
 /** Espesor de una baranda. */
-const RAIL_T = 0.05;
+export const RAIL_T = 0.05;
+/** La baranda de caño: la sección de los caños (cuadrada, m), el alto del pasamanos y del intermedio (su tope, desde el
+ *  piso) y los parantes, a lo sumo cada `paso` m. */
+const CAÑO = { t: 0.045, top: RAIL_H, mid: 0.55, paso: 1.4 } as const;
 /** El foot y el top de un StairRun quedan a esto del primer escalón y del último. */
 const STAIR_REACH = 0.6;
 /** Las barandas del hueco de una escalera van por tramos de a lo sumo RAIL_PIECE m: queda cada tramo que tiene piso a
@@ -91,6 +111,14 @@ export class Kit {
   get inside(): Vec2[] {
     return this.inner.map((p): Vec2 => [p[0], p[1]]);
   }
+  /** Los patios de InteriorInput en el marco local, en el orden en que vienen. */
+  get patios(): Vec2[][] {
+    return this.input.patios.map((r) => r.map((p) => toLocal(this.input.frame, p)));
+  }
+  /** El alto del edificio: el del techo (y el de la terraza). */
+  get height(): number {
+    return this.b.height;
+  }
   private readonly b: Building;
   private readonly input: InteriorInput;
   /** La planta antihoraria (mundo) y, por cada arista suya, sus aberturas. */
@@ -109,7 +137,7 @@ export class Kit {
   private readonly marks: Record<string, Vec3> = {};
   private readonly runs: StairRun[] = [];
   /** El hueco (marco local) que abre cada escalera en las losas de los niveles from + 1 … to, y la baranda de su borde. */
-  private readonly stairHoles: { from: number; to: number; poly: Vec2[]; rail: Look }[] = [];
+  private readonly stairHoles: { from: number; to: number; poly: Vec2[]; rail: Look; style: RailStyle }[] = [];
 
   constructor(b: Building, input: InteriorInput) {
     this.b = b;
@@ -209,14 +237,16 @@ export class Kit {
       this.block([at(s0, -w), at(s1, -w), at(s1, w), at(s0, w)], y0, y0 + i * r, 'solid', 'escalon', { top: o.look, side: o.look }, o.out);
     }
     const run = (n - 1) * TREAD;
-    this.stairHoles.push({ from: o.from, to: o.to, poly: [at(0, -w), at(run, -w), at(run, w), at(0, w)], rail: o.rail ?? o.look });
+    const a = -(o.approach ?? 0);
+    this.stairHoles.push({ from: o.from, to: o.to, poly: [at(a, -w), at(run, -w), at(run, w), at(a, w)], rail: o.rail ?? o.look, style: o.railStyle ?? {} });
     const [f, t] = [this.at(add(o.foot, d, -STAIR_REACH)), this.at(add(o.foot, d, run + STAIR_REACH))];
     this.runs.push({ from: o.from, to: o.to, foot: [f[0], y0, f[1]], top: [t[0], y1, t[1]], yaw: this.yawToward(d) });
   }
 
   /** Baranda de RAIL_H sobre el piso de `level`, centrada en `path` (marco local): clase glass (D4). Con `y`, desde ese
-   *  alto en vez del piso (la de un tramo de escalera, sobre la huella de su escalón). */
-  railing(path: Vec2[], level: number, look: Look, o: { y?: number } = {}): void {
+   *  alto en vez del piso (la de un tramo de escalera, sobre la huella de su escalón). Con `caño` (RailStyle), de caño:
+   *  el paño que frena no se ve y se ven los caños, del color de `look`. */
+  railing(path: Vec2[], level: number, look: Look, o: { y?: number } & RailStyle = {}): void {
     this.need();
     const y = o.y ?? this.floorY(level), x = RAIL_T / 2;
     for (let i = 0; i + 1 < path.length; i++) {
@@ -225,8 +255,31 @@ export class Kit {
       // cada tramo se alarga medio espesor en cada punta: así cierra las esquinas
       const e = unit(sub(q, p)), side: Vec2 = [-e[1], e[0]];
       const [a, c] = [add(p, e, -x), add(q, e, x)];
-      this.block([add(a, side, -x), add(c, side, -x), add(c, side, x), add(a, side, x)], y, y + RAIL_H, 'glass', 'baranda', { side: look, top: look });
+      this.block([add(a, side, -x), add(c, side, -x), add(c, side, x), add(a, side, x)], y, y + RAIL_H, 'glass', 'baranda', o.caño ? {} : { side: look, top: look });
     }
+    if (o.caño) this.pipes(path, y, look, o.out === true);
+  }
+
+  /** Los caños de una baranda de caño a lo largo de `path` desde el alto `y`: el pasamanos y el intermedio de cada tramo
+   *  (alargados media sección en cada punta, como la baranda) y los parantes en las puntas y cada ≤ CAÑO.paso. */
+  private pipes(path: Vec2[], y: number, look: Look, out: boolean): void {
+    const h = CAÑO.t / 2, l = { side: look, top: look, bottom: look }, o = out ? { out: true as const } : undefined;
+    const post = (m: Vec2): void => this.block([add(m, [-h, -h]), add(m, [h, -h]), add(m, [h, h]), add(m, [-h, h])], y, y + CAÑO.top - CAÑO.t, 'none', 'otro', l, o);
+    for (let i = 0; i + 1 < path.length; i++) {
+      const [p, q] = [path[i], path[i + 1]];
+      const len = dist(p, q);
+      if (len < EPS) continue;
+      const e = unit(sub(q, p)), side: Vec2 = [-e[1], e[0]];
+      const [a, c] = [add(p, e, -h), add(q, e, h)];
+      const bar = [add(a, side, -h), add(c, side, -h), add(c, side, h), add(a, side, h)];
+      this.block(bar, y + CAÑO.top - CAÑO.t, y + CAÑO.top, 'none', 'otro', l, o);
+      this.block(bar, y + CAÑO.mid - CAÑO.t, y + CAÑO.mid, 'none', 'otro', l, o);
+      const n = Math.max(1, Math.ceil(len / CAÑO.paso - 1e-9));
+      for (let j = 0; j < n; j++) post(add(p, e, (len * j) / n));
+    }
+    // el de la última punta, si el recorrido no cierra (si cierra, es el de la primera)
+    const [first, last] = [path[0], path[path.length - 1]];
+    if (path.length > 1 && dist(first, last) > EPS) post(last);
   }
 
   /** Un prisma de planta `poly` (marco local) entre y0 e y1. `true` (o `out`): se dibuja con el edificio; `sky`: va
@@ -317,8 +370,12 @@ export class Kit {
     this.blocks.push({ polygon: ground, y0: 0, y1: GROUND_Y, collide: 'none', role: 'losa', top: floor(0), hide: ground.map((_, i) => i) });
     for (let k = 1; k < pf; k++) this.slab(k, k * LEVEL_H - SLAB_T, k * LEVEL_H, { top: floor(k), bottom: ceiling(k - 1), side: o.wall });
     if (this.closedAbove()) this.slab(pf, pf * LEVEL_H - SLAB_T, H, { bottom: ceiling(pf - 1), side: o.wall });
-    else this.slab(pf, H - ROOF_T, H, { bottom: ceiling(pf - 1), side: o.wall, ...(o.terrace ? { top: floor(pf) } : {}) });
-    for (const h of this.stairHoles) if (this.walkable(h.to)) this.holeRails(h.poly, h.to, h.rail);
+    else {
+      this.slab(pf, H - ROOF_T, H, { bottom: ceiling(pf - 1), side: o.wall });
+      // la baldosa de la terraza, sin sólido y GROUND_Y arriba del techo, que es el que apoya (como la planta baja)
+      if (o.terrace) this.slab(pf, H, H + GROUND_Y, { top: floor(pf), side: floor(pf) }, 'none', 'otro');
+    }
+    for (const h of this.stairHoles) if (this.walkable(h.to)) this.holeRails(h.poly, h.to, h.rail, h.style);
     const levels = [...Array(pf).keys(), ...(o.terrace ? [pf] : [])];
     const floors = levels.map((k): FloorArea => {
       const holes = this.holesAt(k);
@@ -493,11 +550,11 @@ export class Kit {
   /** Una losa (o el bloque cerrado o el techo) de `level` entre y0 e y1, sin sus huecos: en polígonos simples (los
    *  prismas no tienen agujeros), franjas del marco local cortadas en cada u de los vértices de los huecos. La cara
    *  del costado se dibuja solo en el borde de un hueco. */
-  private slab(level: number, y0: number, y1: number, looks: Pick<Block, 'top' | 'bottom' | 'side'>): void {
+  private slab(level: number, y0: number, y1: number, looks: Pick<Block, 'top' | 'bottom' | 'side'>, collide: Collide = 'solid', role: Role = 'losa'): void {
     const holes = this.holesAt(level);
     if (holes.length === 0) {
       const polygon = this.toWorldRing(this.inner);
-      this.blocks.push({ polygon, y0, y1, collide: 'solid', role: 'losa', ...looksOf({ ...looks, side: undefined }) });
+      this.blocks.push({ polygon, y0, y1, collide, role, ...looksOf({ ...looks, side: undefined }) });
       return;
     }
     const region = polygonClipping.difference(closed(this.inner), ...holes.map(closed));
@@ -520,14 +577,14 @@ export class Kit {
           const [p, q] = [polygon[i], polygon[(i + 1) % polygon.length]];
           return !edges.some((h) => h.some((r, m) => onSegment(p, r, h[(m + 1) % h.length]) && onSegment(q, r, h[(m + 1) % h.length])));
         });
-        this.blocks.push({ polygon, y0, y1, collide: 'solid', role: 'losa', ...looksOf(looks), hide });
+        this.blocks.push({ polygon, y0, y1, collide, role, ...looksOf(looks), hide });
       }
     }
   }
 
   /** Las barandas del hueco de una escalera en el piso `level`: por los dos costados y el pie (no por la llegada, la
    *  arista poly[1] → poly[2]), solo donde del otro lado hay piso. */
-  private holeRails(poly: Vec2[], level: number, look: Look): void {
+  private holeRails(poly: Vec2[], level: number, look: Look, style: RailStyle = {}): void {
     const holes = this.holesAt(level);
     const onFloor = (p: Vec2): boolean => pointInPolygon(p, this.inner) && !holes.some((h) => pointInPolygon(p, h));
     const mid: Vec2 = [poly.reduce((s, p) => s + p[0], 0) / poly.length, poly.reduce((s, p) => s + p[1], 0) / poly.length];
@@ -543,7 +600,7 @@ export class Kit {
         const keep = j < pieces && onFloor(add(add(at(j), sub(q, p), 0.5 / pieces), out, RAIL_PROBE));
         if (keep && start < 0) start = j;
         if (!keep && start >= 0) {
-          this.railing([add(at(start), out, RAIL_T / 2), add(at(j), out, RAIL_T / 2)], level, look);
+          this.railing([add(at(start), out, RAIL_T / 2), add(at(j), out, RAIL_T / 2)], level, look, style);
           start = -1;
         }
       }

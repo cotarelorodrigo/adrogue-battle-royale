@@ -25,16 +25,21 @@ export interface Pane { corners: Vec3[]; normal: Vec3; look: Look; back?: true; 
 /** Base; cada tarea de interior suma los suyos. Bancos (tarea 6): el cajero automático, el escritorio con sus dos sillas,
  *  el turnero colgado, el puesto de caja (su tramo de mostrador, con el cajero sentado detrás) y una fila de 4 sillas de
  *  espera unidas. Casa de la Cultura (tarea 7): el plafón colgado bajo el lucernario (su cara pintada es un cartel), la
- *  butaca del auditorio y el panel de una muestra. */
+ *  butaca del auditorio y el panel de una muestra. McDonald's y La Veneciana (tarea 8): la mesa redonda de pie negro, la
+ *  freidora y la heladera de acero de la cocina, la pantalla de menú colgada (su menú es un cartel), la mesa de picnic
+ *  con sus bancos, la sombrilla, la silla director, el metegol y un balde de helado de la vitrina. La lámpara de la base
+ *  es la campana colgada (el origen, en el borde de abajo de la campana) y el sillón, un módulo de banqueta tapizada. */
 export type ItemModel = 'silla' | 'banqueta' | 'lampara' | 'mesa' | 'sillon' | 'hoja-vidrio'
   | 'cajero' | 'escritorio' | 'turnero' | 'puesto-caja' | 'sillas-espera'
-  | 'plafon' | 'silla-auditorio' | 'panel-muestra';
+  | 'plafon' | 'silla-auditorio' | 'panel-muestra'
+  | 'mesa-redonda' | 'freidora' | 'heladera' | 'pantalla' | 'mesa-picnic' | 'sombrilla' | 'silla-director' | 'metegol' | 'balde-helado';
 /** yaw: rotación three.js sobre +Y, como Prop.rotation. detail 2: no se dibuja en baja. */
 export interface Item { model: ItemModel; at: Vec3; yaw: number; color?: string; detail?: 2 }
 /** Lo que un cartel puede llevar dibujado en vez de su texto (el cliente lo dibuja en canvas): la puerta redonda del
  *  tesoro de un banco (tarea 6); la cara pintada del plafón y un cuadro abstracto de una muestra (tarea 7), que salen
- *  del texto del cartel como semilla. */
-export type LabelDrawing = 'tesoro' | 'plafon' | 'cuadro';
+ *  del texto del cartel como semilla; el menú de una pantalla (genérico: fotos de colores y precios, sin marcas) y el
+ *  tapizado en zigzag blanco y negro de un sillón (tarea 8). */
+export type LabelDrawing = 'tesoro' | 'plafon' | 'cuadro' | 'menu' | 'zigzag';
 /** Cartel: `normal` apunta hacia quien lo lee. Uno `out` se vuelve un Sign del mapa (alto SIGN_H). Con `drawing`, en vez
  *  del texto va ese dibujo (el texto queda para nombrarlo y es su semilla). `down`: acostado, con la cara hacia abajo
  *  (`normal` es hacia dónde queda el borde de arriba del dibujo); `round`: un disco de diámetro `width`, el círculo

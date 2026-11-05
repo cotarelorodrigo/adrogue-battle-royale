@@ -165,7 +165,7 @@ const largo = (path: Vec2[]): number => path.slice(1).reduce((t, p, j) => t + le
 /** Una barra que solo se dibuja (paños): de `a` a `b` (marco local, [u, y, v]: el medio de su cara de arriba en cada
  *  punta), de `ancho` de través (horizontal) y `alto` hacia abajo, de canto a a → b; para lo inclinado (un cabio, un
  *  pasamanos). Con `puntas`, también las tapas de las puntas. a → b no puede ser vertical. */
-function barra(k: Kit, a: Vec3, b: Vec3, ancho: number, alto: number, look: Look, o: { sky?: true; puntas?: true } = {}): void {
+export function barra(k: Kit, a: Vec3, b: Vec3, ancho: number, alto: number, look: Look, o: { sky?: true; puntas?: true } = {}): void {
   const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const l = Math.hypot(...d), h = Math.hypot(d[0], d[2]);
   const e: Vec3 = [d[0] / l, d[1] / l, d[2] / l], t: Vec3 = [-d[2] / h, 0, d[0] / h];

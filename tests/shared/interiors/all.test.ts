@@ -104,6 +104,16 @@ describe.each(interiors.map((i) => [i.placeId, i] as const))('%s', (id, i) => {
     expect(Math.abs(area(unionOf(slabs)) - (polygonArea(inner) - area(holes))), id).toBeLessThan(0.01);
   });
 
+  // H8 de la revisión de la tarea 5: el techo del chunk se dibuja a height sobre la planta (menos los huecos del techo);
+  // una cara de arriba del interior a esa misma altura se pisa con él (z-fighting). La baldosa de una terraza va
+  // GROUND_Y más arriba.
+  test('ninguna cara de arriba del interior queda a la altura del techo del chunk (H8)', () => {
+    const flat = i.blocks.filter((x) => !x.out && x.top !== undefined && Math.abs(x.y1 - b.height) < 0.005).map((x) => x.polygon);
+    const holes = unionOf(i.roofHoles);
+    const roof = polygonClipping.difference(closed(ensureCCW(b.footprint)), ...(holes.length > 0 ? [holes] : []));
+    expect(area(polygonClipping.intersection(roof, unionOf(flat))), `${id}: m² que se pisan con el techo`).toBeLessThan(0.01);
+  });
+
   test('todo marks cumple isFreeSpot a su altura', () => {
     for (const [name, p] of Object.entries(i.marks)) expect(isFreeSpot(world, p[0], p[2], p[1]), `${id}: ${name}`).toBe(true);
   });

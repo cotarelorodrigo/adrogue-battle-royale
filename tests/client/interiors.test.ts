@@ -198,7 +198,7 @@ describe('buildInterior3D', () => {
       for (const t of triangles(x.geometry)) expect(Math.max(t.a.z, t.b.z, t.c.z)).toBeGreaterThan(-0.05);
     }
     // los carteles salen sin armar la geometría (H7: main solo necesita los carteles; la geometría es del chunk)
-    expect(exteriorSigns(i)).toEqual([{ text: 'AFUERA', anchor: [5, -0.06], normal: [0, -1], width: 3, bottomY: 2.8 - 0.45, look }]);
+    expect(exteriorSigns(i)).toEqual([{ text: 'AFUERA', anchor: [5, -0.06], normal: [0, -1], width: 3, bottomY: 2.8 - 0.45, height: 0.9, look }]);
     const out = exteriorGeometry(i);
     expect(areaOf(triangles(out))).toBeCloseTo(10 * 1.2 + 2 * (10 + 1.2) * 0.2, 4); // tope y costados
     expect(Object.keys(out.attributes).sort()).toEqual(['color', 'normal', 'position', 'uv']);

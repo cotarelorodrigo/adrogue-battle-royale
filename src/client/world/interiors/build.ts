@@ -14,7 +14,7 @@ import { PAGE, packSigns, signTexture } from '../signs.ts';
 import type { InteriorKey, WorldMaterials } from '../types.ts';
 import { cutRect, facing, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts';
 import type { Builder, Rect } from '../wall-kit.ts';
-import { lightAt } from './bake.ts';
+import { lightAt, outdoorLight, outdoors } from './bake.ts';
 import { LABEL_DRAWINGS } from './drawings.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassTone } from './glass.ts';
 import { ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
@@ -43,10 +43,13 @@ const unit = (x: number, z: number): Vec2 => {
   return [x / l, z / l];
 };
 
-/** El horneado de un interior: la luz de cada punto (con memoria: las celdas vecinas comparten vértices). */
+/** El horneado de un interior: la luz de cada punto (con memoria: las celdas vecinas comparten vértices). Lo que está al
+ *  aire libre (outdoors: la terraza, el patio, la vereda) lleva la luz de afuera (outdoorLight), dividida por
+ *  INTERIOR_EXPOSURE, que después la multiplica. */
 function baker(i: Interior): (p: Vec3, n: Vec3) => number {
   const memo = new Map<string, number>();
   return (p, n) => {
+    if (outdoors(i, p)) return outdoorLight(n) / INTERIOR_EXPOSURE;
     const key = `${p.map((v) => v.toFixed(3)).join(',')}|${n.map((v) => v.toFixed(2)).join(',')}`;
     let v = memo.get(key);
     if (v === undefined) memo.set(key, (v = lightAt(i, p, n)));

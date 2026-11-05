@@ -66,12 +66,12 @@ function layout(ctx: CanvasRenderingContext2D, text: string, l: Look, maxW: numb
 /** Margen entre carteles del atlas, en px: se rellena con el color del marco para que el filtrado no traiga el vecino. */
 const GUTTER = 4;
 
-/** Fondo, marco y nombre centrado. `width` (m) da la proporción del cartel: width × 0,9. Si no entra en una página
- *  a PX_PER_M, se dibuja más chico (mismo ancho en el mundo). */
-export function signTexture(text: string, look: Look, width: number): HTMLCanvasElement {
-  const k = Math.min(1, (PAGE - 2 * GUTTER) / (width * PX_PER_M));
+/** Fondo, marco y nombre centrado. `width` (m) da la proporción del cartel: width × `height` (SIGN_H). Si no entra en
+ *  una página a PX_PER_M, se dibuja más chico (mismo ancho en el mundo). */
+export function signTexture(text: string, look: Look, width: number, height = SIGN_H): HTMLCanvasElement {
+  const k = Math.min(1, (PAGE - 2 * GUTTER) / (Math.max(width, height) * PX_PER_M));
   const w = Math.max(64, Math.round(width * PX_PER_M * k));
-  const h = Math.max(1, Math.round(SIGN_H * PX_PER_M * (w / Math.max(1, width * PX_PER_M))));
+  const h = Math.max(1, Math.round(height * PX_PER_M * (w / Math.max(1, width * PX_PER_M))));
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -113,14 +113,14 @@ export function packSigns(sizes: { w: number; h: number }[], page = PAGE, gutter
   return { rects, pages };
 }
 
-/** Caja de width × 0,9 × 0,12 centrada en el origen, con el frente hacia +z. La textura va en el frente (y atrás si
- *  `twoSided`); el resto de las caras toma un punto del marco. */
-export function signGeometry(width: number, twoSided = false): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(width, SIGN_H, SIGN_D);
+/** Caja de width × height (0,9) × 0,12 centrada en el origen, con el frente hacia +z. La textura va en el frente (y atrás
+ *  si `twoSided`); el resto de las caras toma un punto del marco. */
+export function signGeometry(width: number, twoSided = false, height = SIGN_H): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(width, height, SIGN_D);
   g.clearGroups();
   const n = g.getAttribute('normal');
   const uv = g.getAttribute('uv');
-  const fu = (FRAME * SIGN_H) / (2 * width), fv = FRAME / 2;
+  const fu = (FRAME * height) / (2 * width), fv = FRAME / 2;
   for (let i = 0; i < n.count; i++) {
     const z = n.getZ(i);
     if (z > 0.5 || (twoSided && z < -0.5)) continue;
@@ -148,7 +148,7 @@ export function buildSigns(places: Place[], signs: Sign[]): THREE.Group {
   for (const s of signs) all.push({ sign: s, look: lookOf(s) });
   if (!all.length) return group;
 
-  const canvases = all.map(({ sign, look }) => signTexture(sign.text, look, sign.width));
+  const canvases = all.map(({ sign, look }) => signTexture(sign.text, look, sign.width, sign.height));
   const { rects, pages } = packSigns(canvases.map((c) => ({ w: c.width, h: c.height })));
   const pageCanvases = pages.map((pg) => {
     const c = document.createElement('canvas');
@@ -164,17 +164,17 @@ export function buildSigns(places: Place[], signs: Sign[]): THREE.Group {
     ctx.fillRect(r.x - GUTTER, r.y - GUTTER, r.w + 2 * GUTTER, r.h + 2 * GUTTER);
     ctx.drawImage(canvases[i], r.x, r.y);
 
-    const { anchor, normal, width, bottomY, blade } = sign;
+    const { anchor, normal, width, bottomY, blade } = sign, height = sign.height ?? SIGN_H;
     const len = Math.hypot(normal[0], normal[1]) || 1;
     const nx = normal[0] / len, nz = normal[1] / len;
-    const g = signGeometry(width, !!blade);
+    const g = signGeometry(width, !!blade, height);
     // UV del cartel (0..1) → su rectángulo de la página (v hacia arriba; el canvas cuenta y hacia abajo)
     const uv = g.getAttribute('uv');
     for (let k = 0; k < uv.count; k++) {
       uv.setXY(k, (r.x + uv.getX(k) * r.w) / pg.w, (pg.h - r.y - r.h + uv.getY(k) * r.h) / pg.h);
     }
     g.applyMatrix4(new THREE.Matrix4().compose(
-      new THREE.Vector3(anchor[0] + nx * (SIGN_D / 2), bottomY + SIGN_H / 2, anchor[1] + nz * (SIGN_D / 2)),
+      new THREE.Vector3(anchor[0] + nx * (SIGN_D / 2), bottomY + height / 2, anchor[1] + nz * (SIGN_D / 2)),
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(nx, nz)), // +z local (el frente) → normal
       new THREE.Vector3(1, 1, 1),
     ));

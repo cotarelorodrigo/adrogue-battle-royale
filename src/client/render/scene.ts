@@ -9,7 +9,7 @@ import type { WorldMaterials } from '../world/types.ts';
 import { OUTDOOR_EXPOSURE } from './exposure.ts';
 import { FAR_PAST_FOG, QUALITY } from './quality.ts';
 import type { Quality } from './quality.ts';
-import { SUN_DIR } from './sun.ts';
+import { SKY_LIGHT, SUN_DIR, SUN_LIGHT } from './sun.ts';
 
 export { SUN_DIR };
 
@@ -85,8 +85,8 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   fadeHorizonToFog(sky.material);
   scene.add(sky);
 
-  scene.add(new THREE.HemisphereLight(0xd8e6ff, 0x80705a, 2.0));
-  const sun = new THREE.DirectionalLight(0xfff0dc, 3.0);
+  scene.add(new THREE.HemisphereLight(SKY_LIGHT.sky, SKY_LIGHT.ground, SKY_LIGHT.intensity));
+  const sun = new THREE.DirectionalLight(SUN_LIGHT.color, SUN_LIGHT.intensity);
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.04;
   sun.shadow.camera.near = 1;

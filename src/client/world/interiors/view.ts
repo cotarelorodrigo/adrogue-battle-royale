@@ -21,7 +21,8 @@ export interface InteriorViews {
   addTapas(placeId: string, meshes: THREE.Mesh[]): void;
   setQuality(q: Quality): void;
   drawn(): string[]; // placeIds del último update
-  /** Si en el último update la cámara estaba adentro de un interior (la misma regla: para la adaptación del ojo). */
+  /** Si en el último update la cámara estaba adentro de un interior y bajo techo (sobre su planta, no en un patio): para
+   *  la adaptación del ojo. */
   inside(): boolean;
   dispose(): void;
 }
@@ -106,7 +107,8 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
       camera.getWorldPosition(eye);
       frustum.setFromProjectionMatrix(viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
       const here = views.find((v) => inside(v, eye));
-      within = here !== undefined;
+      // la exposición de adentro, solo bajo techo: en un patio (o sobre la terraza) se está al sol
+      within = here !== undefined && pointInPolygon([eye.x, eye.z], here.i.footprint);
       if (here) last = [here];
       else {
         // del más cercano al más lejano, mientras entren en `max` y la suma de sus mallas en `calls` (H3)
