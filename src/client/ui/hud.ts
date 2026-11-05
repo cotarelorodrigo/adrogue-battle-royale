@@ -9,6 +9,7 @@
 // Todo es DOM: se reescribe un texto o un estilo solo cuando cambia.
 import { spreadFor, WEAPONS } from '../../shared/combat.ts';
 import type { AmmoId, WeaponId } from '../../shared/combat.ts';
+import type { CollisionWorld } from '../../shared/collision.ts';
 import type { Vec3 } from '../../shared/geo.ts';
 import type { LootItem } from '../../shared/loot.ts';
 import { canTake, MATCH, nearestDrop } from '../../shared/match.ts';
@@ -88,6 +89,8 @@ export interface HudFrame extends CombatFrame {
   scoped: boolean;
   /** Un punto del mundo en píxeles de la pantalla, o null si queda detrás de la cámara. */
   project(p: Vec3): [number, number] | null;
+  /** El mundo de colisiones de la partida: "E: juntar…" pide línea de vista al objeto (D15), como stepMatch. */
+  world: CollisionWorld;
 }
 
 export interface Hud {
@@ -301,7 +304,7 @@ export function createHud(root: HTMLElement): Hud {
     setHidden(scope, !f.scoped);
 
     // lo que juntaría E; si al alcance no hay nada que sirva juntar, apagado, por qué no se puede juntar lo que se mira
-    const drop = nearestDrop(s) ?? nearestDrop(s, { all: true });
+    const drop = nearestDrop(s, f.world) ?? nearestDrop(s, f.world, { all: true });
     setHidden(prompt, !drop);
     if (drop) {
       const take = canTake(s, drop);

@@ -32,7 +32,8 @@ export const MATCH = {
   heal: 50, healTime: 3,
   /** factor de la velocidad de caminar mientras se cura */
   healSlow: 0.5,
-  /** juntar: en planta a menos de pickReach m y mirándolo (coseno > pickCos desde el ojo), o a menos de pickNear m */
+  /** juntar: en planta a menos de pickReach m y mirándolo (coseno > pickCos desde el ojo), o a menos de pickNear m; en
+   *  los dos casos, con línea de vista (D15: ni a través de una pared ni de un vidrio) */
   pickReach: 2.5, pickNear: 1, pickCos: 0.8,
   /** el piso del objeto, a lo sumo a esta altura de los pies: ni el techo de arriba ni la calle de abajo */
   pickDy: 1,
@@ -157,10 +158,11 @@ function bodies(fighters: readonly Fighter[]): Hitbox[] {
 }
 
 /** El objeto que juntaría `use` ahora (para el cartel "E: juntar…"), o null. Con `all`, el más cercano al alcance
- *  aunque no sirva juntarlo (para el cartel que dice que ya se tiene el máximo: ver canTake). */
-export function nearestDrop(s: MatchState, opts: { all?: boolean } = {}): MatchDrop | null {
+ *  aunque no sirva juntarlo (para el cartel que dice que ya se tiene el máximo: ver canTake). `world`: el de la
+ *  partida, para la línea de vista (D15). */
+export function nearestDrop(s: MatchState, world: CollisionWorld, opts: { all?: boolean } = {}): MatchDrop | null {
   if (s.over) return null;
-  return dropInReach(s.drops, s.me.player, s.look, opts.all ? null : (item) => worthTaking(item, s.me.vitals, s.inv));
+  return dropInReach(s.drops, s.me.player, s.look, opts.all ? null : (item) => worthTaking(item, s.me.vitals, s.inv), world);
 }
 
 /** ¿Sirve juntar `d` ahora? Un arma, siempre; la munición, el chaleco y los botiquines, si no se llegó al máximo. */
@@ -181,10 +183,13 @@ function worthTaking(item: LootItem, vitals: Vitals, inv: Inventory): boolean {
 const gaze = (yaw: number, pitch: number): Vec3 => [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
 
 /** El más cercano en planta de los que pasan `take` (null: todos), a menos de pickReach, con el piso a menos de pickDy de
- *  los pies y mirándolo desde el ojo (coseno > pickCos), salvo que esté a menos de pickNear. */
-function dropInReach(drops: readonly MatchDrop[], p: PlayerState, look: MatchState['look'], take: ((item: LootItem) => boolean) | null):
-  MatchDrop | null {
+ *  los pies y mirándolo desde el ojo (coseno > pickCos), salvo que esté a menos de pickNear. Siempre con línea de vista
+ *  (D15): el rayo del ojo al objeto (a dropLift sobre su piso) no choca con nada de `world`, ni con un vidrio (no se junta
+ *  a través de un tabique ni de una vidriera). */
+function dropInReach(drops: readonly MatchDrop[], p: PlayerState, look: MatchState['look'], take: ((item: LootItem) => boolean) | null,
+  world: CollisionWorld): MatchDrop | null {
   const eyeY = p.pos[1] + eyeHeight(p);
+  const eye: Vec3 = [p.pos[0], eyeY, p.pos[2]];
   const g = gaze(look.yaw, look.pitch);
   let best: MatchDrop | null = null;
   let bestD: number = MATCH.pickReach;
@@ -192,10 +197,10 @@ function dropInReach(drops: readonly MatchDrop[], p: PlayerState, look: MatchSta
     const dx = d.pos[0] - p.pos[0], dz = d.pos[2] - p.pos[2];
     const dh = Math.hypot(dx, dz);
     if (dh >= bestD || Math.abs(d.pos[1] - p.pos[1]) > MATCH.pickDy || (take && !take(d.item))) continue;
-    if (dh >= MATCH.pickNear) {
-      const dy = d.pos[1] + MATCH.dropLift - eyeY;
-      if (!(dx * g[0] + dy * g[1] + dz * g[2] > MATCH.pickCos * Math.hypot(dx, dy, dz))) continue;
-    }
+    const dy = d.pos[1] + MATCH.dropLift - eyeY;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dh >= MATCH.pickNear && !(dx * g[0] + dy * g[1] + dz * g[2] > MATCH.pickCos * dist)) continue;
+    if (world.raycast(eye, [dx, dy, dz], dist)) continue;
     best = d;
     bestD = dh;
   }
@@ -363,7 +368,7 @@ export function stepMatch(s: MatchState, input: MatchInput, world: CollisionWorl
   }
 
   // 3. juntar
-  const d = usePressed ? dropInReach(drops, player, look, (item) => worthTaking(item, vitals, inv)) : null;
+  const d = usePressed ? dropInReach(drops, player, look, (item) => worthTaking(item, vitals, inv), world) : null;
   if (d) {
     ({ inv, vitals, drops, nextDropId } = takeDrop(d, inv, vitals, drops, nextDropId));
     events.push({ type: 'pickup', item: d.item });

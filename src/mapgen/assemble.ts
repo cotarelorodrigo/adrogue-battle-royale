@@ -1,9 +1,10 @@
 import { ORIGIN, areaRect, pointInPolygon } from '../shared/geo.ts';
 import type { Vec2, Vec3 } from '../shared/geo.ts';
 import { buildCollisionWorld } from '../shared/collision.ts';
-import type { CollisionWorld } from '../shared/collision.ts';
+import type { CollisionMap, CollisionWorld } from '../shared/collision.ts';
 import { buildInteriors, validateInterior } from '../shared/interiors/index.ts';
 import { doorsOf } from '../shared/interiors/openings.ts';
+import type { Interior } from '../shared/interiors/types.ts';
 import type { Building, MapData, Place, Prop, Sign } from '../shared/mapdata.ts';
 import { parseOsm } from './osm.ts';
 import { applyFrentes, lotSigns } from './frentes.ts';
@@ -138,8 +139,6 @@ export function assembleMap(
   warnings.push(...doorWarnings([...fr.plantas.values()], map.buildings));
   warnings.push(...platformWarnings(map.buildings, map.platforms));
 
-  // los lugares todavía no tienen spawn, pero la estación ya ubica sus postes: el mundo es el mismo que el del juego
-  const world = buildCollisionWorld({ ...map, places: matched.places.map((p) => ({ type: p.type, position: v2(p.position) })) });
   const bare = matched.places.map((p0): Omit<Place, 'spawn'> => ({
     ...p0,
     position: v2(p0.position),
@@ -150,7 +149,10 @@ export function assembleMap(
   warnings.push(...interiors.warnings);
   map.interiors = interiors.inputs;
   // cada interior armado cumple §2.1 y §2.3 (escalones, dinteles, barandas, espesores, muebles y planta)
-  for (const i of buildInteriors(map)) warnings.push(...validateInterior(i));
+  const armed = buildInteriors(map);
+  for (const i of armed) warnings.push(...validateInterior(i));
+  // los lugares todavía no tienen spawn, pero la estación ya ubica sus postes; los edificios con interior, macizos
+  const world = placementWorld({ ...map, places: matched.places.map((p) => ({ type: p.type, position: v2(p.position) })) }, armed);
   const byId = new Map(map.buildings.map((b) => [b.id, b]));
   const claims = map.interiors.flatMap((i) => [byId.get(i.buildingId)!.footprint, ...i.patios]);
   // las apariciones quedan afuera: ni en la planta ni en un patio de un interior
@@ -181,6 +183,16 @@ export function assembleMap(
   map.lootSpots = loot.spots;
   warnings.push(...loot.warnings);
   return { map, warnings, stats, pockets: holes.stats, report: fr.report };
+}
+
+/**
+ * El mundo donde se ubican las apariciones, el spawn de cada lugar y el botín de la calle y de los techos: el del juego
+ * pero con cada edificio macizo (sin `interiors`: un prisma lleno hasta su techo), más el tronco de cada árbol de los
+ * patios de `interiors` (Interior.trees, H10 de la T9). Los troncos quedan afuera de la planta, así que son obstáculos
+ * en los dos mundos; los muebles del patio, no (las apariciones no caen en un patio y la calle no pasa por ahí).
+ */
+export function placementWorld(map: CollisionMap, interiors: readonly Interior[]): CollisionWorld {
+  return buildCollisionWorld({ ...map, interiors: [], trees: [...map.trees, ...interiors.flatMap((i) => i.trees)] });
 }
 
 /**

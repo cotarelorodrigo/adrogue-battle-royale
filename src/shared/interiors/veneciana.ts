@@ -265,9 +265,9 @@ function toldo(k: Kit, L: (d: number, p: number) => Vec2, d0: number, d1: number
 }
 
 /** En la vereda de Espora, delante del frente (V < 0): dos juegos de sombrilla roja, mesita y cuatro sillas director
- *  rojas, del lado sur de la puerta y en la esquina con el AutoHelado: lejos del botín (que va en arco delante de la
- *  puerta), de la vista `vidrieras` y del contenedor de la 2a (del lado norte, en U 11,4–13,2). Las mesitas van `out`
- *  (sin sólido); lo demás, con el interior. */
+ *  rojas, del lado sur de la puerta y en la esquina con el AutoHelado: lejos del camino del spawn del lugar a la puerta,
+ *  de la vista `vidrieras` y del contenedor de la 2a (del lado norte, en U 11,4–13,2). Las mesitas van `out` (sin
+ *  sólido); lo demás, con el interior. */
 function vereda(k: Kit): void {
   for (const c of [[0.6, -2.6], [-2.6, -2.6]] as Vec2[]) {
     k.block(Array.from({ length: 12 }, (_, j) => add(c, [0.33 * Math.cos((Math.PI * j) / 6), 0.33 * Math.sin((Math.PI * j) / 6)])), 0.72, 0.75, 'none', 'otro', { top: MESITA, side: MESITA, bottom: MESITA }, true);

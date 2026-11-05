@@ -24,6 +24,8 @@ const DIR = 'test-results/perf';
 // Desde la etapa 2a cada punto se mide dentro de una partida con semilla fija (PERF_SEED, 42), con el botín, los
 // maniquíes y la zona que haya a la vista, más la parada "combate": el peor caso del combate. Máximos medidos el
 // 2026-11-04: baja 116 / 123.590, media 226 / 228.955 (los dos en "combate"), alta 338 / 271.045 (Esteban Adrogué).
+// Desde la etapa 2b el recorrido suma 3 paradas adentro (cultura-atrio, mcdonalds-salon y veneciana-vidrieras, las
+// vistas de sus interiores): entran en los mismos topes, que no se tocaron.
 const BUDGET: Record<Quality, { drawCalls: number; triangles: number }> = {
   baja: { drawCalls: 130, triangles: 130_000 },
   media: { drawCalls: 245, triangles: 230_000 },
@@ -39,7 +41,7 @@ function dirSize(dir: string): number {
 }
 
 function check(q: Quality, id: string, s: DebugStats): void {
-  const row = [q.padEnd(5), id.padEnd(15), `${String(s.drawCalls).padStart(4)} draw calls`,
+  const row = [q.padEnd(5), id.padEnd(20), `${String(s.drawCalls).padStart(4)} draw calls`,
     `${String(s.triangles).padStart(8)} triángulos`, `${s.fps.toFixed(1)} fps`];
   console.log(row.join(' '));
   expect(s.drawCalls, `${q}/${id}`).toBeLessThanOrEqual(BUDGET[q].drawCalls);

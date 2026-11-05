@@ -54,7 +54,7 @@ function frame(state: MatchState, over: Partial<HudFrame> = {}): HudFrame {
   const p = state.me.player.pos;
   return {
     state, cam: { pos: [p[0], p[1] + 1.65, p[2]], yaw: state.look.yaw, pitch: state.look.pitch }, now: 1000, events: [],
-    fov: 75, scoped: false, project: () => [400, 300], ...over,
+    fov: 75, scoped: false, project: () => [400, 300], world, ...over,
   };
 }
 
@@ -104,7 +104,7 @@ test('el cartel "E: juntar escopeta" aparece cuando nearestDrop es una escopeta'
     c.look = { yaw: 0, pitch: -0.7 }; // mirando abajo y adelante (−z)
     c.drops = [{ id: 1, pos: [0, 0, -1.5], item: { kind: 'arma', weapon: 'escopeta' } }];
   });
-  expect(nearestDrop(s)?.item).toEqual({ kind: 'arma', weapon: 'escopeta' });
+  expect(nearestDrop(s, world)?.item).toEqual({ kind: 'arma', weapon: 'escopeta' });
   hud.combat(frame(s));
   expect(shown('hud-juntar')).toBe(true);
   expect(text('hud-juntar')).toBe('E: juntar escopeta');
@@ -113,6 +113,20 @@ test('el cartel "E: juntar escopeta" aparece cuando nearestDrop es una escopeta'
     c.drops = [];
   })));
   expect(shown('hud-juntar')).toBe(false);
+});
+
+test('el cartel "E: juntar" no sale si una pared o un vidrio tapan el objeto (D15): usa el mundo del cuadro', () => {
+  const s = mod(atOrigin(start()), (c) => {
+    c.look = { yaw: 0, pitch: -0.7 };
+    c.drops = [{ id: 1, pos: [0, 0, -1.5], item: { kind: 'chaleco' } }];
+  });
+  hud.combat(frame(s));
+  expect(text('hud-juntar')).toBe('E: juntar chaleco');
+  for (const tag of [undefined, 'glass:b1']) {
+    const wall = new CollisionWorld([{ polygon: [[-2, -0.8], [2, -0.8], [2, -0.7], [-2, -0.7]], minY: 0, maxY: 3, ...(tag ? { tag } : {}) }], [], bounds);
+    hud.combat(frame(s, { world: wall }));
+    expect(shown('hud-juntar'), tag ?? 'tabique').toBe(false);
+  }
 });
 
 test('el cartel nombra la munición, el chaleco y el botiquín', () => {

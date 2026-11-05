@@ -22,7 +22,7 @@ Abrí <http://localhost:5173> y hacé click en **Hacé click para jugar**: arran
 ### La partida
 
 Aparecés sin armas en un punto al azar, con 11 maniquíes repartidos por el centro (12 jugadores en total). Los
-maniquíes no se mueven ni disparan: tienen vida 100 y algunos, chaleco. En la calle, en los techos y frente a los
+maniquíes no se mueven ni disparan: tienen vida 100 y algunos, chaleco. En la calle, en los techos y adentro de los
 lugares hay botín: armas (pistola, escopeta, rifle y francotirador), munición, chalecos y botiquines. La zona se achica
 en 5 fases y se cierra del todo a los 12 minutos; afuera se pierde vida, y también la pierden los maniquíes. Ganás si
 quedás último en pie; si te eliminan, ves cuántos quedaban. En los dos casos, **Jugar de nuevo** arranca otra partida.
@@ -43,7 +43,7 @@ maniquíes y sin botín. Para volver a jugar, **Jugar una partida** en el menú 
 | Clic izquierdo | disparar (el rifle sigue disparando mientras lo mantenés; las otras, un tiro por clic) |
 | Clic derecho | apuntar: acerca la vista y achica la dispersión; con el francotirador, mira telescópica |
 | R | recargar (con el cargador vacío, también recarga apretar el gatillo) |
-| E | juntar lo que tenés adelante, a menos de 2,5 m (aparece "E: juntar…") |
+| E | juntar lo que tenés adelante, a menos de 2,5 m y a la vista: no a través de una pared ni de un vidrio (aparece "E: juntar…") |
 | 1, 2 o la rueda | cambiar de arma (la rueda: hacia arriba la 1, hacia abajo la 2); la que sacás tarda 0,25 s en poder disparar |
 | H | usar un botiquín: tarda 3 s y cura 50 (disparar o cambiar de arma lo corta) |
 | M | lugares: pasar al modo paseo en uno de los 38 lugares, o en uno al azar |
@@ -65,6 +65,26 @@ Dos parámetros de la dirección cambian la partida:
   da la misma partida; **Jugar de nuevo** sigue con N + 1, N + 2… Sin semilla, se elige una al azar.
 
 Por ejemplo, <http://localhost:5173/?maniquis=2&semilla=7>.
+
+## Lugares con interior
+
+Nueve lugares se recorren por adentro. Se entra por sus puertas de verdad (el menú de lugares te deja en la vereda,
+frente a la principal) y se sube por las escaleras a los pisos públicos; lo de arriba queda cerrado. Las paredes, las
+losas y los muebles frenan como cualquier pared. Los vidrios y las barandas frenan al jugador, pero no a las balas.
+
+| Lugar | Qué hay adentro |
+|---|---|
+| Banco Nación, Galicia y BBVA | el vestíbulo de los cajeros automáticos y, pasando la pared de vidrio, el salón: la fila de espera, el turnero, los escritorios, la línea de cajas con sus mamparas y, al fondo, la puerta redonda del tesoro (dibujada: no se abre) |
+| Casa de la Cultura | el hall con la mesa de informes, el atrio con el lucernario y el plafón de colores, los balcones de los pisos 1 y 2, las salas de muestras, el auditorio con su escenario y la Sala 3 arriba |
+| McDonald's (Espora) | el salón con la barra, los sillones y las mesas, el mostrador con las pantallas de menú, la cocina, el pasillo de los baños y el patio del fondo con mesas de picnic |
+| Cine Pixel | el hall con los afiches y el candy bar, y las dos salas a oscuras con sus gradas de butacas |
+| La Veneciana (Espora) | el salón vidriado con el mostrador y la vitrina de helados, el metegol y, por la escalera, la terraza con sombrillas |
+| Guernica Bar | la barra con las canillas y los estantes de botellas, las mesas, la planta alta con el escenario, el balcón y el patio de adelante con sus jacarandás |
+| Estación Adrogué | el hall de la boletería con sus ventanillas, la terminal SUBE y el mural, y el patio de los molinetes con la escalera al andén |
+
+En la partida, el botín de los lugares está adentro. Hay entre 4 y 12 objetos por lugar, uno cada 40 m² de piso
+público (contando la terraza de La Veneciana), y se reparten parejo por sus pisos: el primero, lo más lejos posible de
+la puerta. Para juntar algo hay que verlo: no se junta a través de una pared ni de un vidrio.
 
 ## Regenerar el mapa
 
@@ -181,6 +201,36 @@ en el mapa.
 Street View se usa solo para mirar. Ninguna captura de Google entra al repo ni al juego: los colores y los textos se
 copian a mano en el JSON.
 
+## Relevar más lugares: `data/plantas.json`
+
+Los lugares que no tienen lote en `data/frentes.json` (porque caen en un bloque de Microsoft que junta varios
+edificios) llevan su planta relevada en `data/plantas.json`. Cada entrada de `plantas` es un lugar:
+
+| Campo | Qué es |
+|---|---|
+| `lugar` | el id de `data/places.json`; tiene que estar en `SIN_LOTE` (`src/mapgen/plantas-input.ts`) |
+| `fecha` | `AAAA-MM` de las imágenes que se miraron |
+| `marco` | dónde está el origen de la planta: `{ "lat", "lon", "rumbo" }` (el rumbo, en grados desde el norte en sentido horario, es la dirección de U) o `{ "calle", "vereda", "desde", "hasta", "s" }` (sobre la línea de edificación de esa vereda, a `s` m de `desde`) |
+| `planta` | los vértices `[u, v]` en metros (de −200 a 200): u a lo largo del frente y v hacia adentro; de 3 a 60 m de fondo en v |
+| `frente` | los índices de las aristas de `planta` que dan a la calle, seguidas (la arista `i` va del punto `i` al `i + 1`); juntas miden hasta 60 m |
+| `patios` | lista de polígonos `[u, v]` afuera de la planta, sin losa ni techo, que amuebla el interior |
+| `despejes` | lista de polígonos `[u, v]` de suelo que solo se le saca a los bloques de Microsoft (una vereda o un pasillo que tapaban) |
+| `reemplaza` | ids de bloques de Microsoft (`"b0714"`) que se borran enteros |
+| `puertas` | `{ "arista", "centro", "ancho", "alto", "piso" }`: `centro` en metros desde el punto `arista`; al menos 1,0 × 2,2 m y 0,2 m libres en cada punta de la arista. La primera es la principal y va en el piso 0 |
+| `vidrios` | `{ "arista", "desde", "hasta", "abajo", "arriba", "piso" }`: de `desde` a `hasta` m a lo largo de la arista, de `abajo` a `arriba` m sobre su piso; no se pisa con una puerta |
+| `escalera` | `{ "arista", "centro" }`: dónde va la escalera de mano al techo, en una arista que no sea del frente (sin esto, va en una punta del frente) |
+
+Además lleva el aspecto con los mismos campos que un lote (`pisos`, `alto`, `color`, `colorPB`, `material`, `pb`,
+`arriba`, `puerta`, `toldo`, `cartel`, `nota`; ver la tabla de "Corregir un frente de Esteban Adrogué"). `pisos` es
+obligatorio y `alto` (opcional) tiene que dar para esos pisos: al menos `pisos` × 3,2 + 0,6 m. `puerta` tiene que
+pintar la puerta en la bahía de la puerta principal (si no, el error dice cuál usar).
+
+Un error de formato corta el `build:map` sin escribir el mapa, con el lugar y el campo que fallaron. Con la planta, el
+lugar ya se entra por sus puertas a una caja vacía de un piso; sus muebles, escaleras y pisos de arriba salen de su plan
+en `src/shared/interiors/` (uno por lugar, anotado en `INTERIOR_PLANS` de `index.ts`). Después de tocar el JSON,
+`npm run build:map` hasta que termine sin avisos: entre otras cosas avisa si no entran los puntos de botín adentro
+(`<lugar>: entran k de n puntos de botín adentro`).
+
 ## Medir el rendimiento en otra notebook
 
 Con `?bench=1` el juego no espera al jugador: la cámara recorre sola, siempre igual, la estación, Esteban Adrogué,
@@ -218,4 +268,7 @@ npm run e2e         # Playwright con Chrome; deja capturas en test-results/
 ```
 
 Los e2e dibujan con SwiftShader (WebGL por software): los fps que dan ahí no dicen nada de una placa de video de
-verdad. Lo que vigilan son los draw calls y los triángulos por calidad (`e2e/perf.spec.ts`).
+verdad. Lo que vigilan son los draw calls y los triángulos por calidad (`e2e/perf.spec.ts`). Como dibujan con la CPU,
+corren de a 2 navegadores (`workers` en `playwright.config.ts`); con más, el juego va tan lento que los tests largos se
+pasan de tiempo. La suite entera tarda de 7 a 8 minutos. `e2e/interiors.spec.ts` entra a los 9 lugares con interior y
+deja una captura de cada uno en `test-results/interiores/`.

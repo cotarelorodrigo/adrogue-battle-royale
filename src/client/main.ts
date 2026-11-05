@@ -447,7 +447,7 @@ async function run(boot: Boot): Promise<void> {
     scene.render();
     if (f) {
       viewmodel.render(); // encima del mundo, en el mismo cuadro (con la exposición de la calle): renderer.info suma las dos pasadas
-      hud.combat({ ...f, fov, scoped: scopeShown(f.state, fov, FOV), project: scene.project });
+      hud.combat({ ...f, fov, scoped: scopeShown(f.state, fov, FOV), project: scene.project, world });
       const over = f.state.over;
       if (over && !overShown) {
         overShown = true;

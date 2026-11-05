@@ -6,6 +6,7 @@ import { buildCollisionWorld } from '../src/shared/collision.ts';
 import { hitscan } from '../src/shared/combat.ts';
 import { signedAreaFromAbove } from '../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../src/shared/geo.ts';
+import { interiorOf } from '../src/shared/interiors/index.ts';
 import type { MapData } from '../src/shared/mapdata.ts';
 import { MATCH, newMatch } from '../src/shared/match.ts';
 import { PLAYER } from '../src/shared/player.ts';
@@ -47,6 +48,14 @@ export function tallestRoof(): Vec3 {
 /** Un punto del recorrido de medición: un lugar (teletransporte) o una posición y hacia dónde mirar. */
 export type TourStop = { id: string } & ({ place: string } | { pos: Vec3; yaw: number });
 
+/** La vista `viewId` del interior de `placeId` (Interior.views: los pies y hacia dónde mirar, con la convención del
+ *  TOUR). Tira si el lugar no tiene esa vista. */
+export function interiorView(placeId: string, viewId: string): { pos: Vec3; yaw: number } {
+  const v = interiorOf(map, placeId).views.find((x) => x.id === viewId);
+  if (!v) throw new Error(`${placeId}: el interior no tiene la vista "${viewId}"`);
+  return { pos: v.pos, yaw: v.yaw };
+}
+
 /** Los puntos de los presupuestos de rendimiento. yaw 0 mira a −z; π/2, a −x. */
 export const TOUR: TourStop[] = [
   { id: 'estacion', place: 'estacion-adrogue' },
@@ -61,6 +70,11 @@ export const TOUR: TourStop[] = [
   { id: 'borde', pos: eastEdge(), yaw: Math.PI / 2 },
   // frente relevado más cargado (Mitre–Pellerano, vereda sur), de cerca: lotes con cartel, toldo y fachada propia
   ...faceStops().filter((s) => s.id === 'frente-ea-mitre-pellerano-s'),
+  // adentro (§2.6 de la etapa 2b): el atrio de la Casa de la Cultura con sus balcones y el lucernario, el salón del
+  // McDonald's y las vidrieras de La Veneciana, con la calle por el vidrio
+  { id: 'cultura-atrio', ...interiorView('casa-de-la-cultura', 'atrio') },
+  { id: 'mcdonalds-salon', ...interiorView('mcdonalds', 'salon') },
+  { id: 'veneciana-vidrieras', ...interiorView('la-veneciana', 'vidrieras') },
 ];
 
 /** Ids de los frentes relevados en `data/frentes.json`. */

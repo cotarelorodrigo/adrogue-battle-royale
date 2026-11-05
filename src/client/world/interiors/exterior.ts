@@ -66,7 +66,7 @@ export const exteriorSigns = (i: Interior): Sign[] => i.labels.filter((l) => l.o
 }));
 
 /** Los lugares cuyo interior trae su propio cartel (un `out` con placeSign): el del lote (Place.sign) no se dibuja, así
- *  no queda uno encima del otro. Place.sign sigue en el mapa: de él salen el botín y el spawn del frente. */
+ *  no queda uno encima del otro. Place.sign sigue en el mapa: de él sale la fachada del lugar (place-facades.ts). */
 export const ownSignPlaces = (interiors: Interior[]): Set<string> =>
   new Set(interiors.filter((i) => i.labels.some((l) => l.out && l.placeSign)).map((i) => i.placeId));
 

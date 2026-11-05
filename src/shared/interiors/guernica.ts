@@ -88,10 +88,11 @@ const MESAS_ALTAS: Vec2[] = [[7.8, 4.2], [7.8, 7.6]];
 const BALCON = { u0: 2.6, u1: 9.4, sale: 1.8 } as const;
 /** La chapa del cartel, arriba de las ventanas del piso 1 (llegan a 5,8): no llega a la escalera de mano de U 11,4. */
 const CHAPA_R = { u0: 0.4, u1: 10.8, y0: 5.9, y1: 6.95 } as const;
-/** El patio: los árboles (lejos del camino a la puerta, de los 2,5 m libres del spawn del lugar, en U 3,1, V −5,1, y del
- *  botín del frente: mapgen lo ubica en el mundo sin interiores y lootSpots, en el de los tests, pide 0,8 m libres; el
- *  tronco del mapa tiene 0,3 m de radio) y los postes de las guirnaldas. Son jacarandás chicos, como los de la calle (en
- *  noviembre, florecidos): la copa, de 1,8 a 4,9 m y de 4,3 m de ancho, no llega a la baranda del balcón (V −1,75). */
+/** El patio: los árboles (lejos del camino a la puerta y de los 2,5 m libres del spawn del lugar, en U 3,1, V −5,1; el
+ *  tronco del mapa tiene 0,3 m de radio y mapgen lo ve: el mundo de prismas llenos donde ubica las apariciones y el
+ *  botín de afuera suma los troncos de los patios, placementWorld) y los postes de las guirnaldas. Son jacarandás chicos,
+ *  como los de la calle (en noviembre, florecidos): la copa, de 1,8 a 4,9 m y de 4,3 m de ancho, no llega a la baranda
+ *  del balcón (V −1,75). */
 const ARBOLES: Vec2[] = [[7.8, -3.7], [13.6, -2.6]];
 const ARBOL = { variant: 2, scale: 0.62 } as const;
 const POSTES_V = -4.2, POSTES_U = [0.4, 3.4, 6.4, 9.4, 12.4], GUIRNALDA_Y = 2.9;

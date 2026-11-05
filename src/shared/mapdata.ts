@@ -39,9 +39,10 @@ export type Prop =
   | { kind: 'fountain'; position: Vec2; radius: number }
   | { kind: 'monument'; placeId: string; position: Vec2; style: 'equestrian'|'statue'|'column' };
 export interface Tree { position: Vec2; variant: 0|1|2; scale: number }
-/** Nivel de un punto de botín (spec 2a §5): vereda, techo alcanzable o frente de un lugar entrable. */
+/** Nivel de un punto de botín (spec 2a §5): vereda, techo alcanzable o adentro de un lugar entrable (su interior, D11). */
 export type LootTier = 'calle' | 'techo' | 'lugar';
-/** Punto de botín: `pos` es el piso donde se apoya el objeto (y = 0 en la calle, el alto del techo arriba). */
+/** Punto de botín: `pos` es el piso donde se apoya el objeto (y = 0 en la calle, el alto del techo arriba y, adentro de
+ *  un lugar, el de su piso público: 3,2 en un primer piso, el alto del edificio en la terraza). */
 export interface LootSpot { pos: Vec3; tier: LootTier }
 export interface MapData { version: 1; origin: { lat: number; lon: number }; bounds: Bounds;
   buildings: Building[]; outskirts: OutskirtBuilding[]; roads: Road[]; railways: Vec2[][];

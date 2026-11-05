@@ -4,6 +4,7 @@ import { isFatalWarning } from '../src/mapgen/spawns.ts';
 import { loadPlaces } from '../src/mapgen/places-input.ts';
 import { loadFrentes } from '../src/mapgen/frentes-input.ts';
 import { SIN_LOTE, loadPlantas } from '../src/mapgen/plantas-input.ts';
+import { buildInteriors } from '../src/shared/interiors/index.ts';
 
 const OUT = 'public/map/adrogue.map.json';
 const MAX_KB = 3 * 1024;
@@ -42,7 +43,10 @@ console.log(`fachadas de lugar: ${facades.length} (${count(facades.map((f) => ({
 const lots = map.buildings.filter((b) => b.front);
 console.log(`frentes: ${frentes.frentes.length}, lotes: ${lots.length}, carteles de lotes: ${map.signs.length + map.places.filter((p) => lots.some((b) => b.id === p.buildingId)).length}`);
 console.log(`plantas: ${plantas.length} (de ${SIN_LOTE.length})`);
-console.log(`interiores: ${map.interiors.length}, puertas: ${map.interiors.reduce((n, i) => n + i.openings.filter((o) => o.kind === 'puerta').length, 0)}`);
+const interiors = buildInteriors(map);
+const sum = (f: (i: (typeof interiors)[number]) => number): number => interiors.reduce((n, i) => n + f(i), 0);
+console.log(`interiores: ${interiors.length} (bloques=${sum((i) => i.blocks.length)}, ítems=${sum((i) => i.items.length)}), botín lugar=${map.lootSpots.filter((s) => s.tier === 'lugar').length}`);
+console.log(`  puertas: ${sum((i) => i.doors.length)}`);
 for (const l of report) console.log(`  ${l}`);
 console.log(`warnings: ${warnings.length}`);
 for (const w of warnings) console.log(`  - ${w}`);

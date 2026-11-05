@@ -10,8 +10,10 @@ const DIR = 'test-results/tour';
 const PLACES = ['estacion-adrogue', 'plaza-almirante-brown', 'banco-nacion', 'mcdonalds', 'la-veneciana', 'cine-pixel',
   'casa-de-la-cultura', 'guernica-bar'];
 
-// SwiftShader: cada lugar nuevo compila shaders y sube texturas; subir 23 m por la escalera lleva ~8 s de juego.
-test.describe.configure({ timeout: 300_000 });
+// SwiftShader: cada lugar nuevo compila shaders y sube texturas; subir 23 m por la escalera lleva ~8 s de juego. Con los
+// frentes relevados y los interiores tarda 3,7 min sola y de 3,9 a 4,2 min en la suite con 2 workers (2026-11-05): el
+// tope deja casi el doble.
+test.describe.configure({ timeout: 480_000 });
 
 type Ladder = Extract<Prop, { kind: 'ladder' }>;
 

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { CollisionWorld, buildCollisionWorld } from '../../src/shared/collision.ts';
+import { CollisionWorld, GLASS_TAG, buildCollisionWorld } from '../../src/shared/collision.ts';
 import { AMMO_BOX, AMMO_MAX, BODY_RADIUS, WEAPONS, newGun } from '../../src/shared/combat.ts';
 import type { WeaponId } from '../../src/shared/combat.ts';
 import { SIM_HZ } from '../../src/shared/fixed-step.ts';
@@ -210,17 +210,17 @@ describe('juntar', () => {
       drop(2, [0.6, 0, -1.5], { kind: 'municion', ammo: 'cartuchos' }),
     ]);
     s = step(s, DOWN);
-    expect(nearestDrop(s)?.id).toBe(1);
+    expect(nearestDrop(s, world)?.id).toBe(1);
     s = tap(s, { use: true }, DOWN);
     expect(s.inv.slots[0]).toMatchObject({ id: 'escopeta', inMag: WEAPONS.escopeta.mag, reloadUntil: null });
     expect(s.inv.slots[1]).toBeNull();
     expect(s.drops.map((d) => d.id)).toEqual([2]);
-    expect(nearestDrop(s)?.id).toBe(2);
+    expect(nearestDrop(s, world)?.id).toBe(2);
     s = step(s, { ...DOWN, use: true });
     expect(s.events).toEqual([{ type: 'pickup', item: { kind: 'municion', ammo: 'cartuchos' } }]);
     expect(s.inv.ammo.cartuchos).toBe(AMMO_BOX.cartuchos);
     expect(s.drops).toEqual([]);
-    expect(nearestDrop(s)).toBeNull();
+    expect(nearestDrop(s, world)).toBeNull();
   });
 
   test('E junta una vez por toque, aunque quede apretada', () => {
@@ -230,7 +230,7 @@ describe('juntar', () => {
   });
 
   test('hay que mirarlo, salvo que esté a menos de 1 m; a 2,5 m o más no se junta', () => {
-    const at = (pos: Vec3, look: Partial<MatchInput>) => nearestDrop(step(withDrops(setup(), [drop(1, pos, { kind: 'chaleco' })]), look));
+    const at = (pos: Vec3, look: Partial<MatchInput>) => nearestDrop(step(withDrops(setup(), [drop(1, pos, { kind: 'chaleco' })]), look), world);
     expect(at([0, 0, -2], DOWN)).not.toBeNull();
     expect(at([0, 0, -2], { pitch: 0.7 })).toBeNull(); // mirando arriba
     expect(at([0, 0, 2], DOWN)).toBeNull(); // detrás
@@ -247,7 +247,7 @@ describe('juntar', () => {
     expect(s.inv.slots.map((g) => g?.id)).toEqual(['escopeta', 'pistola']);
     expect(s.drops).toEqual([{ id: 6, pos: [0, 0, -1.5], item: { kind: 'arma', weapon: 'rifle' }, inMag: 7 }]);
     expect(s.nextDropId).toBe(7);
-    expect(nearestDrop(s)?.id).toBe(6);
+    expect(nearestDrop(s, world)?.id).toBe(6);
     // se puede volver a juntar: vuelve con sus 7 balas y la escopeta queda en el piso
     s = tap(s, { use: true }, DOWN);
     expect(s.inv.slots[0]).toMatchObject({ id: 'rifle', inMag: 7 });
@@ -263,13 +263,64 @@ describe('juntar', () => {
   });
 });
 
+// D15 (Review Focus 4): juntar pide línea de vista. El jugador en el origen mira a −z un chaleco a 1,2 m (el piso del
+// objeto a 1,2 m en planta, mirado a su altura de flotar); en el medio, nada, un tabique de 0,1 m o un vidrio.
+describe('juntar pide línea de vista', () => {
+  /** Una placa de 0,1 m de espesor y 3 m de alto, de x −2 a 2, entre z0 − 0,1 y z0 (el tag de vidrio la hace vidrio). */
+  const plate = (z0: number, tag?: string): CollisionWorld =>
+    new CollisionWorld([{ polygon: [[-2, z0 - 0.1], [2, z0 - 0.1], [2, z0], [-2, z0]], minY: 0, maxY: 3, ...(tag ? { tag } : {}) }], [], bounds);
+  const tabique = plate(-0.55), vidrio = plate(-0.55, `${GLASS_TAG}b1`);
+  const LOOK: Partial<MatchInput> = { pitch: pitchTo(MATCH.dropLift, 1.2) };
+  /** El chaleco a `d` m adelante, con la mirada puesta (un paso quieto en el mundo `w`). */
+  const facing = (w: CollisionWorld, d = 1.2, look = LOOK): MatchState =>
+    step(withDrops(setup(), [drop(1, [0, 0, -d], { kind: 'chaleco' })]), look, w);
+  /** Apretar y soltar E en el mundo `w`. */
+  const useIn = (s: MatchState, w: CollisionWorld, look = LOOK): MatchState => step(step(s, { ...look, use: true }, w), look, w);
+
+  test('sin nada en el medio, nearestDrop da el chaleco y E lo junta', () => {
+    const s = facing(open);
+    expect(nearestDrop(s, open)?.id).toBe(1);
+    const t = useIn(s, open);
+    expect(t.me.vitals.armor).toBe(MATCH.armorPickup);
+    expect(t.drops).toEqual([]);
+  });
+
+  test('con un tabique de 0,1 m en el medio, nearestDrop da null y E no lo junta', () => {
+    const s = facing(tabique);
+    expect(nearestDrop(s, tabique)).toBeNull();
+    expect(nearestDrop(s, tabique, { all: true })).toBeNull(); // tampoco el cartel apagado
+    const t = useIn(s, tabique);
+    expect(t.me.vitals.armor).toBe(0);
+    expect(t.drops.map((d) => d.id)).toEqual([1]);
+    expect(t.events).toEqual([]);
+  });
+
+  test('con un vidrio en el medio, también null: el vidrio corta la línea de vista aunque lo atraviesen las balas', () => {
+    const s = facing(vidrio);
+    expect(nearestDrop(s, vidrio)).toBeNull();
+    expect(useIn(s, vidrio).drops.map((d) => d.id)).toEqual([1]);
+  });
+
+  test('a menos de pickNear (sin mirarlo) también hace falta: a 0,8 m detrás de un tabique, null', () => {
+    const near = plate(-0.4);
+    const up: Partial<MatchInput> = { pitch: 0.7 };
+    expect(nearestDrop(facing(open, 0.8, up), open)?.id).toBe(1);
+    expect(nearestDrop(facing(near, 0.8, up), near)).toBeNull();
+  });
+
+  test('un tabique que no corta el rayo (al costado) no molesta', () => {
+    const side = new CollisionWorld([{ polygon: [[0.5, -1.5], [0.6, -1.5], [0.6, 0], [0.5, 0]], minY: 0, maxY: 3 }], [], bounds);
+    expect(nearestDrop(facing(side), side)?.id).toBe(1);
+  });
+});
+
 describe('munición, chaleco y botiquines', () => {
   test('una caja de munición no pasa de AMMO_MAX; con el máximo, queda en el piso', () => {
     let s = mod(setup(), (c) => { c.inv.ammo.liviana = AMMO_MAX.liviana - 10; });
     s = withDrops(s, [drop(1, [0, 0, -1.5], { kind: 'municion', ammo: 'liviana' }), drop(2, [0.4, 0, -1.6], { kind: 'municion', ammo: 'liviana' })]);
     s = tap(s, { use: true }, DOWN);
     expect(s.inv.ammo.liviana).toBe(AMMO_MAX.liviana);
-    expect(nearestDrop(s)).toBeNull();
+    expect(nearestDrop(s, world)).toBeNull();
     s = tap(s, { use: true }, DOWN);
     expect(s.drops.map((d) => d.id)).toEqual([2]);
   });
@@ -289,16 +340,16 @@ describe('munición, chaleco y botiquines', () => {
   test('canTake dice si sirve juntarlo; nearestDrop con all también ve lo que no (para el cartel de "lleno")', () => {
     let s = mod(setup(), (c) => { c.inv.ammo.cartuchos = AMMO_MAX.cartuchos; });
     s = step(withDrops(s, [drop(1, [0, 0, -1.5], { kind: 'municion', ammo: 'cartuchos' })]), DOWN);
-    expect(nearestDrop(s)).toBeNull();
-    const d = nearestDrop(s, { all: true })!;
+    expect(nearestDrop(s, world)).toBeNull();
+    const d = nearestDrop(s, world, { all: true })!;
     expect(d.id).toBe(1);
     expect(canTake(s, d)).toBe(false);
-    expect(nearestDrop(step(s, { pitch: 0.7 }), { all: true })).toBeNull(); // las mismas reglas de alcance: mirando arriba, nada
+    expect(nearestDrop(step(s, { pitch: 0.7 }), world, { all: true })).toBeNull(); // las mismas reglas de alcance: mirando arriba, nada
     s = mod(s, (c) => { c.inv.ammo.cartuchos = 0; });
     expect(canTake(s, d)).toBe(true);
-    expect(nearestDrop(s)?.id).toBe(1);
+    expect(nearestDrop(s, world)?.id).toBe(1);
     expect(canTake(s, { ...d, item: { kind: 'arma', weapon: 'rifle' } })).toBe(true); // un arma, siempre
-    expect(nearestDrop(mod(s, (c) => { c.over = { won: false, alive: 0, at: c.t }; }), { all: true })).toBeNull();
+    expect(nearestDrop(mod(s, (c) => { c.over = { won: false, alive: 0, at: c.t }; }), world, { all: true })).toBeNull();
   });
 
   test('se guardan hasta 3 botiquines: el cuarto queda en el piso', () => {
@@ -307,7 +358,7 @@ describe('munición, chaleco y botiquines', () => {
     expect(s.inv.medkits).toBe(MATCH.medkitsMax);
     expect(s.drops).toHaveLength(1);
     expect(s.drops[0].item).toEqual({ kind: 'botiquin' });
-    expect(nearestDrop(s)).toBeNull();
+    expect(nearestDrop(s, world)).toBeNull();
   });
 });
 
@@ -729,6 +780,6 @@ describe('zona', () => {
       expect(s.events).toEqual([]);
       expect({ ...s, t: 0 }).toEqual(frozen);
     }
-    expect(nearestDrop(s)).toBeNull();
+    expect(nearestDrop(s, open)).toBeNull();
   });
 });

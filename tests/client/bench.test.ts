@@ -75,14 +75,23 @@ describe('camino fijo', () => {
     expect(viewAt(BENCH_PATH, pb.s).pos[1]).toBe(0);
   });
 
+  // Los mismos casos que punto contra planta, pero sin un expect por par: la caja de cada planta descarta lo que queda
+  // afuera (ahí pointInPolygon da false) y los que caen adentro se juntan en una lista (antes tardaba ~1,9 s y en la
+  // suite entera, con los workers ocupados, pasaba los 5 s del timeout).
   test('nunca atraviesa un edificio: por la calle afuera de toda planta, arriba más alto que todos', () => {
+    const boxes = map.buildings.map((b) => {
+      const xs = b.footprint.map((q) => q[0]), zs = b.footprint.map((q) => q[1]);
+      return { b, minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+    });
+    const inside: string[] = [];
     for (let s = 0; s <= L; s += 1) {
       const p: Vec3 = viewAt(BENCH_PATH, s).pos;
-      for (const b of map.buildings) {
-        if (p[1] > b.height + 1) continue;
-        expect(pointInPolygon([p[0], p[2]], b.footprint), `s = ${s} m adentro de ${b.id}`).toBe(false);
+      for (const { b, minX, maxX, minZ, maxZ } of boxes) {
+        if (p[1] > b.height + 1 || p[0] < minX || p[0] > maxX || p[2] < minZ || p[2] > maxZ) continue;
+        if (pointInPolygon([p[0], p[2]], b.footprint)) inside.push(`s = ${s} m adentro de ${b.id}`);
       }
     }
+    expect(inside).toEqual([]);
   });
 
   test('mira hacia donde va y es determinista', () => {
