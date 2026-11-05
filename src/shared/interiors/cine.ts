@@ -80,6 +80,9 @@ const SPOT_L = { r: 8.5, p: 0.75 } as const;
 const CAJON_L = { r: 9, p: 1.1 } as const;
 const TIRA_L = { r: 4, p: 0.22 } as const;
 const SALA_L = { r: 7, p: 0.68 } as const;
+/** Un cine es oscuro aunque el ojo se adapte: lo horneado bajo techo va a esto de lo de un local claro (Interior.dim; la
+ *  ganancia de adentro, render/exposure.ts, aclara lo horneado ~4 veces; esto lo deja como se calibró sin ella). */
+const PENUMBRA = 0.26;
 
 // ---------- medidas (m, marco local) ----------
 
@@ -285,5 +288,5 @@ export const cinePlan: InteriorPlan = (k) => {
   k.mark('sala-chica', [c.pasillos[0], 3.0], 0);
   k.view('hall', [25.15, 1.4], 0, 0);
   k.view('sala', [g.pasillos[1], g.plataforma + 0.45], g.arriba, Math.PI);
-  return k.done(AMBIENT);
+  return k.done(AMBIENT, PENUMBRA);
 };

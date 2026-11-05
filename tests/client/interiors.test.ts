@@ -3,7 +3,7 @@
 // calidad y liberación. Sobre el local de prueba de la tarea 4 (tests/shared/interiors/fixture.ts).
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { ADAPT_TIME, adapt, createEye, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
+import { ADAPT_TIME, adapt, createEye, INDOOR_EXPOSURE, INDOOR_GAIN, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import { QUALITY } from '../../src/client/render/quality.ts';
 import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
@@ -26,7 +26,7 @@ import { GROUND_Y, Kit } from '../../src/shared/interiors/kit.ts';
 import type { Block, Interior, Look } from '../../src/shared/interiors/types.ts';
 import type { Building, MapData, Opening } from '../../src/shared/mapdata.ts';
 import { LOOKS, testInterior } from '../shared/interiors/fixture.ts';
-import { seen, seenLinear } from './aces.ts';
+import { ADENTRO, seen, seenLinear } from './aces.ts';
 import type { RGB } from './aces.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
@@ -430,16 +430,16 @@ describe('exposición, vidrio y adaptación del ojo (H2, H10)', () => {
   const build = (): THREE.Mesh[] => meshesOf(buildInterior3D(lit, m, 'alta').group);
   const named = (meshes: THREE.Mesh[], name: string): THREE.Mesh => meshes.find((x) => x.name === name && !(x instanceof THREE.InstancedMesh))!;
 
-  test('INTERIOR_EXPOSURE escala lo horneado de los bloques, los muebles y los carteles; lo que brilla queda en 1 (H2a)', () => {
-    expect(INTERIOR_EXPOSURE).toBeGreaterThan(0.1);
-    expect(INTERIOR_EXPOSURE).toBeLessThan(0.7);
+  test('INTERIOR_EXPOSURE escala lo horneado de los bloques, los muebles y los carteles, que bajo techo va negativo (la marca de la ganancia de adentro, baked.ts); lo que brilla queda en 1, positivo (H2a)', () => {
+    expect(INTERIOR_EXPOSURE).toBeGreaterThan(0.05);
+    expect(INTERIOR_EXPOSURE * INDOOR_GAIN).toBeLessThan(0.7);
     const meshes = build();
     const byName = (name: string): THREE.Mesh => named(meshes, name);
     const floor = byName('in_porcelanato').geometry;
     const tint = tintColor(LOOKS.piso.color);
     for (let k = 0; k < floor.getAttribute('position').count; k += 7) {
       const want = lightAt(lit, vec(floor, 'position', k), vec(floor, 'normal', k)) * INTERIOR_EXPOSURE;
-      expect(colorAt(floor, k)[0]).toBeCloseTo(tint.r * want, 5);
+      expect(colorAt(floor, k)[0]).toBeCloseTo(-tint.r * want, 5);
     }
     const glow = byName('in_luz').geometry, warm = tintColor('#fff4e0');
     for (let k = 0; k < glow.getAttribute('position').count; k++) expect(colorAt(glow, k)).toEqual([warm.r, warm.g, warm.b].map((v) => Math.fround(v)));
@@ -451,12 +451,12 @@ describe('exposición, vidrio y adaptación del ojo (H2, H10)', () => {
     const grey = tintColor('#a0a0a0');
     lit.items.filter((it) => it.model === 'silla').forEach((it, k) => {
       const want = grey.r * lightAt(lit, [it.at[0], it.at[1] + 0.6, it.at[2]], [0, 1, 0]) * INTERIOR_EXPOSURE;
-      expect(chairs.instanceColor!.array[k * 3]).toBeCloseTo(want, 5);
+      expect(chairs.instanceColor!.array[k * 3]).toBeCloseTo(-want, 5);
     });
     const labels = byName('labels:0').geometry;
     for (const [k, l] of lit.labels.entries()) {
       const c: Vec3 = [l.at[0] + l.normal[0] * 0.02, l.at[1], l.at[2] + l.normal[1] * 0.02];
-      const want = l.glow ? 1 : lightAt(lit, c, [l.normal[0], 0, l.normal[1]]) * INTERIOR_EXPOSURE;
+      const want = l.glow ? 1 : -lightAt(lit, c, [l.normal[0], 0, l.normal[1]]) * INTERIOR_EXPOSURE;
       for (let v = 0; v < 4; v++) expect(colorAt(labels, k * 4 + v)).toEqual([want, want, want].map((x) => Math.fround(x)));
     }
   });
@@ -918,7 +918,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
         const c0 = b.polygon.reduce((s, q) => [s[0] + q[0] / b.polygon.length, s[1] + q[1] / b.polygon.length], [0, 0]);
         const it = seat.get(`${c0[0].toFixed(2)},${c0[1].toFixed(2)}`);
         const light = lightAt(cine, [c0[0], b.y0 + 0.6, c0[1]], [0, 1, 0]);
-        (it ? kinds.butaca : kinds.resto).push(luma(seen(it ? BUTACA_TELA : '#808080', light * INTERIOR_EXPOSURE)));
+        (it ? kinds.butaca : kinds.resto).push(luma(seen(it ? BUTACA_TELA : '#808080', light * ADENTRO * cine.dim!)));
         continue;
       }
       const look = n[1] > 0.5 ? b.top : n[1] < -0.5 ? b.bottom : b.side;
@@ -928,7 +928,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
         (big ? kinds.pantalla : kinds.brilla).push(luma(seen(look.color, 1)));
         continue;
       }
-      kinds.resto.push(luma(seen(look.color, lightAt(cine, p, n) * INTERIOR_EXPOSURE)));
+      kinds.resto.push(luma(seen(look.color, lightAt(cine, p, n) * ADENTRO * cine.dim!)));
     }
     const all = Object.values(kinds).flat();
     const mean = (a: number[]): number => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);
@@ -979,7 +979,7 @@ describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
       for (let y = 0.3; y <= 3.8; y += 0.25) {
         if (enW1.some((a) => Math.abs(v - a) < 0.45) && y > 1.25 && y < 2.5) continue; // detrás de un afiche
         const h = ray(hall + 1.5, v, y, 1);
-        if (h && Math.abs(h.u - hall) < 0.05 && h.look.mat !== 'luz') hallSide.push(luma(seen(h.look.color, h.light * INTERIOR_EXPOSURE)));
+        if (h && Math.abs(h.u - hall) < 0.05 && h.look.mat !== 'luz') hallSide.push(luma(seen(h.look.color, h.light * ADENTRO * cine.dim!)));
       }
     }
     const mean = hallSide.reduce((t, x) => t + x, 0) / hallSide.length;

@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import { SUN_DIR } from '../../src/client/render/sun.ts';
-import { lightAt, outdoorLight } from '../../src/client/world/interiors/bake.ts';
-import { INTERIOR_EXPOSURE, buildInterior3D } from '../../src/client/world/interiors/build.ts';
+import { lightAt, outdoorLight, outdoorRGB } from '../../src/client/world/interiors/bake.ts';
+import { buildInterior3D } from '../../src/client/world/interiors/build.ts';
 import { exteriorSigns } from '../../src/client/world/interiors/exterior.ts';
 import { ITEM_GLOW, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
 import { PHOTO_LUMA, photoBlend } from '../../src/client/world/interiors/textures.ts';
@@ -23,7 +23,7 @@ import { interiorOf } from '../../src/shared/interiors/index.ts';
 import { GROUND_Y, MODEL_BOX } from '../../src/shared/interiors/kit.ts';
 import type { Block, ItemModel, Look } from '../../src/shared/interiors/types.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
-import { deltaE, hexRGB, linear, seen, seenLinear } from './aces.ts';
+import { ADENTRO, deltaE, hexRGB, linear, seen, seenLinear } from './aces.ts';
 import type { RGB } from './aces.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
@@ -118,7 +118,7 @@ describe("el cielorraso del McDonald's", () => {
     mcd.blocks.filter((x) => x.bottom && x.y0 > 2.5 && pointInPolygon(p, x.polygon)).sort((a, c) => a.y0 - c.y0)[0];
   /** Cómo se ve adentro un look `liso` del cielorraso con la luz horneada `light`: la textura es la CC0 aclarada a
    *  PHOTO_LUMA.liso (sRGB; en lineal, su promedio). */
-  const looks = (look: Look, light: number): RGB => seen(look.color, light * INTERIOR_EXPOSURE * linear(PHOTO_LUMA.liso));
+  const looks = (look: Look, light: number): RGB => seen(look.color, light * ADENTRO * linear(PHOTO_LUMA.liso));
 
   test('las placas oscuras se leen (luma 35–80 en la vista salon, a INDOOR_EXPOSURE), con la junta que se distingue y los spots', () => {
     expect(mcd.views.some((x) => x.id === 'salon')).toBe(true);
@@ -183,12 +183,20 @@ describe('al aire libre', () => {
     expect(outdoorLight([0, -1, 0])).toBeLessThan(outdoorLight([0, 1, 0]) / 2);
   });
 
-  test('la baldosa de la terraza va con la luz de afuera (no la horneada): su color por outdoorLight', () => {
+  /** ¿El color `c` es el de `t` con la luz de afuera de una cara para arriba, canal por canal, al sol o a la sombra? */
+  const outdoorLit = (c: Vec3, t: THREE.Color): boolean => [true, false].some((sun) => {
+    const L = outdoorRGB([0, 1, 0], sun);
+    return Math.abs(c[0] - t.r * L[0]) < 1e-4 && Math.abs(c[1] - t.g * L[1]) < 1e-4 && Math.abs(c[2] - t.b * L[2]) < 1e-4;
+  });
+
+  test('la baldosa de la terraza va con la luz de afuera (no la horneada): su color por outdoorRGB, al sol o a la sombra', () => {
     const tile = ven.blocks.find((x) => x.top?.mat === 'baldosa' && Math.abs(x.y1 - (H + GROUND_Y)) < 1e-6)!;
     const t = tintColor(tile.top!.color);
     const up = vertices(ven, (n) => n === 'in_baldosa').filter((v) => Math.abs(v.p[1] - (H + GROUND_Y)) < 1e-4 && v.n[1] > 0.99);
     expect(up.length).toBeGreaterThan(0);
-    for (const v of up) expect(v.c[0]).toBeCloseTo(t.r * outdoorLight([0, 1, 0]), 4);
+    for (const v of up) expect(outdoorLit(v.c, t), `(${v.c.map((x) => x.toFixed(3)).join(', ')})`).toBe(true);
+    // casi toda al sol: la terraza está arriba de lo de alrededor
+    expect(up.filter((v) => Math.abs(v.c[0] - t.r * outdoorRGB([0, 1, 0])[0]) < 1e-4).length / up.length).toBeGreaterThan(0.5);
   });
 
   test('el piso del patio del McDonald\'s, también; el del salón, horneado (mucho más oscuro sin la exposición de adentro)', () => {
@@ -207,11 +215,8 @@ describe('al aire libre', () => {
     // al sol o a la sombra (de sus propias paredes), siempre la luz de afuera: la del cielo por lo menos
     const mid = (r: Vec2[]): Vec3 => [r.reduce((a, q) => a + q[0], 0) / r.length, 0, r.reduce((a, q) => a + q[1], 0) / r.length];
     const tile = mcd.blocks.find((x) => x.top?.mat === 'baldosa' && Math.abs(x.y1 - GROUND_Y) < 1e-6 && inPatio(mid(x.polygon)))!;
-    const t = tintColor(tile.top!.color).r;
-    for (const v of floor) {
-      const k = v.c[0] / t;
-      expect(Math.min(Math.abs(k - outdoorLight([0, 1, 0])), Math.abs(k - outdoorLight([0, 1, 0], false))), `en ${fmt(v.p.map((x) => Math.round(x * 100)) as RGB)}: ${k.toFixed(3)}`).toBeLessThan(1e-4);
-    }
+    const t = tintColor(tile.top!.color);
+    for (const v of floor) expect(outdoorLit(v.c, t), `en ${fmt(v.p.map((x) => Math.round(x * 100)) as RGB)}`).toBe(true);
   });
 
   /** El patio del McDonald's (mundo) y si un punto cae adentro. */
@@ -263,7 +268,7 @@ describe('al aire libre', () => {
     isBrick(seenLinear([0, 1, 2].map((c) => withTone.getComponent(sol, c)) as RGB, OUTDOOR_EXPOSURE));
   });
 
-  test('el sol: lo que el propio interior le tapa al piso del patio respecto de SUN_DIR (la pared de ladrillo, el local) queda a la sombra', () => {
+  test('el sol: lo que el propio interior le tapa al piso del patio respecto de SUN_DIR (la pared de ladrillo, el local) queda a la sombra (lo de los vecinos, en aspecto.test.ts)', () => {
     const sun: Vec3 = [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z];
     // lo macizo del interior sin las cajas de los muebles (son gruesas: la sombra de los muebles queda para la T11)
     const own = new CollisionWorld(interiorPrisms({ ...mcd, blocks: mcd.blocks.filter((x) => x.role !== 'mueble') }), [], map.bounds);
@@ -271,7 +276,13 @@ describe('al aire libre', () => {
     // el piso a la vista: fuera de las paredes (0,2 m adentro del borde)
     const floor = vertices(mcd, (n) => n === 'in_baldosa').filter((v) => v.n[1] > 0.99 && v.p[1] < 0.05 && inPatioXZ(v.p) && toRing(v.p) > 0.25);
     const shade = floor.filter((v) => own.raycast([v.p[0], v.p[1] + 0.05, v.p[2]], sun, 100, true) !== null);
-    const lit = floor.filter((v) => !shade.includes(v));
+    // al sol: lo que no tapa ni el interior ni un edificio vecino (Interior.shade)
+    const byNeighbor = (p: Vec3): boolean => (mcd.shade ?? []).some((b) => {
+      const top = (b.height - p[1]) / SUN_DIR.y; // hasta su alto, en 400 pasos (los cantos rozan)
+      for (let k = 1; k <= 400; k++) if (pointInPolygon([p[0] + SUN_DIR.x * top * k / 400, p[2] + SUN_DIR.z * top * k / 400], b.polygon)) return true;
+      return false;
+    });
+    const lit = floor.filter((v) => !shade.includes(v) && !byNeighbor(v.p));
     expect(shade.length / floor.length, `${shade.length} de ${floor.length} a la sombra`).toBeGreaterThan(0.15);
     expect(lit.length).toBeGreaterThan(0);
     const dark = Math.max(...shade.map((v) => lumL(v.c))), light = Math.min(...lit.map((v) => lumL(v.c)));

@@ -59,9 +59,10 @@ const TARIMA: Look = { mat: 'liso', color: '#e9e6df' };
 const BRONCE: Look = { mat: 'liso', color: '#7a5a3a' };
 /** Los paneles de luz del cielorraso (brillan: van sin hornear). */
 const PANEL_LUZ: Look = { mat: 'luz', color: '#dedcd4' };
-/** El vidrio del ventanal del frente visto de adentro: luz de día por un vidrio con reflejo, un blanco azulado que no
- *  llega al blanco de los paneles de luz (sin hornear: a la exposición de adentro se ve ≈ (214, 226, 234)). */
-const VENTANAL: Look = { mat: 'luz', color: '#83a1ba' };
+/** El vidrio del ventanal del frente visto de adentro: luz de día por un vidrio con reflejo, un blanco azulado más claro
+ *  que la pared blanca (que con el ojo adaptado se lee ~220) y que no llega al blanco de los paneles de luz (sin hornear:
+ *  a la exposición de adentro se ve ≈ (228, 235, 240)). */
+const VENTANAL: Look = { mat: 'luz', color: '#a0bcd2' };
 
 /** El plafón: fondo crema y el aro oscuro del borde (drawings.ts pinta el resto). */
 const PLAFON_LOOK: SignLook = { fondo: '#efe6d2', letra: '#3a3530', marco: '#3a3530', fuente: 'sans' };

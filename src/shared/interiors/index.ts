@@ -51,12 +51,26 @@ export function buildInterior(b: Building, input: InteriorInput, platforms: MapD
   return k.done(0.8);
 }
 
+/** Hasta dónde se buscan los vecinos que le tapan el sol a lo de afuera de un interior (Interior.shade): la sombra de
+ *  un edificio de 30 m con el sol a 50° llega a ~25 m. */
+const SHADE_REACH = 40;
+
+/** El interior con los edificios de `buildings` (salvo el suyo) a menos de SHADE_REACH de su planta y sus patios. */
+function withShade(i: Interior, buildings: readonly Building[]): Interior {
+  const pts = [...i.footprint, ...i.patios.flat()];
+  const [x0, x1] = [Math.min(...pts.map((p) => p[0])) - SHADE_REACH, Math.max(...pts.map((p) => p[0])) + SHADE_REACH];
+  const [z0, z1] = [Math.min(...pts.map((p) => p[1])) - SHADE_REACH, Math.max(...pts.map((p) => p[1])) + SHADE_REACH];
+  const shade = buildings.filter((b) => b.id !== i.buildingId && b.footprint.some((p) => p[0] > x0 && p[0] < x1 && p[1] > z0 && p[1] < z1))
+    .map((b) => ({ polygon: b.footprint, height: b.height }));
+  return shade.length === 0 ? i : { ...i, shade };
+}
+
 export function buildInteriors(map: InteriorsMap): Interior[] {
   const byId = new Map(map.buildings.map((b) => [b.id, b]));
   return map.interiors.map((input) => {
     const b = byId.get(input.buildingId);
     if (!b) throw new Error(`${input.placeId}: el edificio ${input.buildingId} del interior no está en el mapa`);
-    return buildInterior(b, input, map.platforms);
+    return withShade(buildInterior(b, input, map.platforms), map.buildings);
   });
 }
 
@@ -65,7 +79,7 @@ export function interiorOf(map: InteriorsMap, placeId: string): Interior {
   if (!input) throw new Error(`${placeId}: el lugar no tiene interior en el mapa`);
   const b = map.buildings.find((x) => x.id === input.buildingId);
   if (!b) throw new Error(`${placeId}: el edificio ${input.buildingId} del interior no está en el mapa`);
-  return buildInterior(b, input, map.platforms);
+  return withShade(buildInterior(b, input, map.platforms), map.buildings);
 }
 
 /** Lo que cuenta para el botín (D11): el piso techado de los pisos públicos más la terraza. */

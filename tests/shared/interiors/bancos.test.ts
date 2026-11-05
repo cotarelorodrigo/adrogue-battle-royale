@@ -223,12 +223,12 @@ describe.each(BANCOS)('$id', (c) => {
     expect([...new Set(blocked)], c.id).toEqual([]);
   });
 
-  test('la pared de vidrio: perfil de aluminio de piso y de techo y la franja esmerilada a 1,0–1,1 m, en liso (sin Mats nuevos)', () => {
+  test('la pared de vidrio: perfil de aluminio de piso y de techo en liso y la franja esmerilada a 1,0–1,1 m, un vidrio esmerilado (sin Mats nuevos)', () => {
     const glass = partition(i);
     const len = (b: Block): number => { const d = along(b.polygon); const s = b.polygon.map((p) => p[0] * d[0] + p[1] * d[1]); return Math.max(...s) - Math.min(...s); };
     const panes = glass.reduce((a, g) => a + len(g), 0);
     /** Los bloques sin colisión entre `y0` y `y1` sobre algún paño: paralelos, a < 5 cm de su eje y pisando su largo. */
-    const onGlass = (y0: number, y1: number): Block[] => i.blocks.filter((x) => x.collide === 'none' && x.role === 'otro' && x.y0 >= y0 - 1e-6 && x.y1 <= y1 + 1e-6 &&
+    const onGlass = (y0: number, y1: number): Block[] => i.blocks.filter((x) => x.collide === 'none' && (x.role === 'otro' || x.side?.esmerilado) && x.y0 >= y0 - 1e-6 && x.y1 <= y1 + 1e-6 &&
       glass.some((g) => {
         const [d, e] = [along(g.polygon), along(x.polygon)];
         const m = centroid(g.polygon), p = centroid(x.polygon);
@@ -241,7 +241,8 @@ describe.each(BANCOS)('$id', (c) => {
     expect(total(floor), `${c.id}: perfil de piso bajo ${panes.toFixed(2)} m de paños`).toBeGreaterThanOrEqual(panes - 0.1);
     expect(total(ceiling), `${c.id}: perfil de techo`).toBeGreaterThanOrEqual(panes - 0.1);
     expect(total(band), `${c.id}: franja esmerilada`).toBeGreaterThanOrEqual(panes - 0.1);
-    for (const x of [...floor, ...ceiling, ...band]) for (const look of [x.side, x.top, x.bottom]) if (look) expect(look.mat, c.id).toBe('liso');
+    for (const x of [...floor, ...ceiling]) for (const look of [x.side, x.top, x.bottom]) if (look) expect(look.mat, c.id).toBe('liso');
+    for (const x of band) for (const look of [x.side, x.top, x.bottom]) expect([look?.mat, look?.esmerilado, x.role], c.id).toEqual(['vidrio', true, 'vidrio']);
   });
 
   test('el tesoro: la puerta redonda es un cartel en la pared del fondo, sin abertura; caminando hacia ella se frena contra la pared', () => {

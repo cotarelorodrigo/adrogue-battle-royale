@@ -4,7 +4,7 @@
 // terraza) va además su pieza de lejos (ITEM_FAR).
 import * as THREE from 'three';
 import { pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
-import type { Interior } from '../../../shared/interiors/types.ts';
+import type { Interior, Look } from '../../../shared/interiors/types.ts';
 import type { Sign } from '../../../shared/mapdata.ts';
 import { triangulateUp } from '../geometry.ts';
 import type { RoofCut } from '../geometry.ts';
@@ -13,6 +13,12 @@ import { ITEM_FAR } from './models.ts';
 
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
 const PLANAR_UV = 4;
+/** Lo de metal y lo pintado (`luz`: la estructura del lucernario) va liso, sin el grano del revoque: todo su uv es un
+ *  solo punto de la textura. El metal, además, lleva el reflejo del piso al pie de sus costados (su color por SHEEN) y
+ *  el del cielo arriba, como el acero inoxidable cepillado (el gabinete del molinete). */
+const SMOOTH_UV: [number, number] = [0.5, 0.5];
+const smooth = (l: Look): boolean => l.mat === 'metal' || l.mat === 'luz';
+const SHEEN = 0.8;
 
 /** Los bloques y los paños `out` del interior, y las piezas de lejos de sus muebles al aire libre (afuera de su planta, o
  *  arriba de `roof`, el alto del edificio: H2 de la revisión de la T11b), en una geometría para el merge `parapet` de su
@@ -27,14 +33,15 @@ export function exteriorGeometry(i: Interior, roof: number): THREE.BufferGeometr
       if (!look) continue;
       const c = tintColor(look.color);
       const base = b.pos.length / 3;
-      for (const [x, z] of poly) vert(b, [x, y, z], [0, up ? 1 : -1, 0], [x / PLANAR_UV, z / PLANAR_UV], c);
+      for (const [x, z] of poly) vert(b, [x, y, z], [0, up ? 1 : -1, 0], smooth(look) ? SMOOTH_UV : [x / PLANAR_UV, z / PLANAR_UV], c);
       const idx: number[] = [];
       triangulateUp(poly, base, idx);
       if (!up) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
       b.idx.push(...idx);
     }
     if (!block.side) continue;
-    const c = tintColor(block.side.color);
+    const c = tintColor(block.side.color), flat = smooth(block.side);
+    const foot = block.side.mat === 'metal' ? c.clone().multiplyScalar(SHEEN) : c;
     const hidden = new Set(block.hide ?? []);
     for (let k = 0; k < n; k++) {
       if (hidden.has(flipped ? (2 * n - 2 - k) % n : k)) continue; // `hide` cuenta las aristas del polígono guardado
@@ -44,8 +51,10 @@ export function exteriorGeometry(i: Interior, roof: number): THREE.BufferGeometr
       const [ex, ez] = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
       const u0 = (p[0] * ex + p[1] * ez) / BAY_W, u1 = u0 + len / BAY_W;
       const [v0, v1] = [block.y0 / FLOOR_H, block.y1 / FLOOR_H];
-      quad(b, [[p[0], block.y0, p[1]], [q[0], block.y0, q[1]], [q[0], block.y1, q[1]], [p[0], block.y1, p[1]]],
-        [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], [-ez, 0, ex], c);
+      const uvs: [number, number][] = flat ? [SMOOTH_UV, SMOOTH_UV, SMOOTH_UV, SMOOTH_UV] : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+      const vs = ([[p[0], block.y0, p[1]], [q[0], block.y0, q[1]], [q[0], block.y1, q[1]], [p[0], block.y1, p[1]]] as [number, number, number][])
+        .map((r, j) => vert(b, r, [-ez, 0, ex], uvs[j], j < 2 ? foot : c));
+      b.idx.push(vs[0], vs[1], vs[2], vs[0], vs[2], vs[3]);
     }
   }
   // las piezas de lejos de los muebles sólidos al aire libre (ITEM_FAR): adentro de su modelo o pegadas a él, con su
@@ -96,8 +105,14 @@ export const ownSignPlaces = (interiors: Interior[]): Set<string> =>
   new Set(interiors.filter((i) => i.labels.some((l) => l.out && l.placeSign)).map((i) => i.placeId));
 
 /** Lo que el interior le abre al techo de su edificio (D13): sus huecos y los paños de vidrio del lucernario que los
- *  tapan desde arriba del techo (los Pane `sky` de vidrio), para extrudeBuilding. */
-export const roofCut = (i: Interior): RoofCut => ({
-  holes: i.roofHoles,
-  skylight: i.panes.filter((p) => p.sky && p.look.mat === 'vidrio').map((p) => ({ corners: p.corners, normal: p.normal })),
-});
+ *  tapan desde arriba del techo (los Pane `sky` de vidrio), para extrudeBuilding; con terraza, el color de su baldosa
+ *  (la cara de arriba de lo que apoya en el piso de la terraza, de GROUND_Y), que tiñe el techo de lejos. */
+export function roofCut(i: Interior): RoofCut {
+  const cut: RoofCut = {
+    holes: i.roofHoles,
+    skylight: i.panes.filter((p) => p.sky && p.look.mat === 'vidrio').map((p) => ({ corners: p.corners, normal: p.normal })),
+  };
+  const deck = i.terrace ? i.floors.find((f) => f.level === i.publicFloors) : undefined;
+  const tile = deck && i.blocks.find((b) => b.top && !b.out && Math.abs(b.y0 - deck.y) < 1e-6 && b.y1 - b.y0 < 0.05);
+  return tile ? { ...cut, terrace: tile.top!.color } : cut;
+}

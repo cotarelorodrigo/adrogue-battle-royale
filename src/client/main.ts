@@ -30,7 +30,7 @@ import { createZoneWall } from './combat/zone-wall.ts';
 import { debugEnabled, installDebug, matchParams } from './debug.ts';
 import type { AdrogueDebug } from './debug.ts';
 import { createInput } from './input.ts';
-import { createEye } from './render/exposure.ts';
+import { createEye, INTERIOR_GAIN, interiorGain } from './render/exposure.ts';
 import { loadQuality, QUALITY, saveQuality } from './render/quality.ts';
 import type { Quality } from './render/quality.ts';
 import { createScene, FOV, SUN_DIR } from './render/scene.ts';
@@ -466,6 +466,7 @@ async function run(boot: Boot): Promise<void> {
     for (const d of details) d.update(scene.camera.position);
     for (const v of inView) v.update(scene.camera, interiorViews.inside() ? interiorViews.outsideSees : undefined);
     scene.renderer.toneMappingExposure = eye.step(interiorViews.inside(), dt);
+    INTERIOR_GAIN.value = interiorGain(scene.renderer.toneMappingExposure); // lo horneado de adentro, con la adaptación
     scene.render();
     if (f) {
       viewmodel.render(); // encima del mundo, en el mismo cuadro (con la exposición de la calle): renderer.info suma las dos pasadas

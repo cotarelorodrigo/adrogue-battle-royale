@@ -132,7 +132,7 @@ function meanLinear(img: HTMLCanvasElement): [number, number, number] {
 }
 
 /** Las 9 texturas de los interiores, de `size` × `size` px y con RepeatWrapping. Cada una lleva en `userData.tone` su
- *  color medio, lineal: en baja, compactado al nivel 3, el ladrillo va sin textura y su tono pasa al color por vértice. */
+ *  color medio, lineal: en baja, compactado al nivel 3, lo opaco va sin textura y su tono pasa al color por vértice. */
 export function interiorTextures(size: 512 | 1024, cc0: { revoque: CanvasImageSource; metal: CanvasImageSource; ladrillo: CanvasImageSource }): Record<TexMat, THREE.Texture> {
   const draw: Record<TexMat, (p: Pen) => void> = {
     liso: (p) => photo(p, cc0.revoque, PHOTO_LUMA.liso),

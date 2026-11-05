@@ -9,7 +9,7 @@ import { LOT_OPENINGS } from '../../shared/interiors/openings.ts';
 import { SHOP_GLASS, cellRect, panesOf } from './front-atlas.ts';
 import { frontGeometry } from './fronts.ts';
 import type { WorldMaterials } from './types.ts';
-import { BAY_W, cutRect, edgeHoles, facing, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
+import { BAY_W, cutRect, edgeHoles, facing, FLOOR_H, lattice, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
 import type { Builder, Rect } from './wall-kit.ts';
 
 export { FLOOR_H, BAY_W };
@@ -33,8 +33,22 @@ export function triangulateUp(poly: Vec2[], base: number, idx: number[], holes: 
 /** Lo que un interior le abre al techo de su edificio (D13, Interior.roofHoles): sus huecos (mundo) y, si un lucernario
  *  los tapa y sobresale del techo, sus paños de vidrio (los Pane `sky`: las aguas y los tímpanos; las esquinas en el
  *  mundo y la normal del lado de afuera). */
-export interface RoofCut { holes: Vec2[][]; skylight: { corners: Vec3[]; normal: Vec3 }[] }
+/** `terrace`: el color de la baldosa de una terraza (Interior.terrace): de lejos, sin el interior, el techo va teñido
+ *  de ella (roofColor). */
+export interface RoofCut { holes: Vec2[][]; skylight: { corners: Vec3[]; normal: Vec3 }[]; terrace?: string }
 const NO_CUT: RoofCut = { holes: [], skylight: [] };
+
+/** El promedio lineal de techo_diff.jpg (la textura del techo, sRGB ≈ (118, 107, 89)) y el tono lineal de la baldosa de
+ *  los interiores (textures.ts: el gris 230 con la junta 150). */
+export const TECHO_LINEAL: Vec3 = [0.1936, 0.1575, 0.1077];
+export const BALDOSA_TONO = 0.76;
+/** El color por vértice del techo (material `roof`): blanco, la textura tal cual; el de una terraza, el tinte que lleva
+ *  el promedio de la textura al de su baldosa (el color por el tono): de lejos se lee como de cerca (T8, H12). */
+function roofColor(cut: RoofCut): THREE.Color {
+  if (!cut.terrace) return new THREE.Color(1, 1, 1);
+  const c = new THREE.Color(cut.terrace); // lineal
+  return new THREE.Color((c.r * BALDOSA_TONO) / TECHO_LINEAL[0], (c.g * BALDOSA_TONO) / TECHO_LINEAL[1], (c.b * BALDOSA_TONO) / TECHO_LINEAL[2]);
+}
 
 /** La planta menos los huecos: en pedazos, cada uno con su contorno y sus agujeros. Sin huecos, la planta tal cual. */
 function capPieces(fp: Vec2[], holes: Vec2[][]): Vec2[][][] {
@@ -76,6 +90,7 @@ export const SKY_GLASS_UV: [number, number] = (() => {
  * material: no suma mallas); si no, en `parapet`, con el vértice del color del vidrio.
  */
 function roofTapa(bd: Building, roof: RoofCut, color: THREE.Color, tapa: (mat: keyof WorldMaterials) => () => Builder): void {
+  const top = roofColor(roof);
   const lot = bd.front !== undefined;
   const glass = lot ? new THREE.Color(1, 1, 1) : tintColor(SHOP_GLASS[1]);
   for (const hole of roof.holes) {
@@ -86,7 +101,7 @@ function roofTapa(bd: Building, roof: RoofCut, color: THREE.Color, tapa: (mat: k
       return pointInPolygon([c[0] - s.normal[0] * 0.05, c[2] - s.normal[2] * 0.05], hole);
     });
     if (panes.length === 0) {
-      roofCap(tapa('roof')(), hole, bd.height, color);
+      roofCap(tapa('roof')(), hole, bd.height, top);
       continue;
     }
     const t = tapa(lot ? 'front' : 'parapet')();
@@ -162,10 +177,17 @@ function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, 
   }
 }
 
+/** Dónde se parten las paredes de un edificio con aberturas para no dejar juntas en T (wall-kit.ts, lattice): a lo largo
+ *  de la arista i, en las puntas de sus huecos (`s(i)`, de todas las bandas: la de arriba también, que se junta en
+ *  3,2 m); en alto, en las de todos los huecos y en cada piso (`y`, iguales en todas las aristas: se juntan en las
+ *  esquinas). Sin aberturas, nada: una banda entera es un cuadrilátero. */
+export interface WallMarks { s: (i: number) => number[]; y: number[] }
+const NO_MARKS: WallMarks = { s: () => [], y: [] };
+
 /** `colorOf(i)`: color de la arista i de `fp`, o null para saltearla (va en otra banda). Los huecos de cada arista
- *  (`holes`) no se dibujan: lo recortado va a `tapa()`, con las mismas uv. */
+ *  (`holes`) no se dibujan: lo recortado va a `tapa()`, con las mismas uv. Los pedazos se parten en `marks`. */
 function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i: number) => THREE.Color | null,
-  holes: Map<number, Rect[]>, tapa: () => Builder): THREE.BufferGeometry {
+  holes: Map<number, Rect[]>, tapa: () => Builder, marks: WallMarks = NO_MARKS): THREE.BufferGeometry {
   const b = newBuilder(true);
   for (let i = 0; i < fp.length; i++) {
     const color = colorOf(i);
@@ -182,14 +204,17 @@ function wallBand(fp: Vec2[], cum: number[], y0: number, y1: number, colorOf: (i
         [[u0, r.y0 / FLOOR_H], [u1, r.y0 / FLOOR_H], [u1, r.y1 / FLOOR_H], [u0, r.y1 / FLOOR_H]], n, color);
     };
     const { solid, cut } = cutRect({ s0: 0, s1: len, y0, y1 }, holes.get(i) ?? []);
-    for (const r of solid) piece(b, r);
-    for (const r of cut) piece(tapa(), r);
+    const ss = marks.s(i);
+    for (const r of lattice(solid, ss, marks.y)) piece(b, r);
+    for (const r of lattice(cut, ss, marks.y)) piece(tapa(), r);
   }
   return toGeometry(b);
 }
 
-/** El pretil de collision.ts (parapetEdges, PARAPET_H): lo que se ve es lo que frena. */
-function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color): THREE.BufferGeometry {
+/** El pretil de collision.ts (parapetEdges, PARAPET_H): lo que se ve es lo que frena. La cara de afuera, al ras de la
+ *  pared, se parte en `splits(i)` (metros desde fp[i]): los vértices del borde de arriba de la pared, así no quedan
+ *  juntas en T con ella. */
+function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color, splits: (i: number) => number[] = () => []): THREE.BufferGeometry {
   const b = newBuilder(true);
   const y1 = y0 + PARAPET_H;
   for (const { i, a, c, ai, ci } of parapetEdges(fp)) {
@@ -199,8 +224,12 @@ function parapetRing(fp: Vec2[], cum: number[], y0: number, color: THREE.Color):
     const u0 = cum[i] / BAY_W, u1 = (cum[i] + len) / BAY_W;
     const v0 = y0 / FLOOR_H, v1 = y1 / FLOOR_H;
     // cara exterior (al ras de la pared)
-    quad(b, [[a[0], y0, a[1]], [c[0], y0, c[1]], [c[0], y1, c[1]], [a[0], y1, a[1]]],
-      [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], [nx, 0, nz], color);
+    for (const r of lattice([{ s0: 0, s1: len, y0, y1 }], splits(i), [])) {
+      const [p, q] = [[a[0] + (dx * r.s0) / len, a[1] + (dz * r.s0) / len], [a[0] + (dx * r.s1) / len, a[1] + (dz * r.s1) / len]];
+      const [ua, ub] = [(cum[i] + r.s0) / BAY_W, (cum[i] + r.s1) / BAY_W];
+      quad(b, [[p[0], y0, p[1]], [q[0], y0, q[1]], [q[0], y1, q[1]], [p[0], y1, p[1]]],
+        [[ua, v0], [ub, v0], [ub, v1], [ua, v1]], [nx, 0, nz], color);
+    }
     // cara interior (mira hacia adentro): winding invertido
     quad(b, [[ci[0], y0, ci[1]], [ai[0], y0, ai[1]], [ai[0], y1, ai[1]], [ci[0], y1, ci[1]]],
       [[u1, v0], [u0, v0], [u0, v1], [u1, v1]], [-nx, 0, -nz], color);
@@ -261,10 +290,17 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [],
   const groundH = Math.min(FLOOR_H, bd.height);
   const grounds = [...new Set([...own.values()].map((o) => o.ground))].sort();
   const holes = edgeHoles(bd.footprint, fp, edgeOf, openings);
+  // con aberturas, las paredes se parten sin juntas en T (T11c): en las puntas de los huecos de cada arista y, en alto,
+  // en las de todos y en cada piso (el frente de un lote se parte por piso y su banda de arriba)
+  const floorsY = Array.from({ length: Math.max(1, bd.floors) + 1 }, (_, r) => r * FLOOR_H).filter((y) => y < bd.height);
+  const marks: WallMarks = openings.length === 0 ? NO_MARKS : {
+    s: (i) => (holes.get(i) ?? []).flatMap((h) => [h.s0, h.s1]),
+    y: [...floorsY, bd.height, ...[...holes.values()].flat().flatMap((h) => [h.y0, h.y1])],
+  };
 
-  const rb = newBuilder(true);
-  roofCap(rb, fp, bd.height, color, false, cut.holes);
-  if (openings.length > 0) shadowShell(rb, fp, bd.height, holes, color, cut.holes);
+  const rb = newBuilder(true), top = roofColor(cut);
+  roofCap(rb, fp, bd.height, top, false, cut.holes);
+  if (openings.length > 0) shadowShell(rb, fp, bd.height, holes, top, cut.holes);
   const mats = wallMaterials(bd);
   const tapaBuilders = new Map<keyof WorldMaterials, Builder>();
   const tapa = (mat: keyof WorldMaterials) => (): Builder => {
@@ -274,23 +310,40 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [],
   };
   roofTapa(bd, cut, color, tapa);
   const walls = {
-    ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color), holes, tapa(mats.ground)),
+    ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color), holes, tapa(mats.ground), marks),
     // edificio más bajo que un piso: sin banda superior (geometría vacía)
     upper: bd.height > FLOOR_H
-      ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : color), holes, tapa(mats.upper))
+      ? wallBand(fp, cum, FLOOR_H, bd.height, (i) => (lotEdges.has(i) ? null : color), holes, tapa(mats.upper), marks)
       : toGeometry(newBuilder(true)),
-    front: bd.front ? frontGeometry(bd, fp, edgeOf, openings, tapa('front')) : toGeometry(newBuilder(true)),
+    front: bd.front ? frontGeometry(bd, fp, edgeOf, openings, tapa('front'), marks.y) : toGeometry(newBuilder(true)),
     overrides: grounds.map((ground) => ({
       ground,
-      geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }, holes, tapa(GROUND_MAT[ground])),
+      geometry: wallBand(fp, cum, 0, groundH, (i) => { const o = own.get(i); return o?.ground === ground ? o.color : null; }, holes, tapa(GROUND_MAT[ground]), marks),
     })),
   };
+  // el pretil, partido donde la pared de abajo tiene vértices en su borde de arriba (con aberturas: sin juntas en T)
+  const splits = openings.length === 0 ? undefined : topSplits(fp, bd.height, [walls.ground, walls.upper, walls.front, ...walls.overrides.map((o) => o.geometry)]);
   return {
     walls,
     roof: toGeometry(rb),
     // un relleno de hueco (mapgen/pockets.ts) es un parche de techo entre vecinos: sin pretil propio
-    parapet: bd.fill ? toGeometry(newBuilder(true)) : parapetRing(fp, cum, bd.height, color),
+    parapet: bd.fill ? toGeometry(newBuilder(true)) : parapetRing(fp, cum, bd.height, color, splits),
     tapas: Object.fromEntries([...tapaBuilders].map(([mat, t]) => [mat, toGeometry(t)])),
+  };
+}
+
+/** De cada arista de `fp`, los vértices de `gs` sobre su recta a la altura `y` (en metros desde fp[i]). */
+function topSplits(fp: Vec2[], y: number, gs: THREE.BufferGeometry[]): (i: number) => number[] {
+  const pts: Vec2[] = [];
+  for (const g of gs) {
+    const pos = g.getAttribute('position');
+    for (let k = 0; k < pos.count; k++) if (Math.abs(pos.getY(k) - y) < 1e-6) pts.push([pos.getX(k), pos.getZ(k)]);
+  }
+  return (i) => {
+    const [a, c] = [fp[i], fp[(i + 1) % fp.length]];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    const e: Vec2 = [(c[0] - a[0]) / len, (c[1] - a[1]) / len];
+    return pts.filter((p) => Math.abs((p[0] - a[0]) * e[1] - (p[1] - a[1]) * e[0]) < 1e-4).map((p) => (p[0] - a[0]) * e[0] + (p[1] - a[1]) * e[1]);
   };
 }
 

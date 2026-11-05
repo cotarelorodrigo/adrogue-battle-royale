@@ -4,6 +4,7 @@ import type { Quality } from '../render/quality.ts';
 import { composeFacadeTile } from './facades.ts';
 import { composeFrontAtlas, frontMaterial, packAtlas } from './front-atlas.ts';
 import type { FacadeStyle } from './facades.ts';
+import { bakedMaterial } from './interiors/baked.ts';
 import { glassMaterial } from './interiors/glass.ts';
 import { interiorTextures } from './interiors/textures.ts';
 import type { InteriorKey, WorldMaterials } from './types.ts';
@@ -147,7 +148,8 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
   // Interiores: sin sol, la luz va horneada en el color por vértice (interiors/bake.ts), en todas las calidades.
   const inTex = interiorTextures(size, { revoque: img('revoque', 'diff'), metal: img('metal', 'diff'), ladrillo: img('ladrillo', 'diff') });
   for (const t of Object.values(inTex)) t.anisotropy = anisotropy;
-  const baked = (map: THREE.Texture | null): THREE.Material => new THREE.MeshBasicMaterial({ map, vertexColors: true });
+  // lo horneado de adentro lleva la ganancia de la adaptación del ojo (interiors/baked.ts)
+  const baked = (map: THREE.Texture | null): THREE.Material => bakedMaterial(map);
   const interior: Record<InteriorKey, THREE.Material> = {
     in_liso: baked(inTex.liso),
     in_porcelanato: baked(inTex.porcelanato),
@@ -170,7 +172,7 @@ export async function createMaterials(q: Quality): Promise<WorldMaterials> {
     wallUpper: facade('revoque', 'upper'),
     brickGround: facade('ladrillo', 'house'),
     brickUpper: facade('ladrillo', 'upper'),
-    roof: material('techo', { vertexColors: false }),
+    roof: material('techo', { vertexColors: true }), // blanco; la terraza, teñida de su baldosa (geometry.ts, roofColor)
     parapet: material('revoque', { vertexColors: true }),
     asphalt: material('asfalto', offset(-2)),
     cobble: material('empedrado', offset(-2)),

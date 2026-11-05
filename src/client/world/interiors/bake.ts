@@ -188,8 +188,10 @@ function prepare(i: Interior): Prepared {
     blockers: gridOf(i.blocks.filter((b) => b.role === 'pared' || b.role === 'tabique').map((b) => prism(b.polygon, b.y0, b.y1))),
     slabs: i.blocks.filter((b) => b.role === 'losa').map((b) => prism(b.polygon, b.y0, b.y1)),
     occluders: i.blocks.filter((b) => b.role !== 'vidrio' && b.role !== 'baranda').map((b) => prism(b.polygon, b.y0, b.y1)),
-    sun: gridOf(i.blocks.filter((b) => b.collide === 'solid' && b.role !== 'losa' && b.role !== 'mueble').map((b) => prism(b.polygon, b.y0, b.y1))),
-    sunTop: Math.max(0, ...i.blocks.filter((b) => b.collide === 'solid' && b.role !== 'mueble').map((b) => b.y1)),
+    // lo que le tapa el sol a lo de afuera: lo macizo del interior y los edificios vecinos (Interior.shade)
+    sun: gridOf([...i.blocks.filter((b) => b.collide === 'solid' && b.role !== 'losa' && b.role !== 'mueble').map((b) => prism(b.polygon, b.y0, b.y1)),
+      ...(i.shade ?? []).map((s) => prism(s.polygon, 0, s.height))]),
+    sunTop: Math.max(0, ...i.blocks.filter((b) => b.collide === 'solid' && b.role !== 'mueble').map((b) => b.y1), ...(i.shade ?? []).map((s) => s.height)),
     query: { n: 0 },
   };
   cache.set(i, p);
@@ -373,32 +375,39 @@ function formFactor(s: Source, p: Vec3, n: Vec3): number {
   return f;
 }
 
-/** Luminancia de un color de la escena (lineal). */
-const lum = (hex: number): number => {
+/** Un color de la escena por su intensidad, lineal, canal por canal. */
+const rgb = (hex: number, k: number): Vec3 => {
   const c = new THREE.Color(hex);
-  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  return [c.r * k, c.g * k, c.b * k];
 };
-const SUN_K = SUN_LIGHT.intensity * lum(SUN_LIGHT.color), SKY_K = SKY_LIGHT.intensity * lum(SKY_LIGHT.sky), GROUND_K = SKY_LIGHT.intensity * lum(SKY_LIGHT.ground);
+const SUN_K = rgb(SUN_LIGHT.color, SUN_LIGHT.intensity), SKY_K = rgb(SKY_LIGHT.sky, SKY_LIGHT.intensity), GROUND_K = rgb(SKY_LIGHT.ground, SKY_LIGHT.intensity);
+const luminance = (c: Vec3): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
-/** La luz al aire libre en una cara de normal `n` (unitaria): la que le da la escena a un Lambert (el sol por el coseno
- *  y el cielo de la HemisphereLight, sobre π); `sun` false, a la sombra (solo el cielo). Va en vez de la horneada en lo
- *  que el interior tiene afuera (outdoors): así una terraza o un patio se ven como lo de alrededor, con la exposición de
- *  la calle. */
-export function outdoorLight(n: Vec3, sun = true): number {
+/** La luz al aire libre en una cara de normal `n` (unitaria), canal por canal (lineal): la que le da la escena a un
+ *  Lambert (el sol por el coseno y el cielo de la HemisphereLight, sobre π), con el tono cálido del sol y el azulado
+ *  del cielo; `sun` false, a la sombra (solo el cielo). Va en vez de la horneada en lo que el interior tiene afuera
+ *  (outdoors): así una terraza o un patio se ven como lo de alrededor, con la exposición de la calle. */
+export function outdoorRGB(n: Vec3, sun = true): Vec3 {
   const k = sun ? Math.max(0, n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z) : 0;
   const w = 0.5 * n[1] + 0.5;
-  return (SUN_K * k + GROUND_K + (SKY_K - GROUND_K) * w) / Math.PI;
+  return [0, 1, 2].map((c) => (SUN_K[c] * k + GROUND_K[c] + (SKY_K[c] - GROUND_K[c]) * w) / Math.PI) as Vec3;
 }
 
-/** outdoorLight en el punto `p`, con la sombra de lo macizo del propio interior: sin el sol si una pared o una losa se
- *  lo tapa (hacia SUN_DIR, hasta pasar lo más alto del interior). La de los muebles y la de los vecinos no está (T11). */
-export function outdoorLightAt(i: Interior, p: Vec3, n: Vec3): number {
-  if (n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z <= 0) return outdoorLight(n);
+/** Lo mismo en luminancia. */
+export const outdoorLight = (n: Vec3, sun = true): number => luminance(outdoorRGB(n, sun));
+
+/** outdoorRGB en el punto `p`, con la sombra de lo macizo del propio interior y de los edificios vecinos
+ *  (Interior.shade): sin el sol si algo se lo tapa (hacia SUN_DIR, hasta pasar lo más alto). La de los muebles no está. */
+export function outdoorRGBAt(i: Interior, p: Vec3, n: Vec3): Vec3 {
+  if (n[0] * SUN_DIR.x + n[1] * SUN_DIR.y + n[2] * SUN_DIR.z <= 0) return outdoorRGB(n);
   const pr = prepare(i);
   const reach = SUN_DIR.y > 0.05 ? Math.max(0, pr.sunTop - p[1]) / SUN_DIR.y + 0.1 : SUN_REACH;
   const c: Vec3 = [p[0] + SUN_DIR.x * reach, p[1] + SUN_DIR.y * reach, p[2] + SUN_DIR.z * reach];
-  return outdoorLight(n, !blocked(pr, p, c, pr.sun));
+  return outdoorRGB(n, !blocked(pr, p, c, pr.sun));
 }
+
+/** Lo mismo en luminancia. */
+export const outdoorLightAt = (i: Interior, p: Vec3, n: Vec3): number => luminance(outdoorRGBAt(i, p, n));
 
 /** ¿El punto está al aire libre? Fuera de la planta (un patio, la vereda) o, con terraza, sobre el techo. */
 export function outdoors(i: Interior, p: Vec3): boolean {

@@ -43,6 +43,9 @@ const ZOCALO_OUT: Look = { mat: 'liso', color: '#86bbe2' };
  *  molinetes y de la hoja del molinete ancho. */
 const VERDE: Look = { mat: 'liso', color: '#2c4a36' };
 const INOX: Look = { mat: 'liso', color: '#b7bbbf' };
+/** El acero inoxidable de lo que es `out` (el gabinete del molinete, la hoja abierta): lo dibuja el chunk con el revoque,
+ *  liso y con el reflejo del piso (exterior.ts); claro y frío, como el de los molinetes al sol. */
+const INOX_AFUERA: Look = { mat: 'metal', color: '#e4e8ec' };
 const INOX_TAPA: Look = { mat: 'liso', color: '#3b3e42' };
 /** Las ventanas de afuera: el marco, el vidrio oscuro (de día, de afuera, no se ve el interior) y el alféizar. */
 const MARCO_OUT: Look = { mat: 'liso', color: '#e8e3d4' };
@@ -50,7 +53,7 @@ const VIDRIO_OUT: Look = { mat: 'liso', color: '#3d4b55' };
 const ALFEIZAR: Look = { mat: 'liso', color: '#c9c3b6' };
 /** Las ventanas del frente desde adentro: la luz de día por el vidrio (in_luz, calibrada como el ventanal de la Casa
  *  de la Cultura: más clara que la pared, más oscura que los tubos y azulada), su marco y la reja a contraluz. */
-const LUZ_DIA: Look = { mat: 'luz', color: '#87a3ba' };
+const LUZ_DIA: Look = { mat: 'luz', color: '#a0bcd2' };
 const MARCO_IN: Look = { mat: 'liso', color: '#f2efe6' };
 const REJA_IN: Look = { mat: 'liso', color: '#26302a' };
 /** Los tubos fluorescentes (brillan: blancos fríos) y su artefacto de chapa blanca. */
@@ -334,7 +337,7 @@ function patio(k: Kit, ring: Vec2[], hasta: number): void {
   for (let j = 0; j < 2; j++, v -= MOLINETE.w) k.furniture('molinete', [LINEA_U, v - MOLINETE.w / 2], 0, MIRA.menosU);
   // el gabinete es out (T11b): frena balas y está a cielo abierto, así que se ve de lejos, con el edificio
   const h = MOLINETE.d / 2;
-  k.block(rect([LINEA_U - h, v - GABINETE, LINEA_U + h, v]), 0, 0.92, 'solid', 'otro', { side: INOX, top: INOX_TAPA }, true);
+  k.block(rect([LINEA_U - h, v - GABINETE, LINEA_U + h, v]), 0, 0.92, 'solid', 'otro', { side: INOX_AFUERA, top: INOX_TAPA }, true);
   // del lado de la calle y del fondo, la baranda de caño verde que cierra lo pagado; los caños, la hoja abierta y los
   // pasamanos de la escalera son out (se ven de lejos, con el edificio), como el balcón del Guernica
   const fin = v - GABINETE;
@@ -343,7 +346,7 @@ function patio(k: Kit, ring: Vec2[], hasta: number): void {
   const ancho = LINEA_U - h - 0.1;
   k.railing([[10.0, BARANDA_V], [ancho, BARANDA_V]], 0, VERDE, { caño: true, out: true });
   const hv = BARANDA_V - 0.07, hoja = (u0: number, u1: number, y0: number, y1: number): void =>
-    k.block(rect([u0, hv - 0.015, u1, hv + 0.015]), y0, y1, 'none', 'otro', { side: INOX, top: INOX, bottom: INOX }, true);
+    k.block(rect([u0, hv - 0.015, u1, hv + 0.015]), y0, y1, 'none', 'otro', { side: INOX_AFUERA, top: INOX_AFUERA, bottom: INOX_AFUERA }, true);
   const h0 = ancho - 1.15, h1 = ancho - 0.05;
   hoja(h0, h1, 0.95, 1.0);
   hoja(h0, h1, 0.15, 0.2);
@@ -409,10 +412,12 @@ function ventana(k: Kit, c: Cara, a: number, b: number, y0: number, y1: number):
   // de `d0` (contra la pared) a `d1` hacia afuera; la arista 2 (sobre la pared) no se ve
   const pieza = (s0: number, s1: number, d0: number, d1: number, ya: number, yb: number, look: Look): void =>
     k.block([c(s0, d1), c(s1, d1), c(s1, d0), c(s0, d0)], ya, yb, 'none', 'otro', { side: look, top: look, bottom: look }, { out: true, hide: [2] });
-  pieza(a, b, 0, 0.02, y0, y1, VIDRIO_OUT);
-  pieza(a, a + m, 0.02, 0.05, y0, y1, MARCO_OUT);
-  pieza(b - m, b, 0.02, 0.05, y0, y1, MARCO_OUT);
-  pieza(a + m, b - m, 0.02, 0.05, y1 - m, y1, MARCO_OUT);
+  // el vidrio entre los marcos, solo su cara de afuera, y el marco desde la pared: el canto oscuro del vidrio no asoma
+  // (era la línea punteada al costado de la ventana, T11c); arriba lo tapa el dintel del marco y abajo, el alféizar
+  k.block([c(a + m, 0.02), c(b - m, 0.02), c(b - m, 0), c(a + m, 0)], y0, y1, 'none', 'otro', { side: VIDRIO_OUT }, { out: true, hide: [1, 2, 3] });
+  pieza(a, a + m, 0, 0.05, y0, y1, MARCO_OUT);
+  pieza(b - m, b, 0, 0.05, y0, y1, MARCO_OUT);
+  pieza(a + m, b - m, 0, 0.05, y1 - m, y1, MARCO_OUT);
   if (b - a > 1.5) pieza((a + b) / 2 - 0.03, (a + b) / 2 + 0.03, 0.02, 0.05, y0, y1 - m, MARCO_OUT);
   if (alta) pieza(a + m, b - m, 0.02, 0.05, y1 - 0.32, y1 - 0.27, MARCO_OUT);
   pieza(a - 0.05, b + 0.05, 0, 0.09, y0 - 0.05, y0 + 0.015, ALFEIZAR);

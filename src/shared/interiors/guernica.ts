@@ -64,8 +64,9 @@ const FILA_BOTELLAS: SignLook = { fondo: '#5a3a14', letra: '#0c0a08', marco: '#2
  *  oscuro: brillan con el color que tendrían a la luz del estante). */
 const MADERA = '#8a5e3a', BOTELLAS = ['#5a3c10', '#1e3a1a', '#5c5a50', '#3a1a10', '#22304a', '#4a4a20'] as const;
 
-const AMBIENT = 0.3;
-const FOCO = { r: 4.5, p: 0.35 } as const;
+/** Un bar de ladrillo en penumbra, pero de día se ve: el piso, la barra y las mesas se leen (aspecto.test.ts, 1b). */
+const AMBIENT = 0.4;
+const FOCO = { r: 4.5, p: 0.5 } as const;
 
 // ---------- medidas (m, marco local) ----------
 

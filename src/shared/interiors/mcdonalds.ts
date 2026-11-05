@@ -15,7 +15,7 @@
 //   roja vertical, y "McDonald's" en blanco sobre el costado que da al AutoMac. El revestimiento gris oscuro de la
 //   fachada ya lo pone el lote (tinte #2e2e30), y el cartel del frente, el lugar.
 // Si la planta no es la relevada (sin el patio o más chica), queda el salón vacío.
-import { distPointSegment } from '../geo.ts';
+import { distPointSegment, ensureCCW, insetRing } from '../geo.ts';
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
@@ -28,10 +28,11 @@ import type { Look } from './types.ts';
 // ---------- materiales ----------
 
 /** Las paredes: el gris claro de adentro; el cielorraso de placas gris oscuro con las juntas más claras. Calibrados con
- *  la luz horneada, a INDOOR_EXPOSURE (tests/client/mcd-veneciana.test.ts): las placas se ven ~(45, 47, 50), la mitad
- *  que las paredes; más oscuras, la ACES las aplasta a negro y el cielorraso se lee como un hueco. */
+ *  la luz horneada y la ganancia de adentro, a INDOOR_EXPOSURE (tests/client/mcd-veneciana.test.ts): las placas se ven
+ *  ~(60, 62, 67), la tercera parte que las paredes (~200); más oscuras, la ACES las aplasta a negro y el cielorraso se
+ *  lee como un hueco. */
 const PARED: Look = { mat: 'liso', color: '#d9d8d4' };
-const PLACAS: Look = { mat: 'liso', color: '#808388' };
+const PLACAS: Look = { mat: 'liso', color: '#525559' };
 const JUNTA: Look = { mat: 'liso', color: '#a9abaf' };
 /** El porcelanato gris claro del salón y las tablas de madera clara del lado norte. */
 const PORCELANATO: Look = { mat: 'porcelanato', color: '#cfcfcb' };
@@ -308,9 +309,10 @@ function patio(k: Kit, ring: Vec2[]): void {
     k.block(wall, 0, H, 'solid', 'otro', { side: LADRILLO, top: LADRILLO }, { hide: [0] });
     const o = side(a, b);
     k.block([add(a, o, -0.03), add(b, o, -0.03), b, a], 0, H, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, { out: true, hide: [2] });
-    // y la tapa, 2 cm sobre el ladrillo (`out`): desde un techo, de lejos, el muro se ve entero y no solo su cara de afuera
-    // (T11b, H3 de su revisión)
-    k.block(wall, H, H + 0.02, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, true);
+    // y la tapa (`out`): desde un techo, de lejos, el muro se ve entero y no solo su cara de afuera (T11b, H3 de su
+    // revisión). Va adentro del muro (1 cm de sus caras) y 1 cm abajo de su tope: de cerca se ve el ladrillo del interior
+    // y la tapa no asoma; de lejos (sin el interior), es el tope del muro
+    k.block(insetRing(ensureCCW(wall), 0.01, 2), H - 0.03, H - 0.01, 'none', 'otro', { side: LADRILLO_LEJOS, top: LADRILLO_LEJOS }, true);
   }
   for (const u of [3.2, 6.6, 10.0]) {
     k.furniture('mesa-picnic', [u, 26.35], 0, 0);

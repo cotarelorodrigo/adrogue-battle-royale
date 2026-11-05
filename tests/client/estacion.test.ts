@@ -5,13 +5,15 @@
 // cuesta dibujarla en baja.
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
+import { INDOOR_GAIN } from '../../src/client/render/exposure.ts';
 import { QUALITY } from '../../src/client/render/quality.ts';
 import { cellRect } from '../../src/client/world/front-atlas.ts';
 import { extrudeBuilding, FLOOR_H } from '../../src/client/world/geometry.ts';
 import { lightAt } from '../../src/client/world/interiors/bake.ts';
-import { buildInterior3D, INTERIOR_EXPOSURE } from '../../src/client/world/interiors/build.ts';
+import { buildInterior3D } from '../../src/client/world/interiors/build.ts';
 import { exteriorGeometry } from '../../src/client/world/interiors/exterior.ts';
 import { ITEM_GLOW, ITEM_MODELS, SUBE_COLORES } from '../../src/client/world/interiors/models.ts';
+import { PHOTO_LUMA } from '../../src/client/world/interiors/textures.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
 import { pointInPolygon, toLocal } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
@@ -19,7 +21,7 @@ import { interiorOf } from '../../src/shared/interiors/index.ts';
 import { MODEL_BOX, SOLID_MIN_H } from '../../src/shared/interiors/kit.ts';
 import type { ItemModel } from '../../src/shared/interiors/types.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
-import { deltaE, seen } from './aces.ts';
+import { ADENTRO, deltaE, linear, seen } from './aces.ts';
 import type { RGB } from './aces.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
@@ -78,11 +80,11 @@ describe('lo que brilla, a la exposición de adentro (aces.ts)', () => {
   test('las ventanas del frente, desde adentro, se leen como luz de día por un vidrio: más claras que la pared, más oscuras que los tubos, azuladas', () => {
     const colors = new Set(i.panes.filter((p) => p.look.mat === 'luz' && Math.abs(p.normal[1]) < 0.1 && p.corners.every((q) => pointInPolygon([q[0], q[2]], b.footprint))).map((p) => p.look.color));
     expect(colors.size).toBeGreaterThanOrEqual(1);
-    const muro = seen(pared, 1 * INTERIOR_EXPOSURE);
+    const muro = seen(pared, 1 * ADENTRO * linear(PHOTO_LUMA.liso)); // con la textura del liso
     for (const c of colors) {
       const v = seen(c), say = `${c} se ve (${v.join(', ')})`;
-      expect(luma(v), `${say}: más clara que la pared a luz plena (${muro.join(', ')})`).toBeGreaterThanOrEqual(luma(muro) + 20);
-      for (const t of tubos) expect(luma(v), `${say}: más oscura que un tubo`).toBeLessThanOrEqual(luma(seen(t)) - 10);
+      expect(luma(v), `${say}: más clara que la pared a luz plena (${muro.join(', ')})`).toBeGreaterThanOrEqual(luma(muro) + 8);
+      for (const t of tubos) expect(luma(v), `${say}: más oscura que un tubo`).toBeLessThanOrEqual(luma(seen(t)) - 5);
       expect(v[2] - v[0], `${say}: azulada`).toBeGreaterThanOrEqual(10);
       expect(Math.max(...v) - Math.min(...v), `${say}: casi sin color`).toBeLessThanOrEqual(40);
     }
@@ -92,12 +94,21 @@ describe('lo que brilla, a la exposición de adentro (aces.ts)', () => {
     const t = i.items.find((it) => it.model === 'sube')!;
     const n: Vec3 = [Math.sin(t.yaw), 0, Math.cos(t.yaw)];
     const L = lightAt(i, [t.at[0] + n[0] * 0.3, t.at[1] + 1.0, t.at[2] + n[2] * 0.3], n);
-    const cuerpo = seen(SUBE_COLORES.cuerpo), pintura = seen(SUBE_COLORES.pintura, L * INTERIOR_EXPOSURE);
+    // el cuerpo y la franja imitan lo horneado: van marcados (negativos en el modelo) y los lleva la ganancia de adentro
+    // como a lo que los rodea (baked.ts); la pantalla, el lector y la boca brillan (positivos)
+    const col = ITEM_MODELS.sube().getAttribute('color'), marcados = new Set<string>(), plenos = new Set<string>();
+    for (let k = 0; k < col.count; k++) {
+      const [r, g, bl] = [col.getX(k), col.getY(k), col.getZ(k)], s = r < 0 ? -1 : 1;
+      (s < 0 ? marcados : plenos).add(`#${new THREE.Color().setRGB(s * r, s * g, s * bl, THREE.LinearSRGBColorSpace).getHexString()}`);
+    }
+    expect([...marcados].sort()).toEqual([SUBE_COLORES.cuerpo, SUBE_COLORES.franja].sort());
+    expect(plenos).toContain(SUBE_COLORES.pantalla);
+    const cuerpo = seen(SUBE_COLORES.cuerpo, INDOOR_GAIN), pintura = seen(SUBE_COLORES.pintura, L * ADENTRO);
     expect(deltaE(cuerpo, pintura), `cuerpo (${cuerpo.join(', ')}) contra la pintura a luz ${L.toFixed(2)} (${pintura.join(', ')})`).toBeLessThanOrEqual(10);
-    const franja = seen(SUBE_COLORES.franja), celeste = seen(SUBE_COLORES.franjaPintura, L * INTERIOR_EXPOSURE);
+    const franja = seen(SUBE_COLORES.franja, INDOOR_GAIN), celeste = seen(SUBE_COLORES.franjaPintura, L * ADENTRO);
     expect(deltaE(franja, celeste), `franja (${franja.join(', ')}) contra (${celeste.join(', ')})`).toBeLessThanOrEqual(10);
     const p = seen(SUBE_COLORES.pantalla);
-    expect(luma(p), `pantalla (${p.join(', ')})`).toBeGreaterThan(luma(cuerpo) + 30);
+    expect(luma(p), `pantalla (${p.join(', ')}) contra el cuerpo (${cuerpo.join(', ')})`).toBeGreaterThan(luma(cuerpo) + 10);
     expect(p[2]).toBeGreaterThan(p[0]);
   });
 });

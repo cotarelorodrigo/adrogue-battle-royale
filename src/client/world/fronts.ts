@@ -3,7 +3,7 @@ import type { Vec2 } from '../../shared/geo.ts';
 import type { Building, Opening } from '../../shared/mapdata.ts';
 import { cellRect, groundCells, upperCell } from './front-atlas.ts';
 import type { FrontCell } from './front-atlas.ts';
-import { BAY_W, cutRect, edgeHoles, FLOOR_H, newBuilder, quad, tintColor, toGeometry } from './wall-kit.ts';
+import { BAY_W, cutRect, edgeHoles, FLOOR_H, lattice, newBuilder, quad, tintColor, toGeometry } from './wall-kit.ts';
 import type { Builder, Rect } from './wall-kit.ts';
 
 /** Toldo sobre la puerta y la vidriera: cae de `topY` (en la pared) a `bottomY` a `depth` m; `inset` m de margen por lado. */
@@ -68,7 +68,7 @@ function face(b: Builder, vs: [number, number, number][], uvs: [number, number][
  * adentro de `openings`: lo recortado va a `tapa()` (si viene), con las mismas uv.
  */
 export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => number, openings: readonly Opening[] = [],
-  tapa?: () => Builder): THREE.BufferGeometry {
+  tapa?: () => Builder, ys: readonly number[] = []): THREE.BufferGeometry {
   const b = newBuilder(true);
   const f = bd.front;
   if (!f) return toGeometry(b);
@@ -128,9 +128,11 @@ export function frontGeometry(bd: Building, fp: Vec2[], edgeOf: (e: number) => n
           face(to, [[pa[0], q.y0, pa[1]], [pb[0], q.y0, pb[1]], [pb[0], q.y1, pb[1]], [pa[0], q.y1, pa[1]]],
             [[ua, v(q.y0)], [ub, v(q.y0)], [ub, v(q.y1)], [ua, v(q.y1)]], [p.n[0], 0, p.n[1]], row.groundRow ? groundColor : tint);
         };
-        const { solid, cut } = cutRect({ s0: sa, s1: sb, y0: row.y0, y1: row.y1 }, holesOf(p));
-        for (const q of solid) piece(b, q);
-        if (tapa) for (const q of cut) piece(tapa(), q);
+        // sin juntas en T (wall-kit.ts, lattice): en las puntas de los huecos de la arista (de todas las filas) y en `ys`
+        const hs = holesOf(p), ss = hs.flatMap((h) => [h.s0, h.s1]);
+        const { solid, cut } = cutRect({ s0: sa, s1: sb, y0: row.y0, y1: row.y1 }, hs);
+        for (const q of lattice(solid, ss, ys)) piece(b, q);
+        if (tapa) for (const q of lattice(cut, ss, ys)) piece(tapa(), q);
       });
     }
   };

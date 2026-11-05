@@ -3,8 +3,11 @@
 // un vidrio de verdad. El color por vértice no es luz: es el lado de la cara (GLASS_OUTSIDE en las que miran a la
 // calle o a un patio, GLASS_INSIDE en las de adentro), que multiplica la opacidad. Las dos caras de un paño van en
 // una sola pasada (forceSinglePass) y la de atrás se descarta: de afuera se ve la de afuera y de adentro la de adentro,
-// sin sumar velos ni draw calls.
+// sin sumar velos ni draw calls. El vidrio esmerilado (Look.esmerilado) va en la misma malla: en el azul del color por
+// vértice, negativo, la luz que deja pasar (la horneada de su lugar), que se ve blanquecina con la ganancia de adentro
+// (baked.ts) y casi opaca (FROST_ALPHA).
 import * as THREE from 'three';
+import { INTERIOR_GAIN } from '../../render/exposure.ts';
 import { pointInPolygon } from '../../../shared/geo.ts';
 import type { Vec3 } from '../../../shared/geo.ts';
 import type { Interior } from '../../../shared/interiors/types.ts';
@@ -18,6 +21,8 @@ const GLASS_F0 = 0.08;
 const GLASS_F90 = 0.5;
 /** El cielo que refleja: un poco más oscuro que el horizonte (FOG_COLOR), como el de enfrente en un vidrio. */
 const GLASS_SKY = '#a9bfcf';
+/** La opacidad del vidrio esmerilado: deja pasar la luz y apenas algo de lo de atrás, no deja ver. */
+export const FROST_ALPHA = 0.85;
 /** Se mira el lado de una cara esto (m) más allá, en su normal. */
 const PROBE = 0.3;
 
@@ -36,18 +41,24 @@ export function glassMaterial(): THREE.MeshBasicMaterial {
     name: 'in_vidrio', color: GLASS_SKY, vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true,
   });
   m.onBeforeCompile = (shader) => {
+    shader.uniforms.interiorGain = INTERIOR_GAIN;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${VARYINGS}`)
       .replace('#include <project_vertex>', `#include <project_vertex>
   vGlassPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
   vGlassNormal = normalize(mat3(modelMatrix) * normal);`);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${VARYINGS}`)
+      .replace('#include <common>', `#include <common>\n${VARYINGS}\nuniform float interiorGain;`)
       .replace('#include <color_fragment>', `if (!gl_FrontFacing) discard; // la cara de atrás: la dibuja el otro lado del paño
-  float glassSide = vColor.r;
-  float glassFacing = abs(dot(normalize(vGlassNormal), normalize(cameraPosition - vGlassPos)));
-  diffuseColor.a = opacity * glassSide * mix(${GLASS_F0.toFixed(3)}, ${GLASS_F90.toFixed(3)}, pow(1.0 - glassFacing, 5.0));`);
+  if (vColor.b < 0.0) {
+    // esmerilado: la luz que deja pasar, blanquecina, con la ganancia de adentro
+    diffuseColor = vec4(vec3(-vColor.b * interiorGain), opacity * ${FROST_ALPHA.toFixed(3)});
+  } else {
+    float glassSide = vColor.r;
+    float glassFacing = abs(dot(normalize(vGlassNormal), normalize(cameraPosition - vGlassPos)));
+    diffuseColor.a = opacity * glassSide * mix(${GLASS_F0.toFixed(3)}, ${GLASS_F90.toFixed(3)}, pow(1.0 - glassFacing, 5.0));
+  }`);
   };
-  m.customProgramCacheKey = () => 'in_vidrio:fresnel';
+  m.customProgramCacheKey = () => 'in_vidrio:fresnel:esmerilado';
   return m;
 }

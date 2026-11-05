@@ -48,8 +48,9 @@ const PASO = 2.6;
 /** El número llamado del turnero: LED rojo sobre negro. Brilla, así que el rojo va oscurecido: '#aa1503' se ve
  *  #ff3b1c adentro (ver franjaLuz en Estilo). */
 const TURNO: SignLook = { fondo: '#070707', letra: '#aa1503', marco: '#070707', fuente: 'condensada' };
-/** La franja esmerilada de la pared de vidrio (el vinilo que la hace ver, a la altura de la vista de un chico). */
-const ESMERILADO: Look = { mat: 'liso', color: '#eceeee' };
+/** La franja esmerilada de la pared de vidrio (el vinilo que la hace ver, a la altura de la vista de un chico): un vidrio
+ *  esmerilado, blanquecino y translúcido (Look.esmerilado), que no suma oclusión ni colisión. */
+const ESMERILADO: Look = { mat: 'vidrio', color: '#e4e6e6', esmerilado: true };
 /** La puerta del tesoro: el acero de la puerta, los bulones y el volante, y la chapa del marco. */
 const BOVEDA: SignLook = { fondo: '#b3b8bd', letra: '#5c6166', marco: '#7c8186', fuente: 'sans' };
 
@@ -168,16 +169,17 @@ function paneles(k: Kit, [u0, v0, u1, v1]: Rect, look: Look, power: number): voi
 }
 
 /** Una pieza de la pared de vidrio (un parante, un travesaño, un perfil o la franja esmerilada): de `a` a `b` a lo largo
- *  de ella, de y0 a y1 y de `ancho` de través, centrada en el vidrio. Sin colisión: el vidrio ya frena. */
+ *  de ella, de y0 a y1 y de `ancho` de través, centrada en el vidrio. Sin colisión: el vidrio ya frena. La franja va con
+ *  el rol del vidrio: no tapa la luz del horneado. */
 function parante(k: Kit, a: Vec2, b: Vec2, y0: number, y1: number, ancho = PARANTE_D, look = ALUMINIO): void {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const e: Vec2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], s: Vec2 = [(-e[1] * ancho) / 2, (e[0] * ancho) / 2];
-  k.block([add(a, s, -1), add(b, s, -1), add(b, s), add(a, s)], y0, y1, 'none', 'otro', { side: look, top: look, bottom: look });
+  k.block([add(a, s, -1), add(b, s, -1), add(b, s), add(a, s)], y0, y1, 'none', look.mat === 'vidrio' ? 'vidrio' : 'otro', { side: look, top: look, bottom: look });
 }
 
 /** La pared de vidrio de `from` a `to`, del piso al cielorraso, con su puerta a `at` m de `from` (la hoja dibujada
  *  abierta hacia la izquierda de from → to, D10), sus parantes de aluminio, el marco de la puerta, los perfiles de piso
- *  (en los paños) y de techo, y la franja esmerilada de los paños. Todo en liso: no suma mallas. */
+ *  (en los paños) y de techo, y la franja esmerilada de los paños. En liso y en el vidrio: no suma mallas. */
 function paredDeVidrio(k: Kit, from: Vec2, to: Vec2, at: number): void {
   const cielo = k.ceilingOver(0);
   k.wall(from, to, { t: VIDRIO_T, collide: 'glass', look: VIDRIO, gaps: [{ at, width: PUERTA_W, height: PUERTA_H, glassLeaf: true }] });

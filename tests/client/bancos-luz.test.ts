@@ -8,12 +8,12 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { TONE_MAPPING } from '../../src/client/render/scene.ts';
 import { lightAt } from '../../src/client/world/interiors/bake.ts';
-import { INTERIOR_EXPOSURE } from '../../src/client/world/interiors/build.ts';
+import { INDOOR_GAIN } from '../../src/client/render/exposure.ts';
 import { ITEM_GLOW, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
 import { interiorOf } from '../../src/shared/interiors/index.ts';
 import type { Interior, Label, Look } from '../../src/shared/interiors/types.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
-import { ACES, deltaE, hexRGB, seen } from './aces.ts';
+import { ACES, ADENTRO, deltaE, hexRGB, seen } from './aces.ts';
 import type { RGB } from './aces.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
@@ -43,7 +43,7 @@ describe('la curva de los tests (aces.ts)', () => {
 
 /** Lo que se ve de un color de un cartel: pleno si brilla; si no, horneado con la luz del lugar donde está. */
 function labelSeen(i: Interior, l: Label, color: string): RGB {
-  return l.glow ? seen(color) : seen(color, lightAt(i, l.at, [l.normal[0], 0, l.normal[1]]) * INTERIOR_EXPOSURE);
+  return l.glow ? seen(color) : seen(color, lightAt(i, l.at, [l.normal[0], 0, l.normal[1]]) * ADENTRO);
 }
 
 describe.each([
@@ -69,10 +69,11 @@ describe.each([
 /**
  * Cada color que brilla en los bancos y lo que tiene que verse. Los de la marca se comparan con la marca; los del
  * cajero automático y el turnero, que imitan lo horneado (ITEM_GLOW va sin hornear para que la pantalla brille), con
- * su material real horneado a la luz del salón cerca de un panel (0,9).
+ * su material real horneado a la luz del salón cerca de un panel (0,9). Esos van marcados como lo horneado de adentro
+ * (`imita`: negativos en el modelo), así que los lleva la ganancia del ojo como a lo que los rodea (baked.ts).
  */
-const horneado = (real: string, luz = 0.9): RGB => seen(real, luz * INTERIOR_EXPOSURE);
-const QUE_SE_VE: { que: string; brilla: string; ve: RGB }[] = [
+const horneado = (real: string, luz = 0.9): RGB => seen(real, luz * ADENTRO);
+const QUE_SE_VE: { que: string; brilla: string; ve: RGB; imita?: true }[] = [
   { que: 'el naranja del Galicia (franja, números, letreros)', brilla: '#883010', ve: hexRGB('#e1561f') },
   { que: 'el azul del Nación', brilla: '#003860', ve: hexRGB('#005ba4') },
   { que: 'el celeste del Nación', brilla: '#1068ac', ve: hexRGB('#59b7e6') },
@@ -83,38 +84,42 @@ const QUE_SE_VE: { que: string; brilla: string; ve: RGB }[] = [
   { que: 'el fondo negro del turnero', brilla: '#070707', ve: hexRGB('#000000') },
   { que: 'el número del turnero, LED rojo', brilla: '#aa1503', ve: hexRGB('#ff3b1c') },
   { que: 'la pantalla encendida del cajero automático', brilla: '#3d76a8', ve: hexRGB('#8fc6e4') },
-  { que: 'el gabinete del cajero: aluminio', brilla: '#3a3e44', ve: horneado('#9aa0a6') },
-  { que: 'el frente del cajero: plástico gris oscuro', brilla: '#1d1f23', ve: horneado('#50555c') },
-  { que: 'el teclado del cajero: acero claro', brilla: '#55595f', ve: horneado('#d0d4d8') },
-  { que: 'las ranuras del cajero: negro', brilla: '#0a0b0c', ve: horneado('#2a2c30') },
-  { que: 'la caja del turnero: acero oscuro', brilla: '#121316', ve: horneado('#3a3c40') },
-  { que: 'la pantalla apagada del turnero', brilla: '#050506', ve: horneado('#1b1c1f') },
-  { que: 'las varillas del turnero', brilla: '#2c2e32', ve: horneado('#777b82') },
+  { que: 'el gabinete del cajero: aluminio', brilla: '#2d2f31', ve: horneado('#9aa0a6'), imita: true },
+  { que: 'el frente del cajero: plástico gris oscuro', brilla: '#131517', ve: horneado('#50555c'), imita: true },
+  { que: 'el teclado del cajero: acero claro', brilla: '#404143', ve: horneado('#d0d4d8'), imita: true },
+  { que: 'las ranuras del cajero: negro', brilla: '#060708', ve: horneado('#2a2c30'), imita: true },
+  { que: 'la caja del turnero: acero oscuro', brilla: '#0b0c0d', ve: horneado('#3a3c40'), imita: true },
+  { que: 'la pantalla apagada del turnero', brilla: '#030304', ve: horneado('#1b1c1f'), imita: true },
+  { que: 'las varillas del turnero', brilla: '#212225', ve: horneado('#777b82'), imita: true },
 ];
 
-/** Los colores que brillan en un interior: los carteles `glow`, los bloques de in_luz y los muebles de ITEM_GLOW. */
+/** Los colores que brillan en un interior: los carteles `glow`, los bloques de in_luz y los muebles de ITEM_GLOW (los que
+ *  imitan lo horneado van negativos en el modelo: su valor, con `-` adelante). */
 function glowing(i: Interior): Set<string> {
   const out = new Set<string>();
   for (const l of i.labels.filter((x) => x.glow)) for (const c of [l.look.fondo, l.look.letra, l.look.marco]) out.add(c.toLowerCase());
   for (const b of i.blocks) for (const look of [b.side, b.top, b.bottom] as (Look | undefined)[]) if (look?.mat === 'luz') out.add(look.color.toLowerCase());
   for (const m of new Set(i.items.filter((it) => ITEM_GLOW[it.model]).map((it) => it.model))) {
     const col = ITEM_MODELS[m]().getAttribute('color');
-    for (let k = 0; k < col.count; k++) out.add(`#${new THREE.Color().setRGB(col.getX(k), col.getY(k), col.getZ(k), THREE.LinearSRGBColorSpace).getHexString()}`);
+    for (let k = 0; k < col.count; k++) {
+      const [r, g, b] = [col.getX(k), col.getY(k), col.getZ(k)], s = r < 0 ? -1 : 1;
+      out.add(`${s < 0 ? '-' : ''}#${new THREE.Color().setRGB(s * r, s * g, s * b, THREE.LinearSRGBColorSpace).getHexString()}`);
+    }
   }
   return out;
 }
 
 describe('todo lo que brilla en los bancos', () => {
   test('cada color que brilla está en la tabla de lo que tiene que verse', () => {
-    const known = new Set(QUE_SE_VE.map((x) => x.brilla));
+    const known = new Set(QUE_SE_VE.map((x) => `${x.imita ? '-' : ''}${x.brilla}`));
     for (const id of ['banco-nacion', 'galicia', 'bbva']) {
       const missing = [...glowing(interiorOf(map, id))].filter((c) => !known.has(c));
       expect(missing, `${id}: brillan sin objetivo`).toEqual([]);
     }
   });
 
-  test.each(QUE_SE_VE)(`$que ($brilla) se ve a ΔE ≤ ${MAX_DE} de lo que tiene que verse`, ({ brilla, ve }) => {
-    const got = seen(brilla);
+  test.each(QUE_SE_VE)(`$que ($brilla) se ve a ΔE ≤ ${MAX_DE} de lo que tiene que verse`, ({ brilla, ve, imita }) => {
+    const got = seen(brilla, imita ? INDOOR_GAIN : 1);
     expect(deltaE(got, ve), `${brilla} se ve ${fmt(got)} y tiene que verse ${fmt(ve)}`).toBeLessThanOrEqual(MAX_DE);
   });
 });

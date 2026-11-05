@@ -7,11 +7,17 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Vec3 } from '../../../shared/geo.ts';
 import type { ItemModel } from '../../../shared/interiors/types.ts';
 
-/** Sin uv (no hay textura), llevada a `at` y pintada de `color`. */
+/** En un mueble que brilla (ITEM_GLOW), lo que imita lo horneado (el gabinete del cajero, el cuerpo de la terminal
+ *  SUBE): lleva ya lo oscuro que tendría a la luz de su lugar y va marcado como lo horneado de adentro (negativo, ver
+ *  baked.ts), así que la ganancia del ojo lo aclara adentro como a lo que lo rodea y desde la vereda queda igual de
+ *  oscuro. Lo demás del mueble (la pantalla) brilla. */
+export const horneado = (hex: string): string => `-${hex}`;
+
+/** Sin uv (no hay textura), llevada a `at` y pintada de `color` (con `-` adelante, marcado: ver `horneado`). */
 function paint(g: THREE.BufferGeometry, at: Vec3, color: string): THREE.BufferGeometry {
   g.deleteAttribute('uv');
   g.translate(at[0], at[1], at[2]);
-  const c = new THREE.Color(color);
+  const c = color.startsWith('-') ? new THREE.Color(color.slice(1)).multiplyScalar(-1) : new THREE.Color(color);
   const n = g.getAttribute('position').count;
   const rgb = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) rgb.set([c.r, c.g, c.b], i * 3);
@@ -30,6 +36,15 @@ export const cyl = (r: number, h: number, at: Vec3, color: string, segments = 10
 /** Tronco de cono vertical (radio rTop arriba, rBottom abajo) de alto h con la base en `at`. */
 export const cone = (rTop: number, rBottom: number, h: number, at: Vec3, color: string, segments = 10): THREE.BufferGeometry =>
   paint(new THREE.CylinderGeometry(rTop, rBottom, h, segments).translate(0, h / 2, 0), at, color);
+
+/** La cara de abajo de una lona (la de la sombrilla), a la sombra de sí misma: su color por LONA_ABAJO (le llega solo
+ *  lo que pasa por la tela y lo que rebota del piso; el horneado le da a cada mueble una sola luz, la de arriba). */
+const LONA_ABAJO = 0.3;
+const underside = (g: THREE.BufferGeometry): THREE.BufferGeometry => {
+  const [nor, col] = [g.getAttribute('normal'), g.getAttribute('color')];
+  for (let v = 0; v < nor.count; v++) if (nor.getY(v) < -0.5) col.setXYZ(v, col.getX(v) * LONA_ABAJO, col.getY(v) * LONA_ABAJO, col.getZ(v) * LONA_ABAJO);
+  return g;
+};
 
 /** Tronco de cono sin tapas (lo de arriba y lo de abajo no se ve): de radio rTop arriba y rBottom abajo, con la base en
  *  `at`. */
@@ -61,10 +76,11 @@ const ALUMINIUM = '#9aa0a6';
 const LAMINATE = '#e2ded6', LAMINATE_SIDE = '#cfcac1', COUNTER_FOOT = '#4a4d52', SCREEN_BACK = '#1b1c1f', KEYBOARD = '#2a2c30';
 const CHAIR = '#3b3f45', CHAIR_BASE = '#26282c', SEAT = '#646a72';
 // El cajero automático y el turnero brillan (ITEM_GLOW): van sin la luz horneada, así que su cuerpo lleva ya lo oscuro
-// que tendría a la luz del salón (color · luz · INTERIOR_EXPOSURE: un gris metálico queda en ~#3a) y la pantalla, su
-// brillo. Desde adentro, con el ojo adaptado, lo que brilla se ve ~4 veces más fuerte que desde la vereda.
-const ATM_BODY = '#3a3e44', ATM_FRONT = '#1d1f23', ATM_SCREEN = '#3d76a8', ATM_KEYS = '#55595f', ATM_SLOT = '#0a0b0c';
-const SIGN_BOX = '#121316', SIGN_SCREEN = '#050506', ROD = '#2c2e32';
+// que tendría a la luz del salón (el real · 0,9 · INTERIOR_EXPOSURE: el aluminio #9aa0a6 queda en #2d2f31), marcado como
+// lo horneado (`horneado`), y la pantalla, su brillo. Desde adentro, con el ojo adaptado, lo que brilla se ve ~4 veces
+// más fuerte que desde la vereda (lo horneado, además, con la ganancia).
+const ATM_BODY = horneado('#2d2f31'), ATM_FRONT = horneado('#131517'), ATM_SCREEN = '#3d76a8', ATM_KEYS = horneado('#404143'), ATM_SLOT = horneado('#060708');
+const SIGN_BOX = horneado('#0b0c0d'), SIGN_SCREEN = horneado('#030304'), ROD = horneado('#212225');
 
 /** Una silla de oficina giratoria en (x, z), con el respaldo hacia −z si `back` es −1 (mira a +z) o hacia +z si es 1. */
 const officeChair = (x: number, z: number, back: 1 | -1): THREE.BufferGeometry[] => [
@@ -85,11 +101,15 @@ const PANEL_FACE = '#f3f1ec', PANEL_FOOT = '#3b3d40';
 /** El plafón: un disco de 7 m (su cara de abajo, la pintada, es un cartel), con el aro del borde y los cuatro cables de
  *  los que cuelga, hasta el lucernario (2,6 m más arriba). */
 const PLAFON_R = 3.5, PLAFON_T = 0.1, PLAFON_CABLE = 2.5;
-/** La butaca: asiento, respaldo y el costado de −x con su apoyabrazos (el de +x es el de la butaca de al lado), de 0,55
- *  m de ancho; mira a +z (al escenario). Son ~200 en el auditorio: tres cajas cada una. */
+/** La ranura entre el asiento y el respaldo de una butaca: un hueco oscuro, un poco más bajo que el asiento. */
+const RANURA = '#141214';
+/** La butaca: asiento, la ranura, respaldo y medio costado de cada lado con su apoyabrazos (con el de la butaca de al
+ *  lado hacen uno entero; en las puntas de la fila queda el medio), de 0,55 m de ancho; mira a +z (al escenario). Son
+ *  ~200 en el auditorio: cinco cajas cada una (60 triángulos). */
 const seat = (): THREE.BufferGeometry[] => [
-  box(0.5, 0.1, 0.46, [0, 0.4, 0.02], SEAT_FABRIC), box(0.5, 0.56, 0.09, [0, 0.42, -0.23], SEAT_FABRIC),
-  box(0.05, 0.62, 0.52, [-0.275, 0, -0.02], SEAT_FRAME),
+  box(0.5, 0.1, 0.415, [0, 0.4, 0.0425], SEAT_FABRIC), box(0.5, 0.08, 0.02, [0, 0.4, -0.175], RANURA),
+  box(0.5, 0.56, 0.09, [0, 0.42, -0.23], SEAT_FABRIC),
+  box(0.025, 0.62, 0.52, [-0.2625, 0, -0.02], SEAT_FRAME), box(0.025, 0.62, 0.52, [0.2625, 0, -0.02], SEAT_FRAME),
 ];
 
 // El McDonald's y La Veneciana (tarea 8). Lo que se tiñe con Item.color (el asiento de una silla, la tapa de una mesa, la
@@ -198,8 +218,9 @@ const INOX_M = '#b7bbbf', INOX_LID = '#3b3e42', ARM = '#d2d5d8', READER = '#2b2e
 const BENCH_WOOD = '#9a6a3c', BENCH_IRON = '#2a3a2f';
 const WIN_FRAME = '#6b4a2e', MARBLE = '#dcd8cf', BRONZE = '#8a7444', GRILLE_DARK = '#55595d';
 /** La terminal SUBE: la pintura de su cuerpo (gris claro) y de su franja (el celeste de la tarjeta), y lo que llevan
- *  ya oscurecido (brilla: va sin hornear); la pantalla prendida, el lector y la boca de billetes. */
-export const SUBE_COLORES = { pintura: '#e2e4e6', cuerpo: '#48494a', franjaPintura: '#1e9bd7', franja: '#042f44', pantalla: '#8fb4d4', lector: '#1a1c1f' } as const;
+ *  ya oscurecido (brilla: va sin hornear; la pintura a la luz del hall, 0,57, por INTERIOR_EXPOSURE, y en el modelo
+ *  marcado como lo horneado); la pantalla prendida, el lector y la boca de billetes. */
+export const SUBE_COLORES = { pintura: '#e2e4e6', cuerpo: '#383839', franjaPintura: '#1e9bd7', franja: '#022334', pantalla: '#8fb4d4', lector: '#1a1c1f' } as const;
 /** Un caño de radio r de `a` a `b` (sin tapas). */
 const rod = (a: Vec3, b: Vec3, r: number, color: string, segments = 6): THREE.BufferGeometry => {
   const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
@@ -246,7 +267,7 @@ const ticketWindow = (): THREE.BufferGeometry[] => [
 /** La terminal de carga SUBE (MODEL_BOX 0,56 × 0,42 × 1,62): el cuerpo gris claro, la franja celeste de arriba (su
  *  cartel, "CARGA SUBE", lo pone el plan), la pantalla, el lector de la tarjeta, la boca de billetes y la base. */
 const subeTerminal = (): THREE.BufferGeometry[] => {
-  const { cuerpo, franja, pantalla, lector } = SUBE_COLORES;
+  const { pantalla, lector } = SUBE_COLORES, cuerpo = horneado(SUBE_COLORES.cuerpo), franja = horneado(SUBE_COLORES.franja);
   return [
     box(0.56, 0.04, 0.42, [0, 0, 0], lector), box(0.54, 1.46, 0.4, [0, 0.04, 0], cuerpo), box(0.56, 0.12, 0.42, [0, 1.5, 0], franja),
     box(0.36, 0.27, 0.012, [0, 1.08, 0.2], lector), box(0.32, 0.23, 0.004, [0, 1.1, 0.207], pantalla),
@@ -350,7 +371,7 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   // la sombrilla (sin caja: se cruza; origen: el piso, en el medio de la base): la base, el mástil y la tela en ocho
   // paños, roja, de 1,3 m de radio con el borde a 1,86 m
   sombrilla: () => model(cyl(0.22, 0.06, [0, 0, 0], BASE, 12), cyl(0.022, 2.3, [0, 0.06, 0], POLE, 6),
-    cone(0.04, 1.3, 0.38, [0, 1.98, 0], CANOPY, 8), cone(1.3, 1.3, 0.12, [0, 1.86, 0], CANOPY, 8)),
+    underside(cone(0.04, 1.3, 0.38, [0, 1.98, 0], CANOPY, 8)), underside(cone(1.3, 1.3, 0.12, [0, 1.86, 0], CANOPY, 8))),
   // la silla director plegable (sin caja; origen: el piso, bajo el medio del asiento; el respaldo, del lado de −z): el
   // armazón y los apoyabrazos negros, la lona (asiento y respaldo) se tiñe
   'silla-director': () => model(...[-1, 1].flatMap((sx) => [
@@ -370,10 +391,12 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   // un balde de helado de la vitrina (brilla, bajo el vidrio): la cubeta y el copete, del color del gusto
   'balde-helado': () => model(box(0.16, 0.1, 0.32, [0, 0, 0], '#ffffff'), box(0.13, 0.05, 0.26, [0, 0.1, 0.01], '#ffffff'),
     box(0.08, 0.03, 0.14, [0.01, 0.15, -0.02], '#ffffff')),
-  // la butaca del cine (MODEL_BOX: 0,55 × 0,62 × 1,0; mira a +z, a la pantalla): el asiento y el respaldo alto de tela y
-  // el costado de −x con su apoyabrazos (el de +x es el de la butaca de al lado). Son 434: tres cajas (36 triángulos)
-  butaca: () => model(box(0.5, 0.14, 0.5, [0.02, 0.38, 0.04], BUTACA_TELA), box(0.5, 0.62, 0.12, [0.02, 0.38, -0.25], BUTACA_TELA),
-    box(0.05, 0.68, 0.62, [-0.25, 0, 0], BUTACA_ARMAZON)),
+  // la butaca del cine (MODEL_BOX: 0,55 × 0,62 × 1,0; mira a +z, a la pantalla): el asiento y el respaldo alto de tela,
+  // la ranura entre los dos y medio costado de cada lado con su apoyabrazos (con el de la de al lado hacen uno entero; en
+  // las puntas de la fila queda el medio). Son 434: cinco cajas (60 triángulos)
+  butaca: () => model(box(0.5, 0.14, 0.46, [0, 0.38, 0.06], BUTACA_TELA), box(0.5, 0.11, 0.02, [0, 0.38, -0.18], RANURA),
+    box(0.5, 0.62, 0.12, [0, 0.38, -0.25], BUTACA_TELA),
+    box(0.025, 0.68, 0.62, [-0.2625, 0, 0], BUTACA_ARMAZON), box(0.025, 0.68, 0.62, [0.2625, 0, 0], BUTACA_ARMAZON)),
   // la máquina de pochoclo (MODEL_BOX: 0,9 × 0,6 × 1,75): el carrito rojo con su guarda dorada, la vitrina (el vidrio va
   // en ITEM_GLASS) con los parantes, el pochoclo, la olla colgada y el techo rojo
   pochoclera: () => model(box(0.9, 0.82, 0.6, [0, 0.05, 0], POP_RED), box(0.92, 0.05, 0.62, [0, 0.82, 0], POP_TRIM),

@@ -6,7 +6,9 @@ import type { Door } from './openings.ts';
 
 /** Material de una cara; el cliente lo traduce a `in_<mat>` de WorldMaterials. `color` multiplica la textura. */
 export type Mat = 'liso' | 'porcelanato' | 'madera' | 'machimbre' | 'baldosa' | 'ceramico' | 'tela' | 'metal' | 'ladrillo' | 'vidrio' | 'luz';
-export interface Look { mat: Mat; color: string }
+/** `esmerilado` (solo en un vidrio): un vinilo esmerilado, blanquecino y translúcido, que deja pasar la luz pero no deja
+ *  ver (la franja de las paredes de vidrio de los bancos); va en el mismo vidrio, sin sumar mallas. */
+export interface Look { mat: Mat; color: string; esmerilado?: true }
 /** solid: frena jugadores y balas; glass: solo jugadores; none: solo se ve. */
 export type Collide = 'solid' | 'glass' | 'none';
 /** `descanso`: el escalón largo de un tramo con descansos (StairOpts.landings): sube como un escalón, sin huella fija. */
@@ -69,7 +71,11 @@ export interface Viewpoint { id: string; pos: Vec3; yaw: number }
  *  es `out`; los usa validateInterior. `roofHoles`: los huecos (mundo, antihorarios) que el interior le abre al techo
  *  del edificio (D13: el atrio de la Casa de la Cultura); el chunk los abre en su techo y en la cáscara de sombra.
  *  `trees`: los árboles de sus patios (Kit.tree, tarea 9), árboles del mapa como los de la calle: el cliente los dibuja
- *  con ellos (vegetation.ts) y collision.ts les pone el tronco sólido de cualquier árbol. */
+ *  con ellos (vegetation.ts) y collision.ts les pone el tronco sólido de cualquier árbol. `dim` (si está; si no, 1): por
+ *  cuánto va la luz horneada bajo techo de un lugar que es oscuro aunque el ojo se adapte (el cine), sin tocar sus
+ *  lámparas ni su ambient (la oclusión del horneado resta lo mismo). `shade` (si está): los edificios del mapa cerca de
+ *  lo que el interior tiene al aire libre (planta y altura), que le pueden tapar el sol al horneado de afuera. */
 export interface Interior { placeId: string; buildingId: string; publicFloors: number; terrace: boolean; ambient: number;
   blocks: Block[]; panes: Pane[]; items: Item[]; labels: Label[]; lamps: Lamp[]; floors: FloorArea[]; stairs: StairRun[]; doors: Door[];
-  views: Viewpoint[]; marks: Record<string, Vec3>; footprint: Vec2[]; patios: Vec2[][]; roofHoles: Vec2[][]; trees: Tree[] }
+  views: Viewpoint[]; marks: Record<string, Vec3>; footprint: Vec2[]; patios: Vec2[][]; roofHoles: Vec2[][]; trees: Tree[]; dim?: number;
+  shade?: { polygon: Vec2[]; height: number }[] }

@@ -59,7 +59,7 @@ for (const q of ['baja', 'media', 'alta'] as const) {
     // con la máquina cargada varía
     rows.push(`${q.padEnd(5)} los ${interiors.length}, armados con el horneado: ${total.toFixed(0)} ms`);
     console.log(rows.join('\n'));
-  });
+  }, 30_000); // ~1,8 s sola; con la suite entera en paralelo, la máquina cargada pasa los 5 s de vitest
 }
 
 function triangles(g: THREE.BufferGeometry): THREE.Triangle[] {

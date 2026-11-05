@@ -89,6 +89,28 @@ export function cutRect(r: Rect, holes: readonly Rect[]): { solid: Rect[]; cut: 
   return out;
 }
 
+/** Las marcas de `ms` que caen adentro de (a, b), ordenadas y sin repetir, con a y b en las puntas. */
+function splits(ms: readonly number[], a: number, b: number): number[] {
+  const inside = ms.filter((m) => m > a + 1e-6 && m < b - 1e-6).sort((x, y) => x - y);
+  return [a, ...inside.filter((m, k) => k === 0 || m - inside[k - 1] > 1e-6), b];
+}
+
+/** Los rectángulos `rs` partidos en cada marca de `ss` (a lo largo) y de `ys` (en alto) que les cae adentro. Si todas
+ *  las caras de un plano se parten con las mismas marcas (las puntas de todos sus rectángulos), ningún vértice de una
+ *  queda en medio de una arista de otra: sin juntas en T, que el rasterizado deja abiertas como puntos o una línea de
+ *  lo que hay detrás (T5 M1, T9 H5 y la T11c). */
+export function lattice(rs: readonly Rect[], ss: readonly number[], ys: readonly number[]): Rect[] {
+  const out: Rect[] = [];
+  for (const r of rs) {
+    const [cs, rows] = [splits(ss, r.s0, r.s1), splits(ys, r.y0, r.y1)];
+    for (let a = 0; a + 1 < cs.length; a++) for (let c = 0; c + 1 < rows.length; c++) out.push({ s0: cs[a], s1: cs[a + 1], y0: rows[c], y1: rows[c + 1] });
+  }
+  return out;
+}
+
+/** Las marcas de los rectángulos `rs`: sus puntas a lo largo (`s`) y en alto (`y`). */
+export const marksOf = (rs: readonly Rect[]): { s: number[]; y: number[] } => ({ s: rs.flatMap((r) => [r.s0, r.s1]), y: rs.flatMap((r) => [r.y0, r.y1]) });
+
 /** Los huecos de `openings` por arista de `fp` (la planta antihoraria que dibuja; `edgeOf`: arista guardada → de fp),
  *  con `s` en metros desde fp[i]. Si fp es la planta guardada dada vuelta, cada arista se recorre al revés. */
 export function edgeHoles(stored: Vec2[], fp: Vec2[], edgeOf: (e: number) => number, openings: readonly Opening[]): Map<number, Rect[]> {

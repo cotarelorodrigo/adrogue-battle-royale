@@ -3,7 +3,12 @@
 // la exposición / 0,6, la matriz de entrada, RRTAndODTFit, la matriz de salida y el recorte a [0, 1]. Después, a sRGB.
 // La exposición es la de adentro (INDOOR_EXPOSURE): si la tarea que la calibre la cambia, lo que se compara con esto
 // se corre y su test lo avisa.
-import { INDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
+import { INDOOR_EXPOSURE, INDOOR_GAIN } from '../../src/client/render/exposure.ts';
+import { INTERIOR_EXPOSURE } from '../../src/client/world/interiors/build.ts';
+
+/** Por cuánto se multiplica la luz horneada de adentro, visto adentro con el ojo adaptado: INTERIOR_EXPOSURE y la
+ *  ganancia de lo horneado (interiors/baked.ts). Lo horneado se ve `seen(color, luz · ADENTRO)`. */
+export const ADENTRO = INTERIOR_EXPOSURE * INDOOR_GAIN;
 
 export type RGB = [number, number, number];
 
@@ -24,7 +29,7 @@ const mul = (m: readonly (readonly number[])[], v: RGB): RGB =>
 
 /**
  * El sRGB (0–255) que se ve de `hex` adentro. `k` multiplica el color lineal antes del tone mapping: 1 para lo que
- * brilla (in_luz, ITEM_GLOW, carteles `glow`) y luz · INTERIOR_EXPOSURE para lo horneado.
+ * brilla (in_luz, ITEM_GLOW, carteles `glow`) y luz · ADENTRO para lo horneado.
  */
 export function seen(hex: string, k = 1, exposure = INDOOR_EXPOSURE): RGB {
   return seenLinear(hexRGB(hex).map((x) => toLinear(x / 255) * k) as RGB, exposure);
