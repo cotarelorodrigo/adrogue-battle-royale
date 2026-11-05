@@ -1,4 +1,5 @@
-// Formas de subir: escaleras de mano (2 draw calls para todo el mapa) y contenedores (instanciados, uno por celda).
+// Formas de subir: escaleras de mano (2 draw calls para todo el mapa) y contenedores (instanciados, en una malla con los
+// que se ven: near.ts).
 // Escaleras: las barandas son una geometría de 1 m de alto que cada instancia estira hasta topY + manijas; los
 // peldaños, un cuadrilátero por escalera con una textura que deja ver solo una franja cada 0,3 m (alpha-test): eran
 // ~11 000 cajitas y ~67 000 triángulos, ahora son 2 triángulos por escalera.
@@ -7,7 +8,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { hash01 } from '../../shared/geo.ts';
 import { DUMPSTER } from '../../shared/collision.ts';
 import type { Prop } from '../../shared/mapdata.ts';
-import { splitByCell } from './cells.ts';
+import { inViewInstances, nearInstances } from './near.ts';
+import type { InView } from './near.ts';
 
 export const LADDER_RUNG_STEP = 0.3;
 /** Entre ejes de las barandas (el volumen de la escalera mide 0,8: la visual entra holgada). */
@@ -142,6 +144,7 @@ export function buildClimbProps(props: Prop[]): THREE.Mesh[] {
       const [x, z] = ladderFrame(l, q);
       rails.setMatrixAt(i, m.compose(p.set(x, 0, z), q, s.set(1, l.topY + HANDLE, 1)));
     });
+    nearInstances(rails); // las ~500 del mapa en una malla: se dibujan las cercanas a la cámara (T11b)
     const rungMat = new THREE.MeshLambertMaterial({ color: steel, alphaMap: rungTexture(), alphaTest: 0.5 });
     const rungs = new THREE.Mesh(rungsGeometry(ladders), rungMat);
     rungs.name = 'ladderRungs';
@@ -162,13 +165,21 @@ export function buildClimbProps(props: Prop[]): THREE.Mesh[] {
     });
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    out.push(...splitByCell(mesh));
+    // los de alrededor (con sombra en alta) y, en otra malla sin sombra, los demás que se ven (near.ts; `around`, en
+    // setDumpsterShadows)
+    out.push(mesh, inViewInstances(mesh).far);
   }
   return out;
 }
 
 /** Sombras de los contenedores (QUALITY.dumpsterShadows): son ~700 cajas chicas que duplican sus triángulos en la
- *  pasada de sombras y casi no se notan; solo en alta. */
-export function setDumpsterShadows(meshes: THREE.Object3D[], on: boolean): void {
-  for (const m of meshes) if (m.name === 'dumpster') m.castShadow = on;
+ *  pasada de sombras y casi no se notan; solo en alta. Con sombra, además de los que se ven se dibujan los que están a
+ *  menos de `around` m (los que pueden dar sombra al cuadro desde atrás: hasta donde llega la cámara del sol). */
+export function setDumpsterShadows(meshes: THREE.Object3D[], on: boolean, around = 0): void {
+  for (const m of meshes) {
+    if (m.name !== 'dumpster') continue;
+    m.castShadow = on;
+    const view = m.userData.inView as InView | undefined;
+    if (view) view.around = on ? around : 0;
+  }
 }

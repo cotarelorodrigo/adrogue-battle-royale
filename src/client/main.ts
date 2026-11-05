@@ -33,12 +33,14 @@ import { createInput } from './input.ts';
 import { createEye } from './render/exposure.ts';
 import { loadQuality, QUALITY, saveQuality } from './render/quality.ts';
 import type { Quality } from './render/quality.ts';
-import { createScene, FOV } from './render/scene.ts';
+import { createScene, FOV, SUN_DIR } from './render/scene.ts';
 import { createHud, FpsMeter } from './ui/hud.ts';
 import { createOverlay, showFatal } from './ui/overlay.ts';
 import type { Overlay } from './ui/overlay.ts';
 import { buildChunks } from './world/chunks.ts';
 import { exteriorSigns, ownSignPlaces } from './world/interiors/exterior.ts';
+import { interiorPortals } from './world/interiors/portals.ts';
+import { inViewOf, nearOf } from './world/near.ts';
 import { createInteriorViews } from './world/interiors/view.ts';
 import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
@@ -220,7 +222,11 @@ async function run(boot: Boot): Promise<void> {
   const interiors = buildInteriors(map);
   const chunks = buildChunks(map, materials, interiors);
   scene.addChunks(chunks.groups);
-  const interiorViews = createInteriorViews(interiors, materials, quality, chunks.tapas);
+  // las aberturas y los huecos del techo de cada interior: bajo techo, lo de afuera se dibuja solo si se ve por ahí
+  const inputs = new Map(map.interiors.map((i) => [i.placeId, i]));
+  const buildingsById = new Map(map.buildings.map((b) => [b.id, b]));
+  const portals = new Map(interiors.map((i) => [i.placeId, interiorPortals(buildingsById.get(i.buildingId)!, inputs.get(i.placeId)!, i.roofHoles)]));
+  const interiorViews = createInteriorViews(interiors, materials, quality, chunks.tapas, portals);
   scene.addStatic([interiorViews.group]);
   // los programas de los interiores (escondidos) se compilan ya, no cuando se ve el primero (H9)
   const warmInteriors = (): void => void scene.compile(interiorViews.group).catch((e: unknown) => console.warn('No se precompilaron los interiores:', e));
@@ -236,20 +242,31 @@ async function run(boot: Boot): Promise<void> {
     .then(({ group, tapas }) => {
       if (boot.lost) return;
       scene.addStatic([group]);
+      interiorViews.cullOutside([group]);
       for (const [placeId, meshes] of tapas) interiorViews.addTapas(placeId, meshes);
     })
     .catch((e: unknown) => console.warn('Sin fotos de fachada:', e))
     .finally(markPhotosReady);
   const climbProps = buildClimbProps(map.props);
-  setDumpsterShadows(climbProps, QUALITY[quality].dumpsterShadows);
-  scene.addStatic([
+  /** Hasta dónde (m, en planta) un contenedor puede dar sombra al cuadro: la caja de la cámara del sol (±range) llega a
+   *  range / sen(elevación) sobre el suelo, más el salto de su centro (SHADOW_SNAP) y medio contenedor. */
+  const shadowReach = (q: Quality): number => { const s = QUALITY[q].shadows; return s ? s.range / SUN_DIR.y + 8 : 0; };
+  setDumpsterShadows(climbProps, QUALITY[quality].dumpsterShadows, shadowReach(quality));
+  const outside = [
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
     buildSigns(map.places.filter((p) => !ownSign.has(p.id)), [...map.signs, ...outSigns]),
     ...trees,
     ...climbProps,
-  ]);
+  ];
+  scene.addStatic(outside);
+  interiorViews.cullOutside([...chunks.groups, ...outside, scene.outskirts]);
+  // los durmientes y las barandas de las escaleras, solo cerca de la cámara; de los contenedores, los que se ven (T11b)
+  const details = nearOf(outside);
+  const inView = inViewOf(outside);
+  const setDetailRadius = (q: Quality): void => { for (const d of details) d.radius = QUALITY[q].detailRadius; };
+  setDetailRadius(quality);
 
   // El combate: maniquíes, botín, zona y efectos cuelgan de un grupo que se esconde en el modo paseo; el arma en mano
   // tiene su propia escena y se dibuja después del mundo.
@@ -371,7 +388,8 @@ async function run(boot: Boot): Promise<void> {
     // applyQuality (N6)
     warmInteriors();
     setTreeDensity(trees, QUALITY[q].treeDensity);
-    setDumpsterShadows(climbProps, QUALITY[q].dumpsterShadows);
+    setDumpsterShadows(climbProps, QUALITY[q].dumpsterShadows, shadowReach(q));
+    setDetailRadius(q);
     applyCombatQuality(q);
   }
 
@@ -443,6 +461,8 @@ async function run(boot: Boot): Promise<void> {
       reloadSound(events, match); // si la recarga se cancela (o se deja la partida), lo que faltaba de su sonido no suena
     }
     interiorViews.update(scene.camera);
+    for (const d of details) d.update(scene.camera.position);
+    for (const v of inView) v.update(scene.camera, interiorViews.inside() ? interiorViews.outsideSees : undefined);
     scene.renderer.toneMappingExposure = eye.step(interiorViews.inside(), dt);
     scene.render();
     if (f) {

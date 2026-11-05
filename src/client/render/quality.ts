@@ -20,6 +20,10 @@ export interface QualityPreset {
    *  cada interior se compacta hasta entrar solo). Los muebles de detalle van hasta `detail` (y la luz horneada es más
    *  fina con detalle 2). */
   interiors: { radius: number; max: number; detail: 1 | 2; calls: number };
+  /** Los detalles chicos de todo el mapa (los durmientes, las barandas de las escaleras de mano) se dibujan hasta acá
+   *  (m, en planta; world/near.ts): más allá miden menos de medio píxel de grueso (15 cm de alto un durmiente, 5 cm una
+   *  baranda) y solo suman triángulos (T11b). */
+  detailRadius: number;
 }
 
 /** camera.far queda esto (m) más allá de drawDistance, donde la niebla ya tapa todo. */
@@ -27,11 +31,11 @@ export const FAR_PAST_FOG = 50;
 
 export const QUALITY: Record<Quality, QualityPreset> = {
   baja: { pixelRatioMax: 0.75, shadows: false, dumpsterShadows: false, dummyShadows: false, dropRadius: 80, drawDistance: 250, treeDensity: 0.5,
-    anisotropy: 1, textureSize: 512, interiors: { radius: 60, max: 1, detail: 1, calls: 8 } },
+    anisotropy: 1, textureSize: 512, interiors: { radius: 60, max: 1, detail: 1, calls: 8 }, detailRadius: 150 },
   media: { pixelRatioMax: 1, shadows: { mapSize: 1024, range: 80 }, dumpsterShadows: false, dummyShadows: false, dropRadius: 100,
-    drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024, interiors: { radius: 60, max: 2, detail: 2, calls: 18 } },
+    drawDistance: 450, treeDensity: 1, anisotropy: 4, textureSize: 1024, interiors: { radius: 60, max: 2, detail: 2, calls: 18 }, detailRadius: 200 },
   alta: { pixelRatioMax: 2, shadows: { mapSize: 2048, range: 150 }, dumpsterShadows: true, dummyShadows: true, dropRadius: 120,
-    drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024, interiors: { radius: 60, max: 3, detail: 2, calls: 36 } },
+    drawDistance: 900, treeDensity: 1, anisotropy: 8, textureSize: 1024, interiors: { radius: 60, max: 3, detail: 2, calls: 36 }, detailRadius: 250 },
 };
 
 /** Cómo se llama cada calidad en pantalla (menú de Esc y benchmark). */

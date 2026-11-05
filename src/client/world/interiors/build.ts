@@ -414,7 +414,7 @@ const middle = (ps: readonly (readonly number[])[], a: number, b: number): Vec2 
   [ps.reduce((t, p) => t + p[a], 0) / ps.length, ps.reduce((t, p) => t + p[b], 0) / ps.length];
 
 /** La envolvente convexa de `ps` (cadena monótona), antihoraria vista con x a la derecha y z arriba. */
-function convexHull(ps: Vec2[]): Vec2[] {
+export function convexHull(ps: Vec2[]): Vec2[] {
   const pts = [...ps].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   if (pts.length < 3) return pts;
   const cross = (o: Vec2, a: Vec2, b: Vec2): number => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);

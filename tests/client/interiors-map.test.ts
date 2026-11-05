@@ -12,10 +12,11 @@ import { buildChunks, Y_PATH } from '../../src/client/world/chunks.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { buildInterior3D, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
 import { roofCut } from '../../src/client/world/interiors/exterior.ts';
+import { interiorPortals } from '../../src/client/world/interiors/portals.ts';
 import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
 import { pointInPolygon, polygonArea, signedAreaFromAbove } from '../../src/shared/geo.ts';
-import type { Vec2 } from '../../src/shared/geo.ts';
+import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { buildInteriors } from '../../src/shared/interiors/index.ts';
 import type { Interior } from '../../src/shared/interiors/types.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
@@ -387,6 +388,143 @@ describe('el edificio y el patio por separado', () => {
     expect(groupOf('edificio').visible && groupOf('patio').visible).toBe(true);
     views.dispose();
   });
+
+  // T11b, ítem 5 (minor de la T9): lo mismo en el patio del McDonald's y en el del Guernica, a pie de suelo
+  for (const [id, mark] of [['mcdonalds', 'patio'], ['guernica-bar', 'patio']] as const) {
+    test(`desde el ${mark} de ${id}, a pie de suelo: de espaldas al edificio no se dibuja (el patio sí); mirando a su puerta, sí`, () => {
+      const i = byId(id);
+      const views = createInteriorViews([i], fake, 'media', new Map());
+      const groupOf = (part: string): THREE.Object3D => views.group.getObjectByName(`interior:${id}:${part}`)!;
+      const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 1000);
+      cam.rotation.order = 'YXZ';
+      const q = i.marks[mark];
+      expect(q[1], 'a pie de suelo').toBe(0);
+      expect(i.patios.some((r) => pointInPolygon([q[0], q[2]], r)), 'en un patio').toBe(true);
+      // la puerta de planta baja que da al patio: la más cercana a la marca
+      const door = i.doors.filter((d) => d.level === 0).sort((a, b) => Math.hypot(a.at[0] - q[0], a.at[1] - q[2]) - Math.hypot(b.at[0] - q[0], b.at[1] - q[2]))[0];
+      const look = (d: Vec2, pitch: number): void => {
+        cam.rotation.set(pitch, Math.atan2(-d[0], -d[1]), 0);
+        views.update(cam);
+      };
+      cam.position.set(q[0], 1.6, q[2]);
+      for (const pitch of [0, -0.4, 0.3]) {
+        look(door.normal, pitch);
+        expect(views.drawn()).toEqual([id]);
+        expect(groupOf('edificio').visible, `de espaldas al edificio (pitch ${pitch})`).toBe(false);
+        expect(groupOf('patio').visible).toBe(true);
+        expect(views.inside(), 'al aire libre').toBe(false);
+      }
+      look([-door.normal[0], -door.normal[1]], 0);
+      expect(groupOf('edificio').visible, 'mirando a la puerta').toBe(true);
+      expect(groupOf('patio').visible).toBe(true);
+      views.dispose();
+    });
+  }
+
+  // T11b, ítem 1: bajo techo, lo de afuera se ve solo por las aberturas (tests/client/portals.test.ts); en un patio, en
+  // la terraza o afuera, se dibuja todo como antes
+  test('lo de afuera: bajo techo se recorta por las aberturas; en un patio, en la terraza (aunque agachado) y afuera, no', () => {
+    const list = [byId('mcdonalds'), byId('la-veneciana'), byId('guernica-bar')];
+    const portals = new Map(list.map((i) => [i.placeId, interiorPortals(map.buildings.find((b) => b.id === i.buildingId)!,
+      map.interiors.find((x) => x.placeId === i.placeId)!, i.roofHoles)]));
+    const views = createInteriorViews(list, fake, 'media', new Map(), portals);
+    // cubos de 6 m cada 20 m alrededor de cada edificio, hasta 100 m
+    const outside: THREE.Mesh[] = [];
+    for (const i of list) {
+      const [cx, cz] = i.footprint.reduce((t, p) => [t[0] + p[0] / i.footprint.length, t[1] + p[1] / i.footprint.length], [0, 0]);
+      for (let a = -5; a <= 5; a++) for (let b = -5; b <= 5; b++) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(6, 6, 6));
+        m.position.set(cx + a * 20, 3, cz + b * 20);
+        outside.push(m);
+      }
+    }
+    views.cullOutside(outside);
+    const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 500);
+    cam.rotation.order = 'YXZ';
+    /** Cuántas cajas no se dibujan, con el ojo en `p` (+ `eye`), mirando a 8 lados. */
+    const hidden = (p: Vec3, eye = 1.6): number[] => Array.from({ length: 8 }, (_, k) => {
+      cam.position.set(p[0], p[1] + eye, p[2]);
+      cam.rotation.set(0, (k * Math.PI) / 4, 0);
+      views.update(cam);
+      return outside.filter((m) => !m.layers.test(cam.layers)).length;
+    });
+    for (const id of ['mcdonalds', 'guernica-bar'] as const) {
+      const i = byId(id);
+      const inside = Object.entries(i.marks).find(([, p]) => pointInPolygon([p[0], p[2]], i.footprint))![1];
+      const n = hidden(inside);
+      expect(Math.max(...n), `${id}: adentro, mirando a algún lado`).toBeGreaterThan(0);
+      // lo que se elige por copia (los contenedores, near.ts) pregunta lo mismo: en el lugar de una caja recortada, no
+      cam.rotation.set(0, (n.indexOf(Math.max(...n)) * Math.PI) / 4, 0);
+      views.update(cam);
+      const cut = outside.find((m) => !m.layers.test(cam.layers))!;
+      expect(views.outsideSees(new THREE.Sphere(cut.position.clone(), 1)), `${id}: donde hay una caja recortada`).toBe(false);
+    }
+    expect(hidden(byId('mcdonalds').marks.patio), 'en el patio del McDonald\'s').toEqual(Array(8).fill(0));
+    expect(hidden(byId('guernica-bar').marks.balcon), 'en el balcón del Guernica').toEqual(Array(8).fill(0));
+    expect(hidden(byId('la-veneciana').marks.salon).some((n) => n > 0), 'en el salón de La Veneciana').toBe(true);
+    expect(hidden(byId('la-veneciana').marks.terraza), 'en la terraza de La Veneciana').toEqual(Array(8).fill(0));
+    expect(hidden(byId('la-veneciana').marks.terraza, 0.8), 'agachado en la terraza (el ojo bajo el tope del interior)').toEqual(Array(8).fill(0));
+    // y al salir, todo de vuelta
+    const m = byId('mcdonalds').marks.salon;
+    hidden(m);
+    expect(hidden([m[0] + 80, 0, m[2]]), 'afuera').toEqual(Array(8).fill(0));
+    expect(views.outsideSees(new THREE.Sphere(new THREE.Vector3(m[0], 1, m[2]), 1))).toBe(true);
+    views.dispose();
+  }, 30_000);
+
+  // T11b: de afuera, lo de adentro de un edificio se ve solo por sus aberturas. Si ninguna da a la cámara (de espaldas o
+  // fuera del cuadro), el edificio del interior no se dibuja (sus tapas sí); el patio, como antes. Con terraza o algo
+  // arriba del techo (el lucernario de la Casa), se dibuja igual.
+  test('de afuera, sin ninguna abertura que dé a la cámara: el edificio del interior no se dibuja (el patio sí)', () => {
+    const list = ['estacion-adrogue', 'banco-nacion', 'casa-de-la-cultura', 'la-veneciana'].map(byId);
+    const portals = new Map(list.map((i) => [i.placeId, interiorPortals(map.buildings.find((b) => b.id === i.buildingId)!,
+      map.interiors.find((x) => x.placeId === i.placeId)!, i.roofHoles)]));
+    const tapa = (id: string): THREE.Mesh => { const t = new THREE.Mesh(); t.name = `tapa:${id}`; return t; };
+    const tapas = new Map(list.map((i) => [i.placeId, [tapa(i.placeId)]]));
+    const views = createInteriorViews(list, fake, 'alta', tapas, portals);
+    const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 950);
+    /** La cámara a `d` m del medio de la planta de `i`, del lado de la normal de afuera de su arista `edge`, mirándolo. */
+    const from = (i: Interior, edge: number, d: number): void => {
+      const fp = map.buildings.find((b) => b.id === i.buildingId)!.footprint;
+      const [a, b] = [fp[edge], fp[(edge + 1) % fp.length]];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const dir: Vec2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+      const n: Vec2 = signedAreaFromAbove(fp) > 0 ? [-dir[1], dir[0]] : [dir[1], -dir[0]];
+      const [cx, cz] = fp.reduce((t, p) => [t[0] + p[0] / fp.length, t[1] + p[1] / fp.length], [0, 0]);
+      cam.position.set(cx + n[0] * d, 1.6, cz + n[1] * d);
+      cam.lookAt(cx, 1.6, cz);
+      cam.updateMatrixWorld();
+      views.update(cam);
+    };
+    const edificio = (id: string): boolean => views.group.getObjectByName(`interior:${id}:edificio`)!.visible;
+    const edgesOf = (id: string): number[] => [...new Set(map.interiors.find((x) => x.placeId === id)!.openings.map((o) => o.edge))];
+    // la estación: sus dos puertas, en las aristas 2 y 1; de la 0 (la de las vías), ninguna da a la cámara
+    expect(edgesOf('estacion-adrogue').sort()).toEqual([1, 2]);
+    from(byId('estacion-adrogue'), 0, 12);
+    expect(views.drawn()).toContain('estacion-adrogue');
+    expect(edificio('estacion-adrogue'), 'la estación desde las vías').toBe(false);
+    expect(views.group.getObjectByName('interior:estacion-adrogue:patio')!.visible).toBe(true);
+    expect(tapas.get('estacion-adrogue')![0].visible, 'sus tapas').toBe(true);
+    from(byId('estacion-adrogue'), 2, 12);
+    expect(edificio('estacion-adrogue'), 'la estación desde su puerta').toBe(true);
+    expect(tapas.get('estacion-adrogue')![0].visible).toBe(false);
+    // el Banco Nación (sin patio): de atrás no se elige; de frente, sí
+    const banco = byId('banco-nacion');
+    expect(edgesOf('banco-nacion')).toEqual([1]);
+    from(banco, 3, 15);
+    expect(views.drawn(), 'el banco de atrás').not.toContain('banco-nacion');
+    expect(tapas.get('banco-nacion')![0].visible).toBe(true);
+    from(banco, 1, 15);
+    expect(views.drawn(), 'el banco de frente').toContain('banco-nacion');
+    // la Casa (el lucernario sobre el techo) y La Veneciana (la terraza), de cualquier lado
+    const casa = byId('casa-de-la-cultura');
+    expect(edgesOf('casa-de-la-cultura')).toEqual([3]);
+    from(casa, 1, 15);
+    expect(views.drawn(), 'la Casa de atrás').toContain('casa-de-la-cultura');
+    from(byId('la-veneciana'), 0, 15);
+    expect(views.drawn()).toContain('la-veneciana');
+    views.dispose();
+  }, 30_000);
 });
 
 // H2 de la revisión de la tarea 10: las sendas de OSM (footway y pedestrian, en la vereda a Y_PATH) no se dibujan

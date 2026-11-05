@@ -1,13 +1,14 @@
 // Lo de un interior que se ve siempre, con su edificio (`out`): los bloques y los paños van con el material `parapet`
 // del chunk (revoque teñido por vértice, con sol: sin draw calls nuevos) y los carteles, como un Sign más del mapa. Los muebles
-// de afuera no: se dibujan con el interior, de cerca.
+// de afuera se dibujan con el interior, de cerca; de los sólidos de los patios va además su pieza de lejos (ITEM_FAR).
 import * as THREE from 'three';
-import { signedAreaFromAbove } from '../../../shared/geo.ts';
+import { pointInPolygon, signedAreaFromAbove } from '../../../shared/geo.ts';
 import type { Interior } from '../../../shared/interiors/types.ts';
 import type { Sign } from '../../../shared/mapdata.ts';
 import { triangulateUp } from '../geometry.ts';
 import type { RoofCut } from '../geometry.ts';
 import { BAY_W, facing, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from '../wall-kit.ts';
+import { ITEM_FAR } from './models.ts';
 
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
 const PLANAR_UV = 4;
@@ -42,6 +43,27 @@ export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
       const [v0, v1] = [block.y0 / FLOOR_H, block.y1 / FLOOR_H];
       quad(b, [[p[0], block.y0, p[1]], [q[0], block.y0, q[1]], [q[0], block.y1, q[1]], [p[0], block.y1, p[1]]],
         [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], [-ez, 0, ex], c);
+    }
+  }
+  // las piezas de lejos de los muebles sólidos de los patios (ITEM_FAR): adentro de su modelo, con su color (por el del
+  // mueble) y uv en metros del mundo, como los paños
+  for (const it of i.items) {
+    const far = ITEM_FAR[it.model];
+    if (!far || pointInPolygon([it.at[0], it.at[2]], i.footprint)) continue;
+    const place = new THREE.Matrix4().makeRotationY(it.yaw).setPosition(it.at[0], it.at[1], it.at[2]);
+    const tint = new THREE.Color(it.color ?? '#ffffff');
+    for (const g of far()) {
+      g.applyMatrix4(place);
+      const [pos, nor, col] = [g.getAttribute('position'), g.getAttribute('normal'), g.getAttribute('color')];
+      const base = b.pos.length / 3;
+      for (let v = 0; v < pos.count; v++) {
+        const p: [number, number, number] = [pos.getX(v), pos.getY(v), pos.getZ(v)];
+        vert(b, p, [nor.getX(v), nor.getY(v), nor.getZ(v)], [(p[0] + p[2]) / BAY_W, p[1] / FLOOR_H],
+          new THREE.Color(col.getX(v), col.getY(v), col.getZ(v)).multiply(tint));
+      }
+      const idx = g.index ? Array.from(g.index.array) : Array.from({ length: pos.count }, (_, v) => v);
+      for (const k of idx) b.idx.push(base + k);
+      g.dispose();
     }
   }
   // los paños out (el pasamanos de una escalera out): de frente hacia su normal, con uv en metros del mundo

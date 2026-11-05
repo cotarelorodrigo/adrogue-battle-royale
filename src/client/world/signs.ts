@@ -191,14 +191,34 @@ export function signMaterial(canvas: HTMLCanvasElement, glow = false): THREE.Mat
 
 const lookOf = (s: Sign, type?: PlaceType): Look => (s.look ? { ...s.look, weight: 'bold' } : TYPE_LOOK[type ?? 'plaza']);
 
-/** Todos los carteles (los de los lugares y los sueltos del relevamiento) en una malla por página de atlas. */
+/** Lado (m) de la grilla con la que se ordenan los carteles en Morton antes de llenar el atlas (H11 de la revisión de la
+ *  T8): las páginas se llenan en ese orden, así cada una junta carteles vecinos. */
+const MORTON_CELL = 8;
+
+/** El índice de Morton (curva Z) de la celda de MORTON_CELL de (x, z): 16 bits por eje, intercalados. Dos carteles
+ *  cercanos quedan cerca en la curva (salvo en los saltos de sus cuadrantes). */
+export function mortonKey(x: number, z: number): number {
+  const q = (v: number): number => Math.max(0, Math.min(0xffff, Math.floor(v / MORTON_CELL) + 0x8000));
+  const [a, b] = [q(x), q(z)];
+  let key = 0;
+  for (let k = 0; k < 16; k++) key += ((a >> k) & 1) * 2 ** (2 * k) + ((b >> k) & 1) * 2 ** (2 * k + 1);
+  return key;
+}
+
+/** Todos los carteles (los de los lugares y los sueltos del relevamiento) en una malla por página de atlas. Las páginas
+ *  se llenan en el orden de Morton de los carteles (no en el de entrada): cada malla se dibuja entera si su esfera toca
+ *  el frustum, y así cada una cubre un barrio y no carteles de punta a punta del mapa. */
 export function buildSigns(places: Place[], signs: Sign[]): THREE.Group {
   const group = new THREE.Group();
   group.name = 'signs';
-  const all: { sign: Sign; look: Look }[] = [];
-  for (const p of places) if (p.sign) all.push({ sign: p.sign, look: lookOf(p.sign, p.type) });
-  for (const s of signs) all.push({ sign: s, look: lookOf(s) });
+  const all: { sign: Sign; look: Look; key: number }[] = [];
+  const add = (sign: Sign, look: Look): void => { all.push({ sign, look, key: mortonKey(sign.anchor[0], sign.anchor[1]) }); };
+  for (const p of places) if (p.sign) add(p.sign, lookOf(p.sign, p.type));
+  for (const s of signs) add(s, lookOf(s));
   if (!all.length) return group;
+  // los de la misma celda, por su texto y su lugar: el atlas no depende del orden de entrada
+  all.sort((p, q) => p.key - q.key || p.sign.anchor[0] - q.sign.anchor[0] || p.sign.anchor[1] - q.sign.anchor[1]
+    || (p.sign.text < q.sign.text ? -1 : p.sign.text > q.sign.text ? 1 : 0));
 
   const canvases = all.map(({ sign, look }) => signTexture(sign.text, look, sign.width, sign.height));
   const { rects, pages } = packSigns(canvases.map((c) => ({ w: c.width, h: c.height })));

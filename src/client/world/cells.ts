@@ -1,4 +1,5 @@
-// Parte las InstancedMesh grandes (árboles, contenedores, durmientes) en celdas fijas del suelo. three descarta cada
+// Parte las InstancedMesh grandes (árboles, durmientes) en celdas fijas del suelo (los contenedores, desde la T11b, van en
+// una malla con los que se ven: near.ts). three descarta cada
 // malla entera por frustum (y por camera.far, que sigue a la calidad), así que con una sola malla para todo el mapa se
 // dibujan todas las instancias, detrás de la cámara o a 1 km; por celda, solo las celdas que se ven. Lo mismo en la
 // pasada de sombras: la cámara del sol cubre ±80 m y deja afuera las celdas que no toca.

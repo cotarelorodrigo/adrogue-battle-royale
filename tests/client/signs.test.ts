@@ -263,3 +263,28 @@ test('glow: los vértices de un cartel que brilla llevan glow = 1 y los demás 0
   expect(shader.fragmentShader).toMatch(/vGlow/);
   expect(mat.customProgramCacheKey()).toMatch(/glow/);
 });
+
+// H11 de la revisión de la T8 (en la T11b): el atlas se llena en el orden de Morton de los carteles en el mundo, no en
+// el de entrada. Cada página es una malla que se dibuja entera si su esfera toca el frustum: así cada una junta
+// carteles vecinos y la que queda lejos no se dibuja.
+test('el atlas junta carteles vecinos: dos barrios de una página cada uno, dados intercalados, van en dos páginas sin mezclarse', () => {
+  // 51 carteles de 5 m (640 × 115 px) llenan una página de 2048: 3 por estante y 17 estantes
+  const barrio = (x0: number, k: number): Sign => sign(k, { anchor: [x0 + (k % 9) * 6, 100 + Math.floor(k / 9) * 6], width: 5 });
+  const signs = Array.from({ length: 102 }, (_, k) => barrio(k % 2 === 0 ? -500 : 500, Math.floor(k / 2)));
+  const g = buildSigns([], signs);
+  expect(g.children).toHaveLength(2);
+  for (const c of g.children) {
+    const m = c as THREE.Mesh;
+    m.geometry.computeBoundingSphere();
+    expect(m.geometry.boundingSphere!.radius, `${m.name}: el radio de su esfera`).toBeLessThan(60);
+  }
+});
+
+test('el orden del atlas no depende del orden de entrada: las mismas páginas con los carteles dados al revés', () => {
+  const signs = Array.from({ length: 80 }, (_, k) => sign(k, { anchor: [((k * 37) % 23) * 40 - 400, ((k * 11) % 7) * 50], width: 4 }));
+  const spheres = (list: Sign[]): string[] => buildSigns([], list).children.map((c) => {
+    const s = (c as THREE.Mesh).geometry.boundingSphere ?? ((c as THREE.Mesh).geometry.computeBoundingSphere(), (c as THREE.Mesh).geometry.boundingSphere!);
+    return `${s.center.x.toFixed(2)},${s.center.z.toFixed(2)},${s.radius.toFixed(2)}`;
+  });
+  expect(spheres([...signs].reverse())).toEqual(spheres(signs));
+});

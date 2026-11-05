@@ -11,6 +11,7 @@ import { at, CANOPY_EAVE, CANOPY_OVERHANG, CANOPY_RIDGE, PLATFORM_H, railRuns, S
 import type { Axis, StationPost } from '../../shared/station.ts';
 import { splitByCell } from './cells.ts';
 import { polygonGeometry, ribbon } from './geometry.ts';
+import { nearInstances } from './near.ts';
 import { SIGN_H, TYPE_LOOK, signGeometry, signMaterial, signTexture } from './signs.ts';
 import type { WorldMaterials } from './types.ts';
 
@@ -328,7 +329,8 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
     const UP = new THREE.Vector3(0, 1, 0);
     spots.forEach(({ p, d }, i) => sleepers.setMatrixAt(i, m.compose(v.set(p[0], Y_BALLAST, p[1]), q.setFromAxisAngle(UP, Math.atan2(-d[1], d[0])), one)));
     sleepers.receiveShadow = true;
-    group.add(...splitByCell(sleepers)); // una malla por celda: three descarta las que no se ven
+    // una malla por celda: three descarta las que no se ven; y de cada una, los cercanos a la cámara (near.ts)
+    for (const part of splitByCell(sleepers)) group.add(nearInstances(part).mesh);
 
     const rails = new Builder();
     const o = GAUGE / 2 + RAIL_HEAD / 2; // eje de cada riel: la trocha se mide entre las caras internas

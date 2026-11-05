@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import { SKY_LIGHT } from '../../src/client/render/sun.ts';
 import { buildMonuments, buildStation } from '../../src/client/world/landmarks.ts';
+import { NEAR_STEP, nearOf } from '../../src/client/world/near.ts';
 import type { WorldMaterials } from '../../src/client/world/types.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { MapData, Prop } from '../../src/shared/mapdata.ts';
@@ -113,6 +114,22 @@ describe('estación', () => {
     expect(total).toBeLessThan(2 * 860);
   });
 
+  // T11b: cada celda dibuja solo los durmientes a menos de QUALITY.detailRadius de la cámara (near.ts)
+  test('los durmientes de cada celda, solo los cercanos a la cámara; lejos de una celda, esa no se dibuja', () => {
+    const g = buildStation(map, materials);
+    const sleepers = meshesOf(g).filter((m) => m.name === 'sleepers') as THREE.InstancedMesh[];
+    const near = nearOf([g]);
+    expect(near.map((n) => n.mesh)).toEqual(sleepers);
+    for (const n of near) n.radius = 100;
+    const eye = new THREE.Vector3(0, 1.6, 120);
+    for (const n of near) n.update(eye);
+    const zs = sleepers.flatMap((m) => Array.from({ length: m.count }, (_, i) => m.instanceMatrix.array[i * 16 + 14]));
+    expect(zs.length).toBeGreaterThan(0);
+    for (const z of zs) expect(Math.abs(z - 120)).toBeLessThan(100 + NEAR_STEP);
+    // la celda de z < 0 queda a más de 100 m: no se dibuja
+    expect(sleepers.filter((m) => m.visible).length).toBeLessThan(sleepers.length);
+  });
+
   test('dos carteles ADROGUÉ por andén', () => {
     const signs = meshes.filter((m) => m.name === 'stationSigns');
     expect(signs).toHaveLength(1); // los 4 carteles comparten textura: una sola malla
@@ -136,7 +153,8 @@ describe('estación', () => {
     }
   });
 
-  test('a lo sumo 9 draw calls más los durmientes (uno por celda)', () => {
+  test('a lo sumo 9 draw calls más los durmientes (uno por celda), que son lo único que se elige por distancia', () => {
+    expect(nearOf(meshes).every((n) => n.mesh.name === 'sleepers')).toBe(true);
     expect(meshes.filter((m) => m.name !== 'sleepers').length).toBeLessThanOrEqual(9);
   });
 

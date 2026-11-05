@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { nearOf } from '../../src/client/world/near.ts';
+import type { InView } from '../../src/client/world/near.ts';
 import { buildClimbProps, LADDER_RUNG_STEP, setDumpsterShadows } from '../../src/client/world/props.ts';
 import type { Prop } from '../../src/shared/mapdata.ts';
 
@@ -30,20 +32,40 @@ const localSize = (m: THREE.InstancedMesh): number[] => {
   return m.geometry.boundingBox!.getSize(new THREE.Vector3()).toArray().map((v) => Math.round(v * 1e4) / 1e4);
 };
 
-test('escaleras en 2 draw calls (barandas y peldaños); contenedores instanciados, uno por celda de 250 m', () => {
+// T11b: los contenedores iban en una malla por celda de 250 m (24 draw calls en alta desde las vías); ahora en una sola,
+// con las copias que se ven (near.ts, inViewInstances)
+test('escaleras en 2 draw calls (barandas y peldaños); contenedores en una sola malla instanciada, con los que se ven', () => {
   expect(meshes.filter((m) => m.name === 'ladderRails' || m.name === 'ladderRungs')).toHaveLength(2);
   expect(byName('ladderRails')).toBeInstanceOf(THREE.InstancedMesh);
-  // dumpA (4, −2) y dumpB (−30, 12,5) están en celdas distintas
-  expect(dumpsters).toHaveLength(2);
-  for (const m of dumpsters) {
-    expect(m).toBeInstanceOf(THREE.InstancedMesh);
-    expect(m.count).toBe(1);
-  }
+  // dumpA (4, −2) y dumpB (−30, 12,5), en celdas distintas: la misma malla
+  expect(dumpsters).toHaveLength(1);
+  expect(dumpsters[0]).toBeInstanceOf(THREE.InstancedMesh);
+  expect(dumpsters[0].count).toBe(2);
+  const view = dumpsters[0].userData.inView as InView;
+  // y la de los que se ven más allá de los de alrededor, sin sombra: la otra malla
+  expect(view.far.name).toBe('dumpsterFar');
+  expect(meshes).toContain(view.far);
   expect(meshes).toHaveLength(4);
 });
 
+test('contenedores: mirando a uno se dibuja ese; con alrededor (la sombra en alta), los dos, en la malla que da sombra', () => {
+  const [mesh] = buildClimbProps(props).filter((m) => m.name === 'dumpster') as THREE.InstancedMesh[];
+  const view = mesh.userData.inView as InView;
+  const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 500);
+  cam.position.set(-10, 1.6, 4);
+  cam.lookAt(4, 0, -2); // hacia dumpA; dumpB queda atrás, a ~22 m
+  cam.updateMatrixWorld();
+  view.update(cam);
+  expect([mesh.count, view.far.count]).toEqual([0, 1]);
+  const p = new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().fromArray(view.far.instanceMatrix.array, 0));
+  expect([p.x, p.z]).toBeCloseTo2D([4, -2], 5);
+  view.around = 30;
+  view.update(cam);
+  expect([mesh.count, view.far.count]).toEqual([2, 0]);
+});
+
 test('contenedores: una instancia por prop, en su posición y rotación, de 1,8 × 2 × 1,1', () => {
-  const found = dumpsters.map((m) => ({ m, ...decompose(m, 0) }));
+  const found = [0, 1].map((i) => ({ m: dumpsters[0], ...decompose(dumpsters[0], i) }));
   [dumpA, dumpB].forEach((d) => {
     if (d.kind !== 'dumpster') throw new Error();
     const hit = found.find(({ p }) => Math.hypot(p.x - d.position[0], p.z - d.position[1]) < 1e-5)!;
@@ -61,12 +83,26 @@ test('contenedores: una instancia por prop, en su posición y rotación, de 1,8 
   expect(dumpsters[0].geometry.index!.count / 3).toBe(26);
 });
 
-test('las sombras de los contenedores se prenden y apagan (solo en alta)', () => {
-  setDumpsterShadows(meshes, false);
-  for (const m of dumpsters) expect(m.castShadow).toBe(false);
-  setDumpsterShadows(meshes, true);
-  for (const m of dumpsters) expect(m.castShadow).toBe(true);
+test('las sombras de los contenedores se prenden y apagan (solo en alta), con los de alrededor que pueden darla', () => {
+  setDumpsterShadows(meshes, false, 200);
+  for (const m of dumpsters) expect([m.castShadow, (m.userData.inView as InView).around]).toEqual([false, 0]);
+  setDumpsterShadows(meshes, true, 200);
+  for (const m of dumpsters) expect([m.castShadow, (m.userData.inView as InView).around]).toEqual([true, 200]);
   expect(byName('ladderRails').castShadow).toBe(false);
+  expect(byName('dumpsterFar').castShadow).toBe(false); // los de lejos, nunca
+});
+
+// T11b: las barandas de las ~500 escaleras del mapa van en una malla: se dibujan solo las cercanas a la cámara (near.ts);
+// los peldaños (un cuadrilátero por escalera) y los contenedores, como antes
+test('escaleras: de las barandas, solo las cercanas a la cámara (en la misma malla)', () => {
+  const props2 = buildClimbProps(props);
+  const near = nearOf(props2);
+  expect(near.map((n) => n.mesh.name)).toEqual(['ladderRails']);
+  near[0].radius = 10;
+  near[0].update(new THREE.Vector3(10, 1.6, 20)); // al lado de ladderA; ladderB queda a ~22,7 m (más que 10 + NEAR_STEP)
+  expect(near[0].mesh.count).toBe(1);
+  const p = new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().fromArray(near[0].mesh.instanceMatrix.array, 0));
+  expect(Math.hypot(p.x - 10, p.z - 20)).toBeLessThan(1);
 });
 
 test('escaleras: barandas a 5 cm de la pared, mirando hacia afuera, hasta topY + manijas', () => {

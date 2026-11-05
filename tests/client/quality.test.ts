@@ -16,6 +16,12 @@ test('el botín se ve a 80, 100 y 120 m, y los maniquíes proyectan sombra solo 
   expect([QUALITY.baja.dummyShadows, QUALITY.media.dummyShadows, QUALITY.alta.dummyShadows]).toEqual([false, false, true]);
 });
 
+// T11b: los detalles chicos de todo el mapa (durmientes, barandas de las escaleras de mano) hasta acá; más allá miden
+// menos de medio píxel de grueso
+test('los detalles chicos se dibujan hasta 150, 200 y 250 m', () => {
+  expect([QUALITY.baja.detailRadius, QUALITY.media.detailRadius, QUALITY.alta.detailRadius]).toEqual([150, 200, 250]);
+});
+
 test('calidad por defecto media y persistida', () => {
   localStorage.clear();
   expect(loadQuality()).toBe('media');

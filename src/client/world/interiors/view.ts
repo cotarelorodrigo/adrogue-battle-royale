@@ -10,6 +10,8 @@ import type { Quality } from '../../render/quality.ts';
 import type { InteriorKey, WorldMaterials } from '../types.ts';
 import { buildInterior3D } from './build.ts';
 import type { InteriorPart } from './build.ts';
+import { createOutsideCull, portalInView } from './portals.ts';
+import type { PortalSet } from './portals.ts';
 
 export interface InteriorViews {
   readonly group: THREE.Group;
@@ -21,6 +23,11 @@ export interface InteriorViews {
   update(camera: THREE.PerspectiveCamera): void;
   /** Las tapas que llegan después (las de las fotos). */
   addTapas(placeId: string, meshes: THREE.Mesh[]): void;
+  /** Lo de afuera (chunks, árboles, carteles…) que se recorta con la cámara bajo techo: de eso se dibuja solo lo que se
+   *  ve por las aberturas del interior (sus portales, portals.ts); lo demás sigue dando sombra. */
+  cullOutside(objects: THREE.Object3D[]): void;
+  /** Con lo del último update: si de afuera se ve algo de `s` (bajo techo, por las aberturas; si no, siempre). */
+  outsideSees(s: THREE.Sphere): boolean;
   setQuality(q: Quality): void;
   drawn(): string[]; // placeIds del último update
   /** Si en el último update la cámara estaba adentro de un interior y bajo techo (sobre su planta, no en un patio): para
@@ -29,8 +36,9 @@ export interface InteriorViews {
   dispose(): void;
 }
 
-/** `meshes`: los draw calls del interior armado; `parts`: el edificio y el patio (con uno solo, es el grupo mismo). */
-interface View { i: Interior; group: THREE.Group; box: THREE.Box3; parts: InteriorPart[]; tapas: THREE.Mesh[]; top: number; meshes: number }
+/** `meshes`: los draw calls del interior armado; `parts`: el edificio y el patio (con uno solo, es el grupo mismo);
+ *  `above`: tiene terraza o algo arriba del techo (el lucernario de la Casa), que se ve de afuera sin aberturas. */
+interface View { i: Interior; group: THREE.Group; box: THREE.Box3; parts: InteriorPart[]; tapas: THREE.Mesh[]; top: number; meshes: number; above: boolean }
 
 /**
  * Si la cámara puede ver algo del prisma de una parte (su envolvente en planta, de y0 a y1): no, si un plano del frustum
@@ -73,7 +81,9 @@ function release(group: THREE.Group): void {
   });
 }
 
-export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q: Quality, tapas: Map<string, THREE.Mesh[]>): InteriorViews {
+/** `portals`: los de cada interior (por placeId); uno sin portales no recorta lo de afuera. */
+export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q: Quality, tapas: Map<string, THREE.Mesh[]>,
+  portals: ReadonlyMap<string, PortalSet> = new Map()): InteriorViews {
   const group = new THREE.Group();
   group.name = 'interiores';
   // Una malla escondida por material de interior, con su nombre: scene.setMaterials se las cambia como a todas al
@@ -98,7 +108,8 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
     hidden.visible = false;
     // lo de arriba del techo (`sky`: el lucernario y su estructura) no cuenta: parado encima no se está adentro
     const top = Math.max(0, ...i.blocks.filter((b) => !b.out && !b.sky).map((b) => b.y1));
-    return { i, group: hidden, box: new THREE.Box3(), parts: [], tapas: [...(tapas.get(i.placeId) ?? [])], top, meshes: 0 };
+    const above = i.terrace || i.blocks.some((b) => b.sky && !b.out) || i.panes.some((p) => p.sky && !p.out);
+    return { i, group: hidden, box: new THREE.Box3(), parts: [], tapas: [...(tapas.get(i.placeId) ?? [])], top, meshes: 0, above };
   });
   /** Arma (o vuelve a armar) un interior con los materiales de ahora, y queda a la vista si lo estaba. */
   const build = (v: View): void => {
@@ -115,14 +126,21 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
   };
   for (const v of views) build(v);
 
-  const show = (v: View, on: boolean): void => {
+  /** `building`: si se dibuja su edificio (sus tapas, si no). */
+  const show = (v: View, on: boolean, building = on): void => {
     v.group.visible = on;
-    for (const t of v.tapas) t.visible = !on;
+    for (const t of v.tapas) t.visible = !(on && building);
+  };
+  /** De afuera: si lo de adentro del edificio se ve por alguna abertura (sin portales, un interior de prueba: sí). */
+  const facing = (v: View): boolean => {
+    const set = portals.get(v.i.placeId);
+    return !set || v.above || set.portals.some((p) => portalInView(p, eye, frustum));
   };
   const inside = (v: View, p: THREE.Vector3): boolean => {
     const xz: Vec2 = [p.x, p.z];
     return p.y < v.top && (pointInPolygon(xz, v.i.footprint) || v.i.patios.some((r) => pointInPolygon(xz, r)));
   };
+  const outside = createOutsideCull();
   const frustum = new THREE.Frustum();
   const viewProj = new THREE.Matrix4();
   const eye = new THREE.Vector3();
@@ -145,9 +163,10 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
         // del más cercano al más lejano, mientras entren en `max` y la suma de sus mallas en `calls` (H3)
         last = [];
         let calls = 0;
+        // de afuera, un interior sin patio que no muestra ninguna abertura no se ve: no se elige (T11b)
         const near = views
           .map((v) => ({ v, d: v.box.distanceToPoint(eye) }))
-          .filter(({ v, d }) => d < preset.radius && frustum.intersectsBox(v.box))
+          .filter(({ v, d }) => d < preset.radius && frustum.intersectsBox(v.box) && (v.parts.length > 1 || facing(v)))
           .sort((a, b) => a.d - b.d);
         for (const { v } of near) {
           if (last.length >= preset.max || calls + v.meshes > preset.calls) break;
@@ -159,10 +178,22 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
       const patio = here !== undefined && !within ? here : undefined;
       if (patio) cornersOf(camera);
       for (const v of views) {
-        show(v, last.includes(v));
-        if (v.parts.length > 1) for (const p of v.parts) p.group.visible = v !== patio || (frustum.intersectsBox(p.box) && sees(frustum, corners, p));
+        const on = last.includes(v);
+        // de afuera (ni adentro ni en su patio), el edificio solo si se ve por alguna abertura; el patio, siempre
+        const building = !on || here === v || v.parts.length === 1 || facing(v);
+        if (v.parts.length > 1) {
+          for (const p of v.parts) {
+            p.group.visible = v === patio ? frustum.intersectsBox(p.box) && sees(frustum, corners, p) : p.name !== 'edificio' || building;
+          }
+        }
+        show(v, on, v === patio || building);
       }
+      // bajo techo, lo de afuera por las aberturas; por encima del techo (agachado en una terraza) o afuera, todo
+      const set = here && within ? portals.get(here.i.placeId) : undefined;
+      outside.update(camera, set && eye.y < set.roof ? set : null);
     },
+    cullOutside: (objects) => outside.add(objects),
+    outsideSees: (s) => outside.sees(s),
     addTapas(placeId, meshes) {
       const v = views.find((x) => x.i.placeId === placeId);
       if (!v) return; // un lugar sin interior: sus tapas quedan como están, a la vista

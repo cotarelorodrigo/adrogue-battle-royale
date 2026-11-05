@@ -332,8 +332,9 @@ function patio(k: Kit, ring: Vec2[], hasta: number): void {
   // el último paso; cada molinete mira al lado sin pagar (−U) y su ancho (+x) va hacia la punta (+V)
   let v = LINEA_PUNTA;
   for (let j = 0; j < 2; j++, v -= MOLINETE.w) k.furniture('molinete', [LINEA_U, v - MOLINETE.w / 2], 0, MIRA.menosU);
+  // el gabinete es out (T11b): frena balas y está a cielo abierto, así que se ve de lejos, con el edificio
   const h = MOLINETE.d / 2;
-  k.block(rect([LINEA_U - h, v - GABINETE, LINEA_U + h, v]), 0, 0.92, 'solid', 'otro', { side: INOX, top: INOX_TAPA });
+  k.block(rect([LINEA_U - h, v - GABINETE, LINEA_U + h, v]), 0, 0.92, 'solid', 'otro', { side: INOX, top: INOX_TAPA }, true);
   // del lado de la calle y del fondo, la baranda de caño verde que cierra lo pagado; los caños, la hoja abierta y los
   // pasamanos de la escalera son out (se ven de lejos, con el edificio), como el balcón del Guernica
   const fin = v - GABINETE;

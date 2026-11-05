@@ -5,6 +5,7 @@ import { ensureCCW } from '../../shared/geo.ts';
 import type { Vec3 } from '../../shared/geo.ts';
 import type { OutskirtBuilding } from '../../shared/mapdata.ts';
 import { CHUNK } from '../world/chunks.ts';
+import { SHADOW_ONLY } from '../world/interiors/portals.ts';
 import type { WorldMaterials } from '../world/types.ts';
 import { OUTDOOR_EXPOSURE } from './exposure.ts';
 import { FAR_PAST_FOG, QUALITY } from './quality.ts';
@@ -36,6 +37,8 @@ export interface GameScene {
   readonly renderer: THREE.WebGLRenderer;
   /** La cámara del mundo (la mueve update): la miran las vistas de los interiores. */
   readonly camera: THREE.PerspectiveCamera;
+  /** Las siluetas de las afueras (una malla): las recortan las vistas de los interiores desde adentro. */
+  readonly outskirts: THREE.Mesh;
   addChunks(groups: THREE.Group[]): void;
   /** Objetos de todo el mapa (estación, plazas, árboles, carteles, props): sin culling por chunk, solo el de three. */
   addStatic(objects: THREE.Object3D[]): void;
@@ -91,9 +94,13 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   sun.shadow.normalBias = 0.04;
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = SUN_DISTANCE * 2;
+  // la cámara del sol ve también lo que desde adentro de un interior no se ve por sus aberturas (portals.ts): eso sale de
+  // la pasada principal con esta capa y sigue dando sombra
+  sun.shadow.camera.layers.enable(SHADOW_ONLY);
   scene.add(sun, sun.target);
 
-  scene.add(buildOutskirts(outskirts));
+  const outskirtsMesh = buildOutskirts(outskirts);
+  scene.add(outskirtsMesh);
 
   const chunks: Chunk[] = [];
   const statics: THREE.Object3D[] = [];
@@ -157,6 +164,7 @@ export function createScene(canvas: HTMLCanvasElement, outskirts: OutskirtBuildi
   return {
     renderer,
     camera,
+    outskirts: outskirtsMesh,
     addChunks(groups) {
       for (const group of groups) {
         const [i, j] = group.userData.chunk as [number, number];
