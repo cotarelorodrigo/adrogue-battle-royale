@@ -12,6 +12,7 @@ import type { Door } from '../../../src/shared/interiors/openings.ts';
 import type { Block, Interior, ItemModel } from '../../../src/shared/interiors/types.ts';
 import type { Building, InteriorInput, MapData, Opening } from '../../../src/shared/mapdata.ts';
 import { doorDepth, insideOf, walkTo } from './walk.ts';
+import { fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -28,7 +29,6 @@ const TURNERO = { w: 0.9, d: 0.08, y0: 2.3, y1: 2.76 };
 /** El cielorraso de la planta baja (con el bloque cerrado arriba). */
 const CIELO = 3.0;
 
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const dist2 = (a: Vec2, b: Vec2): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const centroid = (p: Vec2[]): Vec2 => [p.reduce((s, q) => s + q[0], 0) / p.length, p.reduce((s, q) => s + q[1], 0) / p.length];

@@ -1,3 +1,4 @@
+import polygonClipping from 'polygon-clipping';
 import { analyzeGround, exitPockets } from '../../../src/mapgen/pockets.ts';
 import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
 import { CollisionWorld, TRUNK_R, interiorPrisms, trunkHeight } from '../../../src/shared/collision.ts';
@@ -14,6 +15,7 @@ import { PLAYER, initialState, stepPlayer } from '../../../src/shared/player.ts'
 import type { PlayerInput, PlayerState } from '../../../src/shared/player.ts';
 import { FIXTURE_BOUNDS, LOOKS, testInterior } from './fixture.ts';
 import { climbStair, doorDepth, enterDoor, insideOf, walkTo } from './walk.ts';
+import { areaOf, closed } from '../../helpers.ts';
 
 const H = 1 / SIM_HZ;
 const within = (v: number, want: number, tol = 0.05): void => expect(Math.abs(v - want), `${v} vs ${want}`).toBeLessThanOrEqual(tol);
@@ -127,6 +129,55 @@ describe('losa y pisos cerrados', () => {
     const { world } = testInterior({ publicFloors: 2 });
     expect(world.overlaps(5, 7.5, 0.35, 3.25, 5.0)).toBe(false);
     expect(isFreeSpot(world, 5, 7.5, 3.2)).toBe(true);
+  });
+});
+
+// m19 de la revisión final: las 9 plantas reales son convexas, y la cuña `otro` de la planta corrida (la de una esquina
+// entrante) no la pisaba ningún test
+describe('planta con esquina entrante', () => {
+  /** Un local con la planta `fp` (marco local = mundo, el frente es la arista 0, de (10, 0) a (0, 0)) y la puerta de la fixture. */
+  const local = (fp: Vec2[], publicFloors: number, holes?: { level: number; polygon: Vec2[] }[]) => {
+    const b: Building = { id: 'b-ele', footprint: fp, height: 7, floors: 2, kind: 'shop', wall: 'plaster', tint: '#d8d0c0' };
+    const input: InteriorInput = {
+      placeId: 'ele', buildingId: b.id, frame: { origin: [0, 0], u: [1, 0], v: [0, 1] },
+      openings: [{ kind: 'puerta', edge: 0, s0: 4.2, s1: 5.8, y0: 0, y1: 2.3 }], patios: [],
+    };
+    const k = new Kit(b, input);
+    k.shell({ publicFloors, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo, ...(holes ? { holes } : {}) });
+    const interior = k.done(0.8);
+    return { b, interior, world: new CollisionWorld(interiorPrisms(interior), [], FIXTURE_BOUNDS) };
+  };
+  // L: la barra de adelante (z de 0 a 6) y el brazo de x de 0 a 5 hasta el fondo; la esquina entrante en (5, 6)
+  const ELE: Vec2[] = [[10, 0], [0, 0], [0, 15], [5, 15], [5, 6], [10, 6]];
+  // U: dos esquinas entrantes, con 2 pisos públicos y un hueco en la losa que cruza varias franjas
+  const U: Vec2[] = [[12, 0], [0, 0], [0, 12], [4, 12], [4, 5], [8, 5], [8, 12], [12, 12]];
+  const casos = [
+    { name: 'L', fp: ELE, pf: 1, holes: undefined },
+    { name: 'U', fp: U, pf: 2, holes: [{ level: 1, polygon: [[1, 2], [3, 2], [3, 9], [1, 9]] as Vec2[] }] },
+  ];
+
+  test.each(casos)('$name: validateInterior da [] y, en lo alto, paredes y techo cubren la planta justa sin pisarse', ({ fp, pf, holes }) => {
+    const { b, interior } = local(fp, pf, holes);
+    expect(validateInterior(interior)).toEqual([]);
+    const y = b.height - 0.01;
+    const top = interior.blocks.filter((x) => x.collide !== 'none' && x.y0 < y && x.y1 > y);
+    const union = (rs: Vec2[][]) => polygonClipping.union(closed(rs[0]), ...rs.slice(1).map(closed));
+    const slabs = union(top.filter((x) => x.role === 'losa').map((x) => x.polygon));
+    const walls = union(top.filter((x) => x.role !== 'losa').map((x) => x.polygon));
+    const all = polygonClipping.union(slabs, walls);
+    const planta = closed(ensureCCW(fp));
+    expect(areaOf(polygonClipping.difference(planta, all)), 'sin cubrir').toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.difference(all, planta)), 'afuera de la planta').toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.intersection(slabs, walls)), 'techo sobre las paredes').toBeLessThan(0.01);
+  });
+
+  test('L: se rodea el rincón entrante caminando, sin trabarse', () => {
+    const { world } = local(ELE, 1);
+    // de la barra de adelante al fondo del brazo: el rumbo directo choca la pared de z = 6 y se resbala por ella
+    const s = walkTo(world, [8, 0, 3], [3, 12]);
+    expect(Math.hypot(s.pos[0] - 3, s.pos[2] - 12), where(s)).toBeLessThan(0.5);
+    expect(s.onGround, where(s)).toBe(true);
+    within(s.pos[1], 0);
   });
 });
 

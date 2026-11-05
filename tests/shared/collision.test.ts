@@ -603,8 +603,9 @@ describe('interiores', () => {
     expect(w.overlaps(5, -5, 0.35, 0.05, 1.8)).toBe(false); // adentro hay lugar
     expect(w.supportHeight(5, -5, 0.35, 10)).toBeCloseTo(6, 9); // el techo sigue a 6 m
     expect(w.overlaps(25, -5, 0.35, 0.05, 1.8)).toBe(true);
-    // sin interiors (o con la lista vacía) todo sigue como antes
+    // sin interiors, o con la lista vacía, todo sigue como antes
     expect(collisionPrisms({ ...hollow, interiors: undefined }).prisms.filter((p) => p.tag === 'p6')).toHaveLength(1);
+    expect(collisionPrisms({ ...hollow, interiors: [] }).prisms.filter((p) => p.tag === 'p6')).toHaveLength(1);
   });
 
   test('desde la calle se entra por la puerta y se dispara a través del vidrio', () => {

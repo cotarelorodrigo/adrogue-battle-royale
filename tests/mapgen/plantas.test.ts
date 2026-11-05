@@ -12,8 +12,8 @@ import type { PhotoEdge } from '../../src/mapgen/place-facades.ts';
 import { ENTERABLE_IDS, loadPlaces } from '../../src/mapgen/places-input.ts';
 import { SIN_LOTE, loadPlantas, validatePlantas } from '../../src/mapgen/plantas-input.ts';
 import type { PlantaInput } from '../../src/mapgen/plantas-input.ts';
-import { placePlantas } from '../../src/mapgen/plantas.ts';
-import { isFreeSpot } from '../../src/mapgen/spawns.ts';
+import { frontFrame, placePlantas } from '../../src/mapgen/plantas.ts';
+import { isFatalWarning, isFreeSpot } from '../../src/mapgen/spawns.ts';
 import { buildCollisionWorld } from '../../src/shared/collision.ts';
 import { distPointSegment, pointInPolygon, polygonArea, project, signedAreaFromAbove, toWorld, unproject } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
@@ -124,6 +124,27 @@ describe('validatePlantas', () => {
     expect(() => check({ ...ok(), frente: [4] })).toThrow(/^x: planta de guernica-bar: frente tiene que ser aristas seguidas de la planta/);
   });
 
+  // m18 de la revisión final: el frente es la cara que da a la calle, y V entra al edificio desde ahí
+  test('una arista del frente que no mira a −V (a la calle): la de atrás o una de costado', () => {
+    const sinPuertaEn = (arista: number) => ({ ...ok(), frente: [arista], puertas: [puerta()], vidrios: [] });
+    expect(() => check(sinPuertaEn(2))).toThrow(/^x: planta de guernica-bar: la arista 2 del frente no mira a la calle \(−V\): su normal de afuera es \(0; 1\)$/);
+    expect(() => check(sinPuertaEn(1))).toThrow(/^x: planta de guernica-bar: la arista 1 del frente no mira a la calle \(−V\): su normal de afuera es \(1; 0\)$/);
+    // escrita al revés (horaria) es la misma planta: el frente sigue siendo la arista de v = 4
+    const horaria = { ...ok(), planta: [[0, 21], [9.6, 21], [9.6, 4], [0, 4]], frente: [1], puertas: [puerta({ arista: 2 })], vidrios: [] };
+    expect(() => check(horaria)).toThrow(/la arista 1 del frente no mira a la calle/);
+    expect(check({ ...horaria, frente: [2] })[0].frente).toEqual([2]);
+    // una ochava a 45° todavía mira a la calle
+    const ochava = { ...ok(), planta: [[0, 4], [9.6, 4], [12, 6.4], [12, 21], [0, 21]], frente: [0, 1], vidrios: [] };
+    expect(check(ochava)[0].frente).toEqual([0, 1]);
+  });
+
+  test('un patio que pisa la planta (D12: el patio va afuera, sin losa ni techo)', () => {
+    const pisa = { ...ok(), patios: [[[0, 0], [9.6, 0], [9.6, 4.5], [0, 4.5]]] };
+    expect(() => check(pisa)).toThrow(/^x: planta de guernica-bar: el patio 1 pisa la planta \(4,8 m²\); va afuera, pegado a ella$/);
+    // pegado a una arista, no
+    expect(check(ok())[0].patios).toHaveLength(1);
+  });
+
   test('puerta que no entra en su arista, con 0,2 m libres en cada punta', () => {
     expect(() => check({ ...ok(), puertas: [puerta({ centro: 0.9 })] })).toThrow(/^x: planta de guernica-bar, puerta 1: no entra en la arista 0: /);
     expect(() => check({ ...ok(), puertas: [puerta({ centro: 8.9 })] })).toThrow(/^x: planta de guernica-bar, puerta 1: no entra en la arista 0: /);
@@ -191,6 +212,28 @@ describe('placePlantas', () => {
     expect(geo.claim).toEqual([geo.footprint]); // sin patios ni calle
   });
 
+  // m19 de la revisión final: el hueco que encierran la planta y un patio (un pozo de aire sin relevar) también se
+  // reclama, para que no quede un bloque de Microsoft adentro (plantas.ts, "van solo los anillos de afuera")
+  test('claim: un hueco rodeado por la planta y un patio se reclama entero', () => {
+    // una U abierta hacia el fondo (el pozo de u 3,6 a 6 y de v 10 a 21) y un patio atrás que la cierra
+    const u: PlantaInput = {
+      ...plantas[0], despejes: [],
+      planta: [[0, 4], [9.6, 4], [9.6, 21], [6, 21], [6, 10], [3.6, 10], [3.6, 21], [0, 21]],
+      patios: [...plantas[0].patios, [[0, 21], [9.6, 21], [9.6, 24], [0, 24]]],
+    };
+    const pozo: Vec2[] = [[3.6, 10], [6, 10], [6, 21], [3.6, 21]];
+    const [s] = placePlantas([u], roads);
+    const { setback } = resolveFrontage(roads, { id: 'x', ...(plantas[0].marco as { calle: string; vereda: 'sur'; desde: string; hasta: string }) });
+    // sin el hueco, la unión tendría un agujero de 2,4 × 11 m
+    const piezas = [s.footprint, ...s.patios];
+    const union = piezas.reduce((t, r) => t + polygonArea(r), 0) + 9.6 * setback;
+    expect(union).toBeCloseTo(9.6 * (setback + 24) - 2.4 * 11, 6);
+    expect(s.claim).toHaveLength(1);
+    expect(polygonArea(s.claim[0])).toBeCloseTo(9.6 * (setback + 24), 6);
+    expect(pointInPolygon(toWorld(s.frame, [4.8, 15]), s.claim[0])).toBe(true);
+    expect(lotOverlap(s.claim[0], pozo.map((q) => toWorld(s.frame, q))).area).toBeCloseTo(2.4 * 11, 6);
+  });
+
   test('claim: la unión sin redondear de la planta, los patios y los despejes, en anillos antihorarios', () => {
     // girada 33°, con un patio sobre un pedazo de la arista de atrás y un despeje pegado al frente: una sola pieza
     const m = plantas[1].marco as { lat: number; lon: number; rumbo: number };
@@ -241,7 +284,16 @@ describe('placePlantas', () => {
   test('marco que no cierra: s más largo que el frente o una calle que no está', () => {
     const m = plantas[0].marco as { s: number };
     expect(() => placePlantas([{ ...plantas[0], marco: { ...m, s: 500 } as PlantaInput['marco'] }], roads)).toThrow(/^planta de guernica-bar: marco: s es 500 m y el frente mide 169,0 m$/);
-    expect(() => placePlantas([{ ...plantas[0], marco: { ...m, hasta: 'Inventada' } as PlantaInput['marco'] }], roads)).toThrow(/^planta de guernica-bar: marco: no hay ninguna calle "Inventada"|^planta de guernica-bar: marco: "Inventada" no cruza/);
+    // m19: un mensaje por caso, entero
+    expect(() => placePlantas([{ ...plantas[0], marco: { ...m, hasta: 'Inventada' } as PlantaInput['marco'] }], roads)).toThrow(/^planta de guernica-bar: marco: "Inventada" no cruza "Avenida Espora"$/);
+    expect(() => placePlantas([{ ...plantas[0], marco: { ...m, calle: 'Inventada' } as PlantaInput['marco'] }], roads)).toThrow(/^planta de guernica-bar: marco: no hay ninguna calle "Inventada"$/);
+  });
+
+  // m18 de la revisión final: sin dirección, U no se puede sacar del tramo (antes, `|| 1` lo tapaba con un marco nulo)
+  test('marco degenerado: el tramo de la línea donde cae s no tiene largo', () => {
+    const f = frontFrame('guernica-bar', [[0, 0], [10, 0], [20, 0]], 15, 1);
+    expect(f).toEqual({ origin: [15, 0], u: [1, 0], v: [-0, 1] });
+    expect(() => frontFrame('guernica-bar', [[0, 0], [0, 0], [10, 0]], 0, 1)).toThrow(/^planta de guernica-bar: marco degenerado: en s = 0 m el tramo de la línea de edificación no tiene largo \(puntos repetidos\)$/);
   });
 });
 
@@ -375,10 +427,12 @@ describe('assembleMap con plantas', () => {
     expect(con.map.signs).toEqual([]); // los dos carteles son de lugares
   });
 
-  test('falta relevar: un aviso por cada lugar de SIN_LOTE sin planta; nada más de las plantas', () => {
+  test('falta relevar: por cada lugar de SIN_LOTE sin planta, ese aviso y el de un entrable sin interior (m1); nada más de las plantas', () => {
     const avisos = (ws: string[]) => ws.filter((w) => /planta|andén/.test(w));
-    expect(avisos(con.warnings)).toEqual(['cine-pixel', 'estacion-adrogue', 'la-veneciana'].map((l) => `${l}: falta relevar la planta (data/plantas.json)`));
-    expect(avisos(sin.warnings)).toHaveLength(5);
+    const faltan = ['cine-pixel', 'estacion-adrogue', 'la-veneciana'];
+    expect(avisos(con.warnings)).toEqual([...faltan.map((l) => `${l}: falta relevar la planta (data/plantas.json)`),
+      ...faltan.map((l) => `${l}: es entrable y no tiene interior (falta su planta o su lote)`)]);
+    expect(avisos(sin.warnings)).toHaveLength(10);
   });
 
   test('aviso: la planta pisa la calle', () => {
@@ -414,6 +468,21 @@ describe('assembleMap con plantas', () => {
   test('aviso: "reemplaza" que no es un edificio de Microsoft', () => {
     const w = run(with_((ps) => { ps[1].reemplaza = ['b0002', 'b9999']; })).warnings;
     expect(w).toContain('planta de mcdonalds: "reemplaza" nombra b9999, que no es un edificio de Microsoft');
+  });
+
+  // m18 de la revisión final: el criterio sale de data/plantas.json, donde lo que ocupa cada planta tapa entre el 19 % y
+  // el 82 % de los bloques que reemplaza, y el vecino más grande que toca apenas el 3,6 %
+  test('aviso: "reemplaza" que nombra un bloque que existe pero no es de este lugar', () => {
+    const [mcd] = placePlantas(plantas, roads).filter((s) => s.planta.lugar === 'mcdonalds');
+    const tapa = (id: string): number => mcd.claim.reduce((a, r) => a + lotOverlap(byId(sin.map, id)!.footprint, r).area, 0) / area(sin.map, id);
+    expect(tapa('b0002')).toBeCloseTo(0.25, 2); // el suyo
+    expect(tapa('b0003')).toBe(0); // uno de la otra punta de la manzana
+    const res = run(with_((ps) => { ps[1].reemplaza = ['b0002', 'b0003']; }));
+    expect(res.warnings.filter((w) => w.includes('"reemplaza"'))).toEqual(['planta de mcdonalds: "reemplaza" nombra b0003, que no es de este lugar: la planta tapa el 0 % del bloque (tiene que tapar al menos el 10 %)']);
+    expect(res.warnings.filter(isFatalWarning).length).toBeGreaterThan(0);
+    // y no se borra: queda entero
+    expect(area(res.map, 'b0003')).toBeCloseTo(area(sin.map, 'b0003'), 6);
+    expect(con.warnings.filter((w) => w.includes('"reemplaza"'))).toEqual([]);
   });
 
   test('aviso: una puerta que da a otro edificio', () => {

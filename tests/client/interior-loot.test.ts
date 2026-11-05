@@ -15,13 +15,13 @@ import type { MapData } from '../../src/shared/mapdata.ts';
 import { MATCH, nearestDrop, newMatch, stepMatch } from '../../src/shared/match.ts';
 import type { MatchDrop, MatchInput, MatchState } from '../../src/shared/match.ts';
 import { PLAYER, initialState } from '../../src/shared/player.ts';
+import { fmt } from '../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
 const interiors = buildInteriors(map);
 const H = 1 / SIM_HZ;
 const idle: MatchInput = { forward: 0, right: 0, jump: false, crouch: false, yaw: 0, pitch: 0, fire: false, aim: false, reload: false, use: false, heal: false, slot: null };
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 /** Lo que se sube flotando y lo que oscila (drops.ts: BOB). */
 const BOB = 0.04;
 

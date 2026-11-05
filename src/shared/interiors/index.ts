@@ -13,7 +13,7 @@ import { guernicaPlan } from './guernica.ts';
 import { culturaPlan } from './cultura.ts';
 import { mcdonaldsPlan } from './mcdonalds.ts';
 import { venecianaPlan } from './veneciana.ts';
-import { Kit, MODEL_BOX, RAIL_H, RISER_MAX, STAIR_MIN_W, TREAD, WALL_IN, WALL_OUT, areaOf } from './kit.ts';
+import { Kit, MODEL_BOX, RAIL_H, RISER_MAX, STAIR_MIN_W, TREAD, WALL_IN, WALL_OUT, areaOf, closed } from './kit.ts';
 import type { Block, Interior, Look } from './types.ts';
 
 export type InteriorPlan = (k: Kit) => Interior;
@@ -106,7 +106,6 @@ const thickness = (poly: Vec2[]): number => {
   const l = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
   return Math.max(...poly.map((p) => Math.abs((p[0] - a[0]) * (c[1] - a[1]) - (p[1] - a[1]) * (c[0] - a[0])) / l));
 };
-const closed = (r: Vec2[]): [[number, number][]] => [[...r, r[0]].map((p): [number, number] => [p[0], p[1]])];
 
 /**
  * Lo que un interior tiene que cumplir. Cada mensaje nombra el lugar, qué está mal y dónde:

@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import polygonClipping from 'polygon-clipping';
 import * as THREE from 'three';
+import { createEye, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import { QUALITY } from '../../src/client/render/quality.ts';
 import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { buildChunks, Y_PATH } from '../../src/client/world/chunks.ts';
@@ -20,6 +21,8 @@ import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { buildInteriors } from '../../src/shared/interiors/index.ts';
 import type { Interior } from '../../src/shared/interiors/types.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
+import { PLAYER } from '../../src/shared/player.ts';
+import { acrossTheStreet } from '../helpers.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
 beforeEach(() => stubCanvas());
@@ -534,12 +537,16 @@ describe('las sendas no pisan los patios (H2)', () => {
     'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
   const fake = Object.fromEntries(WORLD.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
 
+  let memo: THREE.Triangle[] | null = null;
+  /** Los triángulos de las sendas de todo el mapa (a Y_PATH, en la malla de la vereda). */
+  const allSendas = (): THREE.Triangle[] => (memo ??= buildChunks(map, fake, interiors).groups
+    .flatMap((g) => g.children.filter((m): m is THREE.Mesh => m instanceof THREE.Mesh && m.name === 'sidewalk'))
+    .flatMap((m) => triangles(m.geometry))
+    .filter((t) => [t.a, t.b, t.c].every((p) => Math.abs(p.y - Y_PATH) < 1e-4)));
+  const patios = interiors.flatMap((i) => i.patios.map((ring) => ({ id: i.placeId, ring })));
+
   test('ningún triángulo de senda cae adentro del polígono de un patio; afuera, la senda sigue entera', () => {
-    const sendas = buildChunks(map, fake, interiors).groups
-      .flatMap((g) => g.children.filter((m): m is THREE.Mesh => m instanceof THREE.Mesh && m.name === 'sidewalk'))
-      .flatMap((m) => triangles(m.geometry))
-      .filter((t) => [t.a, t.b, t.c].every((p) => Math.abs(p.y - Y_PATH) < 1e-4));
-    const patios = interiors.flatMap((i) => i.patios.map((ring) => ({ id: i.placeId, ring })));
+    const sendas = allSendas();
     const bad: string[] = [];
     for (const { id, ring } of patios) {
       let pisa = 0;
@@ -561,5 +568,103 @@ describe('las sendas no pisan los patios (H2)', () => {
       return est.patios.some((r) => r.some((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < 12));
     });
     expect(areaOf(cerca), 'm² de senda a menos de 12 m de las esquinas del patio').toBeGreaterThan(20);
+  });
+
+  // m19 de la revisión final: polygon-clipping puede devolver astillas donde un borde del patio coincide con uno de la
+  // cinta, y un triángulo de entrada sin área no tiene giro. Ninguno de los dos tiene que salir del recorte
+  test('el recorte no deja triángulos degenerados', () => {
+    const near = allSendas().filter((t) => patios.some(({ ring }) => {
+      const xs = ring.map((p) => p[0]), zs = ring.map((p) => p[1]);
+      return Math.max(t.a.x, t.b.x, t.c.x) > Math.min(...xs) && Math.min(t.a.x, t.b.x, t.c.x) < Math.max(...xs)
+        && Math.max(t.a.z, t.b.z, t.c.z) > Math.min(...zs) && Math.min(t.a.z, t.b.z, t.c.z) < Math.max(...zs);
+    }));
+    expect(near.length, 'triángulos que pasaron por el recorte').toBeGreaterThan(0);
+    const flat = near.filter((t) => t.getArea() < 1e-6);
+    expect(flat.map((t) => `${t.a.x.toFixed(2)}, ${t.a.z.toFixed(2)}: ${t.getArea().toExponential(1)} m²`)).toEqual([]);
+  }, 30_000);
+});
+
+// I1 de la revisión final: el cambio de calidad entre media y alta (mismo detalle, otro tope de mallas) vuelve a
+// compactar cada interior. Si no, el McDonald's armado en alta (19 mallas) quedaba con 19 en media (tope 18): no entraba
+// en `calls` y desde la vereda de enfrente no se dibujaba más, hasta recargar.
+describe('cambio de calidad entre media y alta (I1)', () => {
+  const WORLD = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
+    'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
+  const fake = Object.fromEntries(WORLD.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
+  const portals = new Map(interiors.map((i) => [i.placeId, interiorPortals(map.buildings.find((b) => b.id === i.buildingId)!,
+    map.interiors.find((x) => x.placeId === i.placeId)!, i.roofHoles)]));
+  /** Las mallas de cada interior armado, por placeId. */
+  const meshCount = (views: ReturnType<typeof createInteriorViews>): Map<string, number> => new Map(views.group.children
+    .filter((c) => c.name.startsWith('interior:'))
+    .map((c) => {
+      let n = 0;
+      c.traverse((o) => { if (o instanceof THREE.Mesh) n++; });
+      return [c.name.slice('interior:'.length), n];
+    }));
+  const across = acrossTheStreet(map, 'mcdonalds');
+  const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 1000);
+  cam.rotation.order = 'YXZ';
+  cam.position.set(across.pos[0], across.pos[1] + PLAYER.eye, across.pos[2]);
+  cam.rotation.set(0, across.yaw, 0);
+
+  test('de alta a media: cada interior entra en el tope de media y el McDonald\'s se dibuja desde la vereda de enfrente', () => {
+    const views = createInteriorViews(interiors, fake, 'alta', new Map(), portals);
+    views.update(cam);
+    expect(views.drawn(), 'en alta').toContain('mcdonalds');
+    views.setQuality('media');
+    const cap = Math.min(MAX_MESHES, QUALITY.media.interiors.calls);
+    for (const [id, n] of meshCount(views)) expect(n, `${id} en media`).toBeLessThanOrEqual(cap);
+    views.update(cam);
+    expect(views.drawn(), 'en media, después de alta').toContain('mcdonalds');
+    views.dispose();
+  }, 30_000);
+
+  test('de media a alta: el McDonald\'s vuelve a la compactación de alta (la misma que si arrancara en alta)', () => {
+    const mcd = interiors.find((i) => i.placeId === 'mcdonalds')!;
+    const fresh = buildInterior3D(mcd, materials, 'alta').group;
+    let want = 0;
+    fresh.traverse((o) => { if (o instanceof THREE.Mesh) want++; });
+    const views = createInteriorViews(interiors, fake, 'media', new Map(), portals);
+    expect(meshCount(views).get('mcdonalds'), 'en media').toBeLessThan(want);
+    views.setQuality('alta');
+    expect(meshCount(views).get('mcdonalds'), 'en alta, después de media').toBe(want);
+    expect(views.group.getObjectByName('interior:mcdonalds')!.userData.level, 'el nivel de alta').toBe(fresh.userData.level);
+    views.update(cam);
+    expect(views.drawn()).toContain('mcdonalds');
+    views.dispose();
+  }, 30_000);
+});
+
+// m2 de la revisión final: "bajo techo" es uno solo, sobre la planta y por debajo del techo (el tope de las losas). En la
+// terraza de La Veneciana lo más alto del interior son las barandas (4,8 m, un metro arriba del techo): con el ojo entre
+// el techo y el tope de las barandas (agachado) se está en el interior, pero al sol, con la exposición de afuera.
+describe('la terraza de La Veneciana: al aire libre, de pie o agachado (m2)', () => {
+  const WORLD = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
+    'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
+  const fake = Object.fromEntries(WORLD.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
+  const vene = interiors.find((i) => i.placeId === 'la-veneciana')!;
+  const b = map.buildings.find((x) => x.id === vene.buildingId)!;
+
+  test.each([
+    ['de pie', PLAYER.eye],
+    ['agachado', PLAYER.crouchEye],
+    ['con el ojo más bajo que las barandas', 0.8],
+  ])('%s (ojo a %s m): inside() es false y la exposición es la de afuera', (_name, eyeH) => {
+    const portals = new Map([[vene.placeId, interiorPortals(b, map.interiors.find((x) => x.placeId === vene.placeId)!, vene.roofHoles)]]);
+    const views = createInteriorViews([vene], fake, 'media', new Map(), portals);
+    const t = vene.marks.terraza;
+    expect(t[1], 'la terraza, sobre el techo').toBeCloseTo(b.height, 6);
+    const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 1000);
+    cam.rotation.order = 'YXZ';
+    cam.position.set(t[0], t[1] + eyeH, t[2]);
+    const eye = createEye();
+    for (let k = 0; k < 8; k++) {
+      cam.rotation.set(0, (k * Math.PI) / 4, 0);
+      views.update(cam);
+      expect(views.inside(), `mirando a ${k}/8`).toBe(false);
+      expect(eye.step(views.inside(), 1 / 60), `mirando a ${k}/8`).toBe(OUTDOOR_EXPOSURE);
+    }
+    expect(views.drawn()).toEqual(['la-veneciana']);
+    views.dispose();
   });
 });

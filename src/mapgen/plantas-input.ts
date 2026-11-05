@@ -9,7 +9,7 @@ import type { Vec2 } from '../shared/geo.ts';
 import type { Puerta } from '../shared/mapdata.ts';
 import { checkSubFields, dec, isObj, num, oneOf, str, unknownField, validateLote } from './frentes-input.ts';
 import type { FrentesInput, LoteInput, Obj } from './frentes-input.ts';
-import { doorBay } from './lots.ts';
+import { doorBay, lotOverlap } from './lots.ts';
 
 /** Los lugares entrables que no tienen lote en data/frentes.json: cada uno necesita su planta. */
 export const SIN_LOTE: readonly string[] = ['guernica-bar', 'cine-pixel', 'mcdonalds', 'estacion-adrogue', 'la-veneciana'];
@@ -66,6 +66,11 @@ const PUERTA_MARGEN = 0.2;
 /** D10: una puerta mide al menos esto de ancho y de alto (m). */
 const PUERTA_MIN = { ancho: 1.0, alto: 2.2 };
 const EPS = 1e-6;
+/** Una arista del frente da a la calle si su normal de afuera está a 60° o menos de −V (como SIGN_FRONT_COS): una
+ *  ochava a 45° todavía es frente; una de costado o la de atrás, no. */
+const FRENTE_COS = 0.5;
+/** Un patio puede tocar la planta en una arista, pero no pisarla: más que esto (m²) es un error del relevamiento. */
+const PATIO_PISA = 0.01;
 const m2 = (n: number): string => dec(Math.round(n * 100) / 100);
 const len = (a: Vec2, b: Vec2): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
 const edgeLen = (r: Vec2[], i: number): number => len(r[i], r[(i + 1) % r.length]);
@@ -210,6 +215,19 @@ function validatePlanta(e: Obj, where: string, frentes: FrentesInput, seen: Set<
   });
   const n = planta.length;
   const frente = validateFrente(where, e.frente, n);
+  // en el marco local V entra al edificio desde la vereda: cada arista del frente tiene que mirar a −V
+  const ccw = planta.reduce((a, p, i) => a + p[0] * planta[(i + 1) % n][1] - planta[(i + 1) % n][0] * p[1], 0) > 0;
+  for (const i of frente) {
+    const [a, b] = [planta[i], planta[(i + 1) % n]];
+    const l = len(a, b);
+    const out: Vec2 = ccw ? [(b[1] - a[1]) / l, -(b[0] - a[0]) / l] : [-(b[1] - a[1]) / l, (b[0] - a[0]) / l];
+    if (out[1] > -FRENTE_COS) throw new Error(`${where}: la arista ${i} del frente no mira a la calle (−V): su normal de afuera es (${m2(out[0])}; ${m2(out[1])})`);
+  }
+  // D12: el patio es suelo sin losa ni techo, afuera de la planta
+  patios.forEach((r, k) => {
+    const pisa = lotOverlap(planta, r).area;
+    if (pisa > PATIO_PISA) throw new Error(`${where}: el patio ${k + 1} pisa la planta (${dec(Math.round(pisa * 10) / 10)} m²); va afuera, pegado a ella`);
+  });
   const run = frontRun(planta, frente);
   if (run.length > 60) throw new Error(`${where}: el frente mide ${m2(run.length)} m y no puede pasar de 60`);
   const vs = planta.map((p) => p[1]);

@@ -9,6 +9,7 @@ import type { PlaceInput } from '../../src/mapgen/places-input.ts';
 import { polygonArea, unproject } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, Road, RoadKind } from '../../src/shared/mapdata.ts';
+import { closed } from '../helpers.ts';
 
 const road = (name: string, kind: RoadKind, points: Vec2[]): Road => ({ id: name, kind, name, ...ROAD_SPECS[kind], points });
 const roads: Road[] = [
@@ -121,7 +122,6 @@ describe('applyFrentes', () => {
     const rest = r.buildings.filter((b) => !b.id.startsWith('t-'));
     expect(lots).toHaveLength(4);
     expect(rest.length).toBeGreaterThan(0);
-    const closed = (fp: Vec2[]): [number, number][][] => [[...fp, fp[0]].map((p): [number, number] => [p[0], p[1]])];
     for (const l of lots) for (const o of rest) {
       const area = polygonClipping.intersection(closed(l.footprint), closed(o.footprint)).reduce((s, p) => s + polygonArea(p[0].slice(0, -1) as Vec2[]), 0);
       expect(area).toBeLessThan(0.01);

@@ -8,7 +8,7 @@ import polygonClipping from 'polygon-clipping';
 import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
 import { buildCollisionWorld } from '../../../src/shared/collision.ts';
 import { hitscan } from '../../../src/shared/combat.ts';
-import { distPointSegment, ensureCCW, pointInPolygon, polygonArea, toLocal } from '../../../src/shared/geo.ts';
+import { distPointSegment, ensureCCW, pointInPolygon, toLocal } from '../../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
 import { muralColors, muralSeed } from '../../../src/shared/interiors/estacion.ts';
 import { INTERIOR_PLANS, interiorOf, publicFloorArea } from '../../../src/shared/interiors/index.ts';
@@ -17,6 +17,7 @@ import type { Block } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { PLATFORM_H, railRuns, stationLayout } from '../../../src/shared/station.ts';
 import { enterDoor, insideOf, walkStraight, walkTo, yawToward } from './walk.ts';
+import { areaOf, boxIn, closed, fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -27,20 +28,13 @@ const frame = map.interiors.find((x) => x.placeId === ID)!.frame;
 const place = map.places.find((p) => p.id === ID)!;
 const layout = stationLayout(map);
 
-type Ring = [number, number][];
-const closed = (r: Vec2[]): [Ring] => [[...r, r[0]].map((p): [number, number] => [p[0], p[1]])];
-const areaOf = (m: polygonClipping.MultiPolygon): number => m.reduce((t, pg) => t + pg.reduce((a, r, k) => a + (k === 0 ? 1 : -1) * polygonArea(r.slice(0, -1) as Vec2[]), 0), 0);
 const overlap = (p: Vec2[], q: Vec2[]): number => areaOf(polygonClipping.intersection(closed(ensureCCW(p)), closed(ensureCCW(q))));
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const centroidOf = (ps: Vec2[]): Vec2 => [ps.reduce((t, q) => t + q[0], 0) / ps.length, ps.reduce((t, q) => t + q[1], 0) / ps.length];
 const local = (p: Vec2): Vec2 => toLocal(frame, p);
 /** Un vector local (U, V) en el mundo. */
 const vec = ([a, c]: Vec2): Vec2 => [a * frame.u[0] + c * frame.v[0], a * frame.u[1] + c * frame.v[1]];
-const boxOf = (x: Block): [number, number, number, number] => {
-  const l = x.polygon.map(local);
-  return [Math.min(...l.map((p) => p[0])), Math.min(...l.map((p) => p[1])), Math.max(...l.map((p) => p[0])), Math.max(...l.map((p) => p[1]))];
-};
+const boxOf = boxIn(frame);
 const rgb = (hex: string): [number, number, number] => [1, 3, 5].map((j) => parseInt(hex.slice(j, j + 2), 16)) as [number, number, number];
 /** Celeste: el azul manda, el verde lo sigue y el rojo queda abajo; claro. */
 const celeste = (hex: string): boolean => {
@@ -300,9 +294,10 @@ describe('afuera (out)', () => {
     expect(z.filter((x) => boxOf(x)[0] >= 9.99).length, 'el costado del patio').toBeGreaterThanOrEqual(1);
     // ni el zócalo ni lo de las ventanas frenan (son pintura y herrería sobre la pared)
     for (const x of i.blocks.filter((y) => y.out && boxOf(y)[3] <= 0.01)) expect(x.collide).toBe('none');
-    // las rejas: barrotes verticales finos delante de cada ventana, arriba del zócalo
+    // las rejas: barrotes verticales finos delante de cada ventana, arriba del zócalo; 14 en cada una de las dos (m19:
+    // contados justos, cada 13 cm a lo ancho de 2,06 m)
     const barras = i.blocks.filter((x) => x.out && boxOf(x)[3] < 0 && x.y0 >= 1.2 - 1e-6 && x.y1 - x.y0 > 1.0 && boxOf(x)[2] - boxOf(x)[0] < 0.04);
-    expect(barras.length).toBeGreaterThanOrEqual(12);
+    expect(barras).toHaveLength(28);
   });
 
   // H4 de la revisión: desde el andén (donde más se juega) y desde los costados, la pared no es un paño liso
@@ -315,21 +310,23 @@ describe('afuera (out)', () => {
     const por = (c: string): Block[] => vidrios.filter((x) => cara(x) === c);
     expect(vidrios.map(cara).filter((c) => c.startsWith('¿'))).toEqual([]);
     expect(por('frente')).toHaveLength(2);
-    expect(por('andén').length, 'en la pared del andén').toBeGreaterThanOrEqual(1);
-    expect(por('U 0').length, 'en el costado de U 0').toBeGreaterThanOrEqual(1);
-    expect(por('U 10').length, 'en el costado del patio').toBeGreaterThanOrEqual(1);
+    expect(por('andén'), 'en la pared del andén: la de la oficina y la del baño').toHaveLength(2);
+    expect(por('U 0'), 'en el costado de U 0').toHaveLength(1);
+    expect(por('U 10'), 'en el costado del patio').toHaveLength(1);
     for (const x of por('andén')) expect(x.y0, 'arriba del andén y de su zócalo').toBeGreaterThanOrEqual(PLATFORM_H + 1.2 - 1e-6);
     // cada vidrio con su reja: barrotes verdes finos, out, delante de él (más afuera) y a su altura
-    for (const x of vidrios) {
+    const reja = (x: Block): Block[] => {
       const [u0, v0, u1, v1] = boxOf(x), along = cara(x) === 'frente' || cara(x) === 'andén' ? 0 : 1;
-      const reja = i.blocks.filter((y) => {
+      return i.blocks.filter((y) => {
         if (!y.out || y.side?.color !== '#2c4a36' || y.y0 < x.y0 - 1e-6 || y.y1 > x.y1 + 1e-6 || y.y1 - y.y0 < 0.5 * (x.y1 - x.y0)) return false;
         const [a0, b0, a1, b1] = boxOf(y), lo = along === 0 ? a0 : b0, hi = along === 0 ? a1 : b1;
         const fuera = cara(x) === 'frente' ? b1 <= v0 + 1e-6 : cara(x) === 'andén' ? b0 >= v1 - 1e-6 : cara(x) === 'U 0' ? a1 <= u0 + 1e-6 : a0 >= u1 - 1e-6;
         return fuera && hi - lo < 0.04 && lo >= (along === 0 ? u0 : v0) - 1e-6 && hi <= (along === 0 ? u1 : v1) + 1e-6;
       });
-      expect(reja.length, `la reja de la ventana de ${cara(x)} en ${fmt(boxOf(x))}`).toBeGreaterThanOrEqual(4);
-    }
+    };
+    // m19: el número justo de barrotes, uno cada 13 cm, de 17 cm del borde del marco a 12 cm del otro: 14 en las
+    // ventanas de 2,1 m (las dos del frente y la de la oficina), 8 en la del patio (1,2 m) y 4 en las chicas (0,8 m)
+    expect(vidrios.map((x) => `${cara(x)}: ${reja(x).length}`).sort()).toEqual(['U 0: 4', 'U 10: 8', 'andén: 14', 'andén: 4', 'frente: 14', 'frente: 14']);
   });
 
   // H3 de la revisión: la herrería del patio se ve de lejos, con el edificio (los molinetes no: son muebles)

@@ -4,7 +4,6 @@ import { FRONT_CELLS, cellRect } from '../../src/client/world/front-atlas.ts';
 import { BAY_W, extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { assembleMap } from '../../src/mapgen/assemble.ts';
 import type { GeoJSONFeatureCollection } from '../../src/mapgen/buildings.ts';
-import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
 import type { FrentesInput } from '../../src/mapgen/frentes-input.ts';
 import { lotOpenings } from '../../src/mapgen/interior-inputs.ts';
 import { aidEnds, doorBay } from '../../src/mapgen/lots.ts';
@@ -13,13 +12,14 @@ import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { SIN_LOTE, loadPlantas } from '../../src/mapgen/plantas-input.ts';
 import type { PlantaInput } from '../../src/mapgen/plantas-input.ts';
 import { placePlantas, plantaDoors } from '../../src/mapgen/plantas.ts';
-import { isFreeSpot, walksIn } from '../../src/mapgen/spawns.ts';
+import { isFatalWarning, isFreeSpot, walksIn } from '../../src/mapgen/spawns.ts';
 import { CollisionWorld, buildCollisionWorld } from '../../src/shared/collision.ts';
 import type { Prism } from '../../src/shared/collision.ts';
 import { distPointSegment, pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { DOOR_MIN_W, LINTEL_MIN, LOT_OPENINGS, doorsOf } from '../../src/shared/interiors/openings.ts';
 import type { Building, InteriorInput, MapData } from '../../src/shared/mapdata.ts';
+import { loadRaw } from '../helpers.ts';
 
 const NO_FRENTES: FrentesInput = { frentes: [], calzadas: {} };
 const edgeLen = (fp: Vec2[], e: number): number => Math.hypot(fp[(e + 1) % fp.length][0] - fp[e][0], fp[(e + 1) % fp.length][1] - fp[e][1]);
@@ -31,17 +31,6 @@ const add = (a: Vec2, b: Vec2, k = 1): Vec2 => [a[0] + b[0] * k, a[1] + b[1] * k
 const dist = (a: Vec2, b: Vec2): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const xz = (s: Vec3): Vec2 => [s[0], s[2]];
 
-function loadRaw() {
-  const frentes = loadFrentes();
-  return {
-    osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')) as unknown,
-    buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
-    places: loadPlaces(),
-    photos: JSON.parse(readFileSync('data/photo-facades.json', 'utf8')),
-    frentes,
-    plantas: loadPlantas(frentes),
-  };
-}
 
 /** Las comprobaciones de un mapa: marcos, aberturas, puerta del lugar y punto de aparición. */
 function checkInteriors(map: MapData): void {
@@ -278,8 +267,25 @@ describe('interiores de las plantas (fixture)', () => {
   const { map, warnings } = assembleMap({ osm: mini as unknown, buildings: ms, places, plantas });
   const shapes = new Map(placePlantas(plantas, parseOsm(mini).roads).map((s) => [s.planta.lugar, s]));
 
+  // los tres lugares de SIN_LOTE que el fixture no trae (m1, abajo) son los únicos que avisan
+  const SIN_PLANTA = ['cine-pixel', 'estacion-adrogue', 'la-veneciana'];
+  const sinInterior = (id: string): string => `${id}: es entrable y no tiene interior (falta su planta o su lote)`;
+
   test('sin avisos de los interiores', () => {
-    expect(warnings.filter((w) => /interior|abertura|puerta|marco/.test(w))).toEqual([]);
+    expect(warnings.filter((w) => /interior|abertura|puerta|marco/.test(w) && !SIN_PLANTA.map(sinInterior).includes(w))).toEqual([]);
+  });
+
+  // m1 de la revisión final (H2 de la T11a): un lugar entrable sin interior quedaría sin botín y con la puerta a un
+  // prisma macizo; el build lo frena
+  test('aviso fatal por cada lugar entrable sin interior: los de SIN_LOTE que el fixture no releva', () => {
+    expect(places.filter((p) => p.enterable).map((p) => p.id).sort()).toEqual([...SIN_PLANTA, 'guernica-bar', 'mcdonalds'].sort());
+    const m1 = warnings.filter((w) => w.includes('es entrable y no tiene interior'));
+    expect(m1.sort()).toEqual(SIN_PLANTA.map(sinInterior));
+    expect(m1.every(isFatalWarning)).toBe(true);
+    // con su planta, el aviso se va
+    const all = loadPlantas(NO_FRENTES, 'tests/fixtures/plantas-prueba.json');
+    const sinMcd = assembleMap({ osm: mini as unknown, buildings: ms, places, plantas: all.filter((p) => p.lugar !== 'mcdonalds') }).warnings;
+    expect(sinMcd.filter((w) => w.includes('es entrable y no tiene interior')).sort()).toEqual([...SIN_PLANTA, 'mcdonalds'].sort().map(sinInterior));
   });
 
   test('uno por planta, con el marco y los patios de la planta', () => {

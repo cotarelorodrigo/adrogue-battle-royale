@@ -1,6 +1,7 @@
 // Las ayudas de planta de los planos (en el marco local del Kit: U a lo largo del frente, V hacia adentro): el
 // rectángulo [u0, v0, u1, v1], el polígono regular, el yaw que pone el frente de un mueble (+z del modelo) hacia cada
-// lado, `add`, y las franjas pintadas contra una pared (el zócalo), con los huecos de las puertas de la pared.
+// lado, `add` y `sub`, las caras de adentro de una planta casi rectangular, y las franjas pintadas contra una pared (el
+// zócalo), con los huecos de las puertas de la pared.
 import type { Vec2 } from '../geo.ts';
 import type { Kit } from './kit.ts';
 import type { Look } from './types.ts';
@@ -19,6 +20,16 @@ export const MIRA = { V: 0, U: Math.PI / 2, menosV: Math.PI, menosU: -Math.PI / 
 
 /** p + d·k. */
 export const add = (p: Vec2, d: Vec2, k = 1): Vec2 => [p[0] + d[0] * k, p[1] + d[1] * k];
+/** a − b. */
+export const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
+
+/** Las caras de adentro de las paredes de afuera (la planta corrida del Kit) de una planta casi rectangular (un lote se
+ *  tuerce a lo sumo 1 cm): lo más adentro de cada lado. La estación, que se tuerce más, tiene las suyas. */
+export interface Caras { U0: number; U1: number; V0: number; V1: number }
+export function caras(k: Kit): Caras {
+  const us = k.inside.map((p) => p[0]).sort((a, b) => a - b), vs = k.inside.map((p) => p[1]).sort((a, b) => a - b);
+  return { U0: us[1], U1: us[us.length - 2], V0: vs[1], V1: vs[vs.length - 2] };
+}
 
 /** Un hueco de una franja: de s0 a s1 (metros desde su punta `a`) y de y0 a y1. */
 export type Hueco = [number, number, number, number];

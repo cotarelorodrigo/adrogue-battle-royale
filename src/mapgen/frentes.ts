@@ -1,6 +1,6 @@
 // Frentes relevados en el mapa: lotes con su cartel, recorte de los edificios de Microsoft, enlace con los lugares de
 // data/places.json y cotejo con los locales de OSM. Las plantas relevadas (data/plantas.json) entran como lotes sueltos.
-import { distPointSegment, project } from '../shared/geo.ts';
+import { distPointSegment, polygonArea, project } from '../shared/geo.ts';
 import type { Vec2 } from '../shared/geo.ts';
 import type { Building, Road, Sign } from '../shared/mapdata.ts';
 import type { AidSlots, LotFront } from './climb.ts';
@@ -25,6 +25,10 @@ const OVERLAP_AREA = 0.05;
 const OVERLAP_WIDTH = 0.05;
 /** Una planta relevada se pisa con un lote o con otra planta si comparten más de esto (m²): no viene de un empalme en T. */
 const PLANTA_OVERLAP = 0.05;
+/** Un bloque de Microsoft que nombra una planta en "reemplaza" tiene que ser de ese lugar: lo que reclama la planta
+ *  (con sus patios, sus despejes y la vereda de delante) tapa al menos esta parte de él. En data/plantas.json los que
+ *  reemplaza van del 19 % al 82 %, y el vecino más grande que toca, apenas el 3,6 %. */
+const REEMPLAZA_MIN = 0.1;
 
 export interface FrentesResult {
   buildings: Building[]; // Microsoft recortados + lotes
@@ -195,13 +199,17 @@ export function applyFrentes(
     });
   }
 
-  // antes de recortar, se borran enteros los bloques de Microsoft que nombra una planta en "reemplaza" (D8)
-  const microsoft = new Set(buildings.map((b) => b.id));
+  // antes de recortar, se borran enteros los bloques de Microsoft que nombra una planta en "reemplaza" (D8). Tienen que
+  // ser de ese lugar: lo que reclama la planta tapa al menos REEMPLAZA_MIN de cada uno
+  const microsoft = new Map(buildings.map((b) => [b.id, b]));
   const gone = new Set<string>();
   for (const p of plantas) {
     for (const id of p.planta.reemplaza) {
-      if (microsoft.has(id)) gone.add(id);
-      else res.warnings.push(`planta de ${p.planta.lugar}: "reemplaza" nombra ${id}, que no es un edificio de Microsoft`);
+      const b = microsoft.get(id);
+      if (!b) { res.warnings.push(`planta de ${p.planta.lugar}: "reemplaza" nombra ${id}, que no es un edificio de Microsoft`); continue; }
+      const tapa = p.claim.reduce((a, r) => a + lotOverlap(b.footprint, r).area, 0) / polygonArea(b.footprint);
+      if (tapa >= REEMPLAZA_MIN) gone.add(id);
+      else res.warnings.push(`planta de ${p.planta.lugar}: "reemplaza" nombra ${id}, que no es de este lugar: la planta tapa el ${Math.round(tapa * 100)} % del bloque (tiene que tapar al menos el ${REEMPLAZA_MIN * 100} %)`);
     }
   }
   res.lots = lots;

@@ -13,13 +13,13 @@ import type { Door } from '../../../src/shared/interiors/openings.ts';
 import type { ItemModel } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { doorDepth, enterDoor, insideOf, walkTo } from './walk.ts';
+import { fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
 const i = interiorOf(map, 'mcdonalds');
 const b = map.buildings.find((x) => x.id === i.buildingId)!;
 
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const dist2 = (a: Vec2, c: Vec2): number => Math.hypot(a[0] - c[0], a[1] - c[1]);
 const toRing = (p: Vec2, ring: Vec2[]): number => Math.min(...ring.map((q, k) => distPointSegment(p, q, ring[(k + 1) % ring.length])));

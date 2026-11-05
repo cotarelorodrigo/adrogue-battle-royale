@@ -16,6 +16,7 @@ import { roofCut } from '../../src/client/world/interiors/exterior.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE } from '../../src/client/world/interiors/glass.ts';
 import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
+import { BAY_W, FLOOR_H } from '../../src/client/world/wall-kit.ts';
 import { pointInPolygon } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
 import { Kit } from '../../src/shared/interiors/kit.ts';
@@ -164,8 +165,8 @@ describe('el techo con hueco (D13): el chunk, la cáscara y la tapa', () => {
 
   test('el vidrio de la tapa (H6): SKY_GLASS_UV cae en un paño de la vidriera, a ≥ 0,1 m del marco y de cada parteluz', () => {
     const cell = cellRect('vidriera');
-    // en metros dentro de la celda: x desde la izquierda (BAY_W = 3) e y desde el piso (FLOOR_H = 3,2)
-    const x = ((SKY_GLASS_UV[0] - cell.u0) / (cell.u1 - cell.u0)) * 3, y = ((SKY_GLASS_UV[1] - cell.v0) / (cell.v1 - cell.v0)) * 3.2;
+    // en metros dentro de la celda (una bahía de un piso): x desde la izquierda e y desde el piso
+    const x = ((SKY_GLASS_UV[0] - cell.u0) / (cell.u1 - cell.u0)) * BAY_W, y = ((SKY_GLASS_UV[1] - cell.v0) / (cell.v1 - cell.v0)) * FLOOR_H;
     const glass = LOT_OPENINGS.vidriera.filter((o) => o.kind === 'vidrio');
     const o = glass.find((g) => x > g.x0 && x < g.x1 && y > g.y0 && y < g.y1);
     expect(o, `(${x.toFixed(2)}, ${y.toFixed(2)}) en un vidrio`).toBeDefined();

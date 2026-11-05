@@ -5,7 +5,6 @@ import { filterTrees } from '../../src/mapgen/trees.ts';
 import { SPAWN_RELAXED, findFreeSpot, isFatalWarning, isFreeSpot, randomSpawns, seesSign } from '../../src/mapgen/spawns.ts';
 import { loadPlaces } from '../../src/mapgen/places-input.ts';
 import { loadFrentes } from '../../src/mapgen/frentes-input.ts';
-import { loadPlantas } from '../../src/mapgen/plantas-input.ts';
 import { parkFractionOf } from '../../src/mapgen/buildings.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
 import { lotOverlap } from '../../src/mapgen/lots.ts';
@@ -20,20 +19,10 @@ import { AWNING } from '../../src/client/world/fronts.ts';
 import { distPointSegment, pointInPolygon, polygonArea } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, MapData, Prop, Sign, Tree } from '../../src/shared/mapdata.ts';
+import { loadRaw } from '../helpers.ts';
 
 const photos = JSON.parse(readFileSync('data/photo-facades.json', 'utf8')) as { placeId: string; edgeIndex?: number }[];
 const MIN_OTHER_SETT = 43;
-function loadRaw() {
-  const frentes = loadFrentes();
-  return {
-    osm: JSON.parse(readFileSync('data/raw/osm.json', 'utf8')) as unknown,
-    buildings: JSON.parse(readFileSync('data/raw/ms-buildings.geojson', 'utf8')),
-    places: loadPlaces(),
-    photos,
-    frentes,
-    plantas: loadPlantas(frentes),
-  };
-}
 function roadPointsInsideBuildings(map: MapData): string[] {
   const bad: string[] = [];
   for (const r of map.roads) {
@@ -138,12 +127,27 @@ function aidsOnLotFronts(m: MapData, tol: number): string[] {
   return bad;
 }
 
-const { map, warnings, stats } = assembleMap(loadRaw());
+const { map, warnings, stats, interiors: armed, placement } = assembleMap(loadRaw());
 const world = buildCollisionWorld(map);
 
 describe('assembleMap sobre datos reales', () => {
   test('sin warnings salvo relajaciones del punto de aparición', () => {
     expect(warnings.filter(isFatalWarning)).toEqual([]);
+  });
+  // m8 de la revisión final (H3 de la T11a): las apariciones, los spawns y el botín de la calle y de los techos se
+  // ubican en el mundo de colocación (placementWorld): los edificios con interior macizos y los troncos de los patios.
+  // Con buildCollisionWorld(map) los edificios quedarían huecos; con el mundo lleno de antes, sin los troncos
+  test('el mundo donde assemble ubica las cosas es el de placementWorld: edificios macizos y los troncos de los patios', () => {
+    expect(armed.map((i) => i.placeId)).toEqual(map.interiors.map((i) => i.placeId));
+    const trunks = armed.flatMap((i) => i.trees);
+    expect(trunks.length).toBeGreaterThan(0);
+    for (const t of trunks) expect(placement.overlaps(t.position[0], t.position[1], 0.05, 0.05, 1.8), `tronco en ${t.position.join(', ')}`).toBe(true);
+    for (const i of armed) {
+      const d = i.doors[0];
+      const p: Vec2 = [d.at[0] - d.normal[0] * 1.5, d.at[1] - d.normal[1] * 1.5];
+      expect(placement.overlaps(p[0], p[1], 0.05, 0.05, 1.8), `${i.placeId}: 1,5 m adentro de la puerta principal, macizo`).toBe(true);
+      expect(world.overlaps(p[0], p[1], 0.05, 0.05, 1.8), `${i.placeId}: en el mundo del juego, hueco`).toBe(false);
+    }
   });
   test('cantidades razonables', () => {
     // los que cruzan el borde del área también son edificios (≈ 56 más); los rellenos de huecos y los lotes relevados
@@ -269,12 +273,18 @@ describe('assembleMap sobre datos reales', () => {
       expect(f!.tint, p.id).toBe(owner.facade?.tint ?? FACADE_BY_TYPE[owner.type as keyof typeof FACADE_BY_TYPE].tint);
     }
   });
+  // m19: hoy data/photo-facades.json no tiene ninguna foto con edgeIndex. Se suma la de un lugar sin lote (banco-nacion-2,
+  // con el cartel en la arista 2) para que la lista nunca quede vacía y la foto mande sobre el cartel
   test('las fotos con edgeIndex tienen la fachada en esa arista', () => {
-    for (const ph of photos.filter((f) => f.edgeIndex !== undefined)) {
-      const b = map.buildings.find((x) => x.id === map.places.find((p) => p.id === ph.placeId)!.buildingId)!;
-      expect(b.facades?.some((f) => f.edge === ph.edgeIndex), ph.placeId).toBe(true);
-    }
-  });
+    const extra = { placeId: 'banco-nacion-2', edgeIndex: 0 };
+    const conArista = [...photos.filter((f) => f.edgeIndex !== undefined), extra];
+    const m = assembleMap({ ...loadRaw(), photos: [...photos, extra] }).map;
+    const of = (mm: MapData, placeId: string): Building => mm.buildings.find((x) => x.id === mm.places.find((p) => p.id === placeId)!.buildingId)!;
+    expect(of(map, extra.placeId).facades?.map((f) => f.edge)).toEqual([2]); // sin la foto, la del cartel
+    expect(conArista.length).toBeGreaterThan(0);
+    for (const ph of conArista) expect(of(m, ph.placeId).facades?.some((f) => f.edge === ph.edgeIndex), ph.placeId).toBe(true);
+    expect(of(m, extra.placeId).facades?.map((f) => f.edge)).toEqual([0]);
+  }, 30_000);
   test('Estación y Plaza Brown presentes', () => {
     expect(map.buildings.some((b) => b.kind === 'station')).toBe(true);
     expect(map.places.find((p) => p.id === 'plaza-almirante-brown')!.parkId).toBeDefined();
@@ -325,7 +335,9 @@ describe('assembleMap con el frente de prueba', () => {
   const fw = buildCollisionWorld(m);
   const lots = m.buildings.filter((b) => b.id.startsWith('ea-prueba-'));
   const withSign = raw.frentes.frentes.flatMap((f) => f.lotes).filter((l) => l.cartel);
-  test('sin warnings fatales', () => expect(res.warnings.filter(isFatalWarning)).toEqual([]));
+  // el frente de prueba no trae los lotes del BBVA ni de la Casa de la Cultura: esos dos entrables quedan sin interior (m1)
+  test('sin warnings fatales, salvo los dos entrables sin lote', () => expect(res.warnings.filter(isFatalWarning))
+    .toEqual(['bbva', 'casa-de-la-cultura'].map((id) => `${id}: es entrable y no tiene interior (falta su planta o su lote)`)));
   test('los lugares ligados usan el lote y su cartel', () => {
     for (const id of ['banco-nacion', 'galicia', 'luccianos']) {
       const p = m.places.find((x) => x.id === id)!;

@@ -10,9 +10,9 @@ import { distPointSegment, pointInPolygon, toLocal } from '../../../src/shared/g
 import type { Vec2, Vec3 } from '../../../src/shared/geo.ts';
 import { INTERIOR_PLANS, interiorOf } from '../../../src/shared/interiors/index.ts';
 import { LEVEL_H } from '../../../src/shared/interiors/openings.ts';
-import type { Block } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { enterDoor, walkTo } from './walk.ts';
+import { boxIn, fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -20,14 +20,10 @@ const i = interiorOf(map, 'guernica-bar');
 const b = map.buildings.find((x) => x.id === i.buildingId)!;
 const frame = map.interiors.find((x) => x.placeId === 'guernica-bar')!.frame;
 
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const local = (p: Vec2): Vec2 => toLocal(frame, p);
 const toRing = (p: Vec2, ring: Vec2[]): number => Math.min(...ring.map((q, k) => distPointSegment(p, q, ring[(k + 1) % ring.length])));
-const boxOf = (x: Block): [number, number, number, number] => {
-  const l = x.polygon.map(local);
-  return [Math.min(...l.map((p) => p[0])), Math.min(...l.map((p) => p[1])), Math.max(...l.map((p) => p[0])), Math.max(...l.map((p) => p[1]))];
-};
+const boxOf = boxIn(frame);
 function mark(name: string): Vec3 {
   const p = i.marks[name];
   if (!p) throw new Error(`guernica-bar: falta la marca "${name}"`);

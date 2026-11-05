@@ -12,6 +12,7 @@ import { MODEL_BOX, RISER_MAX } from '../../../src/shared/interiors/kit.ts';
 import type { Block } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { walkTo } from './walk.ts';
+import { boxIn, fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -19,16 +20,12 @@ const i = interiorOf(map, 'cine-pixel');
 const b = map.buildings.find((x) => x.id === i.buildingId)!;
 const frame = map.interiors.find((x) => x.placeId === 'cine-pixel')!.frame;
 
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const local = (p: Vec2): Vec2 => toLocal(frame, p);
 const centroid = (p: Vec2[]): Vec2 => [p.reduce((s, q) => s + q[0], 0) / p.length, p.reduce((s, q) => s + q[1], 0) / p.length];
 const toRing = (p: Vec2, ring: Vec2[]): number => Math.min(...ring.map((q, k) => distPointSegment(p, q, ring[(k + 1) % ring.length])));
 /** La caja de un bloque en el marco local: [u0, v0, u1, v1]. */
-const boxOf = (x: Block): [number, number, number, number] => {
-  const l = x.polygon.map(local);
-  return [Math.min(...l.map((p) => p[0])), Math.min(...l.map((p) => p[1])), Math.max(...l.map((p) => p[0])), Math.max(...l.map((p) => p[1]))];
-};
+const boxOf = boxIn(frame);
 function mark(name: string): Vec3 {
   const p = i.marks[name];
   if (!p) throw new Error(`cine-pixel: falta la marca "${name}"`);

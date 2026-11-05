@@ -47,13 +47,20 @@ function frameOf(p: PlantaInput, roads: Road[]): { frame: Frame; fr?: Frontage }
     throw new Error(`planta de ${p.lugar}: marco: ${(e as Error).message.replace(/^frente pl-[^:]*: /, '')}`);
   }
   if (m.s > fr.length + 1e-6) throw new Error(`planta de ${p.lugar}: marco: s es ${String(m.s).replace('.', ',')} m y el frente mide ${fmt(fr.length)} m`);
-  const cum = cumulative(fr.line);
+  return { frame: frontFrame(p.lugar, fr.line, m.s, fr.inward), fr };
+}
+
+/** El marco de frente: el origen sobre `line` a `s` m de su punta, U a lo largo del tramo donde cae y V hacia `inward`
+ *  (como Frontage.inward). Un tramo sin largo no da dirección: es un error del marco (m18). */
+export function frontFrame(lugar: string, line: Vec2[], s: number, inward: number): Frame {
+  const cum = cumulative(line);
   let i = 1;
-  while (i < fr.line.length - 1 && cum[i] < m.s) i++;
-  const [a, b] = [fr.line[i - 1], fr.line[i]];
-  const d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  while (i < line.length - 1 && cum[i] < s) i++;
+  const [a, b] = [line[i - 1], line[i]];
+  const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (!(d > 1e-9)) throw new Error(`planta de ${lugar}: marco degenerado: en s = ${String(s).replace('.', ',')} m el tramo de la línea de edificación no tiene largo (puntos repetidos)`);
   const u: Vec2 = [(b[0] - a[0]) / d, (b[1] - a[1]) / d];
-  return { frame: { origin: pointAt(fr.line, cum, m.s), u, v: [-u[1] * fr.inward, u[0] * fr.inward] }, fr };
+  return { origin: pointAt(line, cum, s), u, v: [-u[1] * inward, u[0] * inward] };
 }
 
 export function placePlantas(plantas: PlantaInput[], roads: Road[]): PlantaShape[] {

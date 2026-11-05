@@ -43,10 +43,12 @@ const fmt = (n: number): string => n.toFixed(1).replace('.', ',');
 const roundSign = (s: Sign): Sign => ({ ...s, anchor: v2(s.anchor), normal: v2(s.normal, 3), width: rn(s.width), bottomY: rn(s.bottomY) });
 
 /** `photos`: lo que mapgen usa de data/photo-facades.json (la arista de cada foto, para su fachada). `plantas`: las de
- *  data/plantas.json; si vienen, avisa por cada lugar de SIN_LOTE que no tiene la suya. */
+ *  data/plantas.json; si vienen, avisa por cada lugar de SIN_LOTE que no tiene la suya. Además del mapa devuelve sus
+ *  interiores ya armados (`interiors`, los de map.interiors en el mismo orden) y el mundo donde se ubicaron las
+ *  apariciones, el spawn de cada lugar y el botín de la calle y de los techos (`placement`: placementWorld). */
 export function assembleMap(
   raw: { osm: unknown; buildings: GeoJSONFeatureCollection; places: PlaceInput[]; photos?: PhotoEdge[]; frentes?: FrentesInput; plantas?: PlantaInput[] },
-): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats; report: string[] } {
+): { map: MapData; warnings: string[]; stats: AidStats; pockets: PocketStats; report: string[]; interiors: Interior[]; placement: CollisionWorld } {
   const warnings: string[] = [];
   const { roads, railways, platforms, parks, fountains, pois } = parseOsm(raw.osm);
   for (const r of roads) {
@@ -178,11 +180,12 @@ export function assembleMap(
   warnings.push(...lotPhotoWarnings(map, raw.photos ?? []));
   map.randomSpawns = randomSpawns(world, 64, undefined, undefined, outside);
   if (map.randomSpawns.length < 64) warnings.push(`randomSpawns: solo ${map.randomSpawns.length} de 64`);
-  // botín: con los props, las ayudas de ascenso y los carteles ya en su lugar, sobre el mismo mundo
-  const loot = placeLootSpots(map, world);
+  // botín: con los props, las ayudas de ascenso y los carteles ya en su lugar, sobre el mismo mundo; el de los lugares,
+  // adentro de sus interiores, en el mundo del juego (los edificios huecos), con los interiores ya armados
+  const loot = placeLootSpots(map, world, armed, buildCollisionWorld(map, armed));
   map.lootSpots = loot.spots;
   warnings.push(...loot.warnings);
-  return { map, warnings, stats, pockets: holes.stats, report: fr.report };
+  return { map, warnings, stats, pockets: holes.stats, report: fr.report, interiors: armed, placement: world };
 }
 
 /**

@@ -21,20 +21,17 @@ import { initialState, stepPlayer } from '../../../src/shared/player.ts';
 import type { PlayerState } from '../../../src/shared/player.ts';
 import { testInterior } from './fixture.ts';
 import { walkTo } from './walk.ts';
+import { areaOf, closed, fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
 const i = interiorOf(map, 'casa-de-la-cultura');
 const b = map.buildings.find((x) => x.id === i.buildingId)!;
 
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const dist2 = (a: Vec2, c: Vec2): number => Math.hypot(a[0] - c[0], a[1] - c[1]);
 const unit = (a: Vec2): Vec2 => [a[0] / Math.hypot(a[0], a[1]), a[1] / Math.hypot(a[0], a[1])];
 const centroid = (p: Vec2[]): Vec2 => [p.reduce((s, q) => s + q[0], 0) / p.length, p.reduce((s, q) => s + q[1], 0) / p.length];
-const closed = (r: Vec2[]): [[number, number][]] => [[...r, r[0]].map((p): [number, number] => [p[0], p[1]])];
-const area = (m: polygonClipping.MultiPolygon): number =>
-  m.reduce((t, pg) => t + pg.reduce((a, r, k) => a + (k === 0 ? 1 : -1) * polygonArea(r.slice(0, -1) as Vec2[]), 0), 0);
 /** Lo que mide la planta a lo largo de `d` (unitario). */
 const extent = (poly: Vec2[], d: Vec2): number => {
   const s = poly.map((p) => p[0] * d[0] + p[1] * d[1]);
@@ -146,7 +143,7 @@ describe('el atrio', () => {
     expect(Math.abs(extent(roof, along) - 10)).toBeLessThanOrEqual(2);
     expect(Math.abs(extent(roof, inward) - 20)).toBeLessThanOrEqual(3);
     const closedTop = i.blocks.filter((x) => x.role === 'losa' && x.y1 > b.height - 1e-6 && x.y0 < b.height - 1);
-    for (const x of closedTop) expect(area(polygonClipping.intersection(closed(x.polygon), closed(roof))), fmt(centroid(x.polygon))).toBeLessThan(1e-3);
+    for (const x of closedTop) expect(areaOf(polygonClipping.intersection(closed(x.polygon), closed(roof))), fmt(centroid(x.polygon))).toBeLessThan(1e-3);
   });
 
   test('un tiro hacia arriba desde el atrio, a 1,6 m, atraviesa el lucernario: null en 30 m (el plafón no frena)', () => {
@@ -179,8 +176,8 @@ describe('el atrio', () => {
     }
     const roof = i.roofHoles[0];
     const cover = polygonClipping.union(closed(glass[0].polygon), ...glass.slice(1).map((x) => closed(x.polygon)));
-    expect(area(polygonClipping.difference(closed(roof), cover)), 'el hueco sin vidrio').toBeLessThan(0.01);
-    expect(area(polygonClipping.difference(cover, closed(roof))), 'vidrio fuera del hueco').toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.difference(closed(roof), cover)), 'el hueco sin vidrio').toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.difference(cover, closed(roof))), 'vidrio fuera del hueco').toBeLessThan(0.01);
     // a dos aguas: más alto en el medio que en los bordes, y entre una franja y la de al lado, a lo sumo un escalón
     const mid = centroid(roof);
     const across = (x: Block): number => {

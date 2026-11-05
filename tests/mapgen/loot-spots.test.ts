@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { placementWorld } from '../../src/mapgen/assemble.ts';
 import { roofClusters } from '../../src/mapgen/climb.ts';
-import { farthestFromEdges, lootSpots, walkable } from '../../src/mapgen/loot-spots.ts';
+import { farthestFromEdges, lootSpots, shares, walkable } from '../../src/mapgen/loot-spots.ts';
 import type { FloorGrid } from '../../src/mapgen/loot-spots.ts';
 import { distToRing } from '../../src/mapgen/spatial.ts';
 import { isFreeSpot } from '../../src/mapgen/spawns.ts';
@@ -242,6 +242,20 @@ describe('walkable: lo que se alcanza caminando desde la puerta principal', () =
     expect(reaches(run([], [stair]), 1, [25, 5])).toBe(true);
     // con el pie de la escalera adentro del cuarto cerrado, tampoco
     expect(reaches(run(room, [{ ...stair, foot: [9.5, 0, 2.5] }]), 1, [25, 5])).toBe(false);
+  });
+});
+
+// m9 de la revisión final: el desempate va por nivel aunque `floors` no venga ordenado
+describe('shares: cuántos puntos le tocan a cada piso', () => {
+  test('según el área: la parte entera y lo que sobra a los de mayor resto', () => {
+    expect(shares([{ area: 300, level: 0 }, { area: 100, level: 1 }], 8)).toEqual([6, 2]);
+    expect(shares([{ area: 250, level: 0 }, { area: 150, level: 1 }], 7)).toEqual([4, 3]); // 4,375 y 2,625
+  });
+  test('en empate de restos, el de nivel más bajo, aunque venga después en floors', () => {
+    expect(shares([{ area: 100, level: 0 }, { area: 100, level: 1 }], 5)).toEqual([3, 2]);
+    expect(shares([{ area: 100, level: 1 }, { area: 100, level: 0 }], 5)).toEqual([2, 3]);
+    // en el mismo nivel, el primero de floors
+    expect(shares([{ area: 100, level: 1 }, { area: 100, level: 1 }, { area: 200, level: 0 }], 5)).toEqual([1, 1, 3]);
   });
 });
 

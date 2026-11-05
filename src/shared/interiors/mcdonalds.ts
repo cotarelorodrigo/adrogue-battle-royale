@@ -114,7 +114,6 @@ const PANTALLA_Y = 2.0, PANTALLA = { w: 1.0, h: 0.58, d: 0.05 } as const;
 /** La torre (afuera), en la esquina del frente y el costado sur, sobre el techo. */
 const TORRE_TOP = 7.4;
 
-
 /** Un revestimiento del piso (sin sólido), apenas arriba de la planta baja (que va a GROUND_Y). */
 const piso = (k: Kit, r: Rect, look: Look): void => k.block(rect(r), GROUND_Y, GROUND_Y + 0.006, 'none', 'otro', { top: look });
 /** Un revestimiento del cielorraso (sin sólido), apenas abajo de la losa. */

@@ -11,6 +11,7 @@ import { LEVEL_H } from '../../../src/shared/interiors/openings.ts';
 import type { Block, Interior } from '../../../src/shared/interiors/types.ts';
 import type { MapData } from '../../../src/shared/mapdata.ts';
 import { climbStair, doorDepth, enterDoor, insideOf } from './walk.ts';
+import { areaOf, closed, fmt, orientedBox } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -18,16 +19,7 @@ const interiors = buildInteriors(map);
 const byId = new Map(map.buildings.map((b) => [b.id, b]));
 
 type Multi = polygonClipping.MultiPolygon;
-const closed = (r: Vec2[]): [[number, number][]] => [[...r, r[0]].map((p): [number, number] => [p[0], p[1]])];
-const area = (m: Multi): number => m.reduce((t, pg) => t + pg.reduce((a, r, i) => a + (i === 0 ? 1 : -1) * polygonArea(r.slice(0, -1) as Vec2[]), 0), 0);
 const unionOf = (rs: Vec2[][]): Multi => (rs.length === 0 ? [] : polygonClipping.union(closed(rs[0]), ...rs.slice(1).map(closed)));
-const fmt = (v: number): string => v.toFixed(2);
-/** Caja centrada en c con el largo sobre +x local (la de collision.ts para los contenedores y los bancos). */
-function orientedBox([cx, cz]: Vec2, rotation: number, length: number, depth: number): Vec2[] {
-  const c = Math.cos(rotation), s = Math.sin(rotation);
-  const ux = (c * length) / 2, uz = (-s * length) / 2, vx = (s * depth) / 2, vz = (c * depth) / 2;
-  return [[cx - ux + vx, cz - uz + vz], [cx + ux + vx, cz + uz + vz], [cx + ux - vx, cz + uz - vz], [cx - ux - vx, cz - uz - vz]];
-}
 const solidBlocks = (i: Interior): Block[] => i.blocks.filter((x) => x.collide !== 'none');
 
 test('son los 9 lugares con interior', () => {
@@ -96,12 +88,12 @@ describe.each(interiors.map((i) => [i.placeId, i] as const))('%s', (id, i) => {
     const all = unionOf([...slabs, ...walls]);
     const holes = unionOf(i.roofHoles);
     const fp = polygonClipping.difference(closed(ensureCCW(b.footprint)), ...(holes.length > 0 ? [holes] : []));
-    expect(area(polygonClipping.difference(fp, all)), `${id}: lo que queda sin cubrir`).toBeLessThan(0.01);
-    expect(area(polygonClipping.difference(all, fp)), `${id}: lo que sale de la planta o pisa un hueco del techo`).toBeLessThan(0.01);
-    expect(area(polygonClipping.intersection(unionOf(slabs), unionOf(walls))), `${id}: techo sobre las paredes`).toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.difference(fp, all)), `${id}: lo que queda sin cubrir`).toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.difference(all, fp)), `${id}: lo que sale de la planta o pisa un hueco del techo`).toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.intersection(unionOf(slabs), unionOf(walls))), `${id}: techo sobre las paredes`).toBeLessThan(0.01);
     // la arista de adentro del pretil es la misma planta corrida
     const inner = parapetEdges(ensureCCW(b.footprint)).map((e) => e.ai);
-    expect(Math.abs(area(unionOf(slabs)) - (polygonArea(inner) - area(holes))), id).toBeLessThan(0.01);
+    expect(Math.abs(areaOf(unionOf(slabs)) - (polygonArea(inner) - areaOf(holes))), id).toBeLessThan(0.01);
   });
 
   // H8 de la revisión de la tarea 5: el techo del chunk se dibuja a height sobre la planta (menos los huecos del techo);
@@ -111,7 +103,7 @@ describe.each(interiors.map((i) => [i.placeId, i] as const))('%s', (id, i) => {
     const flat = i.blocks.filter((x) => !x.out && x.top !== undefined && Math.abs(x.y1 - b.height) < 0.005).map((x) => x.polygon);
     const holes = unionOf(i.roofHoles);
     const roof = polygonClipping.difference(closed(ensureCCW(b.footprint)), ...(holes.length > 0 ? [holes] : []));
-    expect(area(polygonClipping.intersection(roof, unionOf(flat))), `${id}: m² que se pisan con el techo`).toBeLessThan(0.01);
+    expect(areaOf(polygonClipping.intersection(roof, unionOf(flat))), `${id}: m² que se pisan con el techo`).toBeLessThan(0.01);
   });
 
   test('todo marks cumple isFreeSpot a su altura', () => {
@@ -132,7 +124,7 @@ test('collisionPrisms: ningún edificio con interior queda como prisma lleno de 
 test('ningún relleno pisa una planta de interior más de 0,05 m², y ninguna escalera de mano cae adentro', () => {
   const rooms = interiors.map((i) => ({ id: i.placeId, fp: closed(ensureCCW(byId.get(i.buildingId)!.footprint)) }));
   for (const f of map.buildings.filter((b) => b.fill)) {
-    for (const r of rooms) expect(area(polygonClipping.intersection(closed(ensureCCW(f.footprint)), r.fp)), `${f.id} en ${r.id}`).toBeLessThanOrEqual(0.05);
+    for (const r of rooms) expect(areaOf(polygonClipping.intersection(closed(ensureCCW(f.footprint)), r.fp)), `${f.id} en ${r.id}`).toBeLessThanOrEqual(0.05);
   }
   for (const p of map.props) {
     if (p.kind !== 'ladder') continue;
@@ -156,7 +148,7 @@ test('ningún bloque `out` ni ningún paño de un interior toca una escalera de 
     return [{ what: `escalera de ${p.buildingId} en ${p.base.join(', ')}`, poly: [at(-0.4, 0.03), at(0.4, 0.03), at(0.4, 0.6), at(-0.4, 0.6)], y1: p.topY + 0.8 }];
   });
   const touches = (poly: Vec2[], y0: number, y1: number, l: (typeof ladders)[number]): boolean =>
-    y1 > 0 && y0 < l.y1 && area(polygonClipping.intersection(closed(ensureCCW(poly)), closed(ensureCCW(l.poly)))) > 1e-6;
+    y1 > 0 && y0 < l.y1 && areaOf(polygonClipping.intersection(closed(ensureCCW(poly)), closed(ensureCCW(l.poly)))) > 1e-6;
   /** La planta de un paño: la de sus esquinas si es horizontal o inclinado; si es vertical, su recta engordada 1 mm. */
   const paneFoot = (c: [number, number, number][]): Vec2[] => {
     const q = c.map((r): Vec2 => [r[0], r[2]]);
@@ -199,7 +191,7 @@ test('ningún prop (contenedor, escalera, banco) se pisa con un bloque sólido d
       for (const p of props) {
         if (p.y1 <= x.y0 || p.y0 >= x.y1) continue;
         if (p.poly.every((q) => q[0] < box[0]) || p.poly.every((q) => q[0] > box[2]) || p.poly.every((q) => q[1] < box[1]) || p.poly.every((q) => q[1] > box[3])) continue;
-        const over = area(polygonClipping.intersection(closed(ensureCCW(p.poly)), closed(x.polygon)));
+        const over = areaOf(polygonClipping.intersection(closed(ensureCCW(p.poly)), closed(x.polygon)));
         expect(over, `${i.placeId}: ${x.role} pisa ${p.what}`).toBeLessThan(1e-3);
       }
     }

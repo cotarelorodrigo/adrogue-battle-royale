@@ -196,7 +196,9 @@ async function run(boot: Boot): Promise<void> {
   });
 
   const map = await loadMap();
-  const world = buildCollisionWorld(map);
+  // los interiores se arman una vez: sus sólidos van a la colisión y lo demás, a los chunks y a las vistas
+  const interiors = buildInteriors(map);
+  const world = buildCollisionWorld(map, interiors);
 
   const scene = createScene(canvas, map.outskirts, quality);
   canvas.addEventListener('webglcontextlost', () => {
@@ -219,7 +221,6 @@ async function run(boot: Boot): Promise<void> {
   let materials: WorldMaterials = initialMaterials;
   if (boot.lost) throw new Error('Se perdió el contexto WebGL durante la carga');
   // Los interiores: huecos en las fachadas (con sus tapas), lo de afuera con el edificio y lo de adentro, de cerca.
-  const interiors = buildInteriors(map);
   const chunks = buildChunks(map, materials, interiors);
   scene.addChunks(chunks.groups);
   // las aberturas y los huecos del techo de cada interior: bajo techo, lo de afuera se dibuja solo si se ve por ahí
@@ -381,7 +382,7 @@ async function run(boot: Boot): Promise<void> {
       return;
     }
     scene.setMaterials(next);
-    interiorViews.setQuality(q); // vuelve a armar con los materiales nuevos, si cambia el detalle
+    interiorViews.setQuality(q); // vuelve a compactar con los materiales nuevos (y a hornear, si cambia el detalle)
     disposeMaterials(materials);
     materials = next;
     quality = q;

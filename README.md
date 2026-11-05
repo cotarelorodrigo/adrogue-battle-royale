@@ -82,9 +82,10 @@ losas y los muebles frenan como cualquier pared. Los vidrios y las barandas fren
 | Guernica Bar | la barra con las canillas y los estantes de botellas, las mesas, la planta alta con el escenario, el balcón y el patio de adelante con sus jacarandás |
 | Estación Adrogué | el hall de la boletería con sus ventanillas, la terminal SUBE y el mural, y el patio de los molinetes con la escalera al andén |
 
-En la partida, el botín de los lugares está adentro. Hay entre 4 y 12 objetos por lugar, uno cada 40 m² de piso
-público (contando la terraza de La Veneciana), y se reparten parejo por sus pisos: el primero, lo más lejos posible de
-la puerta. Para juntar algo hay que verlo: no se junta a través de una pared ni de un vidrio.
+En la partida, el botín de los lugares está adentro. Hay entre 4 y 12 puntos de botín por lugar, uno cada 40 m² de
+piso público (contando la terraza de La Veneciana), repartidos entre sus pisos según el área: el primero, lo más lejos
+posible de la puerta. Si en un punto sale un arma, trae al lado una caja de su munición. Para juntar algo hay que
+verlo: no se junta a través de una pared, un vidrio ni una baranda.
 
 ## Regenerar el mapa
 

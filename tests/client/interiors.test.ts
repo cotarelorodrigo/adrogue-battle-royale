@@ -181,6 +181,18 @@ describe('buildInterior3D', () => {
     expect(counts('baja')).toEqual([10, 30]);
   });
 
+  // m16 de la revisión final: como las texturas del mundo (materials.ts), no un 4 fijo
+  test('la anisotropía de los carteles de adentro es la de la calidad (baja 1, media 4, alta 8), también al cambiarla', () => {
+    const { interior: i } = testInterior({ extra: (k) => k.label('CAJA', [5, 14.8], 2.2, [0, -1], 1.6, 0.4, LABEL_LOOK) });
+    const anisotropy = (o: THREE.Object3D): number[] =>
+      meshesOf(o).filter((x) => x.name.startsWith('labels:')).map((x) => (x.material as THREE.MeshBasicMaterial).map!.anisotropy);
+    for (const q of ['baja', 'media', 'alta'] as const) expect(anisotropy(buildInterior3D(i, m, q).group), q).toEqual([QUALITY[q].anisotropy]);
+    const views = createInteriorViews([i], m, 'alta', new Map());
+    views.setQuality('media');
+    expect(anisotropy(views.group)).toEqual([QUALITY.media.anisotropy]);
+    views.dispose();
+  });
+
   test('un cartel con dibujo (la puerta del tesoro, tarea 6) va en canvas: la puerta redonda con arcos, sin texto', () => {
     const calls: string[] = [];
     stubCanvas(undefined, (method) => calls.push(method));
@@ -291,6 +303,23 @@ describe('tope de draw calls por calidad (H3, H6)', () => {
     expect(views.drawn()).toEqual(['a']);
     const inside = views.group.children.filter((c) => c.name.startsWith('interior:') && c.visible).flatMap(meshesOf);
     expect(inside.length).toBeLessThanOrEqual(QUALITY.baja.interiors.calls);
+  });
+
+  // I1 de la revisión final: el tope de cada interior (min(MAX_MESHES, calls)) garantiza que el más cercano siempre
+  // entra solo, no que entren los que siguen. Uno que no entra en lo que queda de `calls` se saltea, y se sigue probando
+  // con los de más lejos: no corta la lista.
+  test('uno que no entra en lo que queda de calls no deja afuera a los de más lejos que sí entran', () => {
+    // en media (max 2, calls 18): el de adelante, liso (pocas mallas); el del medio, cargado (17); el de atrás, liso
+    const list = [shifted('lejos', 0, 45), shifted('a', 0, 0), shifted('medio', 0, 25, load)];
+    const views = createInteriorViews(list, m, 'media', new Map());
+    const count = (id: string): number => meshesOf(views.group.getObjectByName(`interior:${id}`)!).length;
+    const calls = QUALITY.media.interiors.calls;
+    expect(count('a') + count('medio'), 'el del medio no entra con el de adelante').toBeGreaterThan(calls);
+    expect(count('a') + count('lejos'), 'el de atrás sí').toBeLessThanOrEqual(calls);
+    views.update(cameraAt([5, 0, -10], Math.PI));
+    expect(views.drawn()).toEqual(['a', 'lejos']);
+    const drawnMeshes = views.group.children.filter((c) => c.name.startsWith('interior:') && c.visible).flatMap(meshesOf);
+    expect(drawnMeshes.length).toBeLessThanOrEqual(calls);
   });
 });
 

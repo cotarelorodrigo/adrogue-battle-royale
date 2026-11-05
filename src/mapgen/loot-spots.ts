@@ -157,7 +157,7 @@ export function walkable(world: CollisionWorld, i: Walk, frame: Frame): FloorGri
   const grids = i.floors.map((_, k) => floorGrid(world, i, k, frame));
   const at = (level: number, y: number): number => i.floors.findIndex((f) => f.level === level && Math.abs(f.y - y) < 1e-6);
   const door = i.doors[0];
-  const k0 = at(door.level, i.floors.find((f) => f.level === door.level)?.y ?? NaN);
+  const k0 = i.floors.findIndex((f) => f.level === door.level);
   if (k0 >= 0) flood(grids[k0], nearestFree(grids[k0], [door.at[0] - door.normal[0] * DOOR_IN, door.at[1] - door.normal[1] * DOOR_IN]));
   // cada escalera une el piso de su pie con el de su llegada, para los dos lados, hasta que no cambie nada
   const links = i.stairs.map((s) => {
@@ -178,12 +178,13 @@ export function walkable(world: CollisionWorld, i: Walk, frame: Frame): FloorGri
 }
 
 /** Cuántos de `n` le tocan a cada piso según su área: la parte entera de la proporción y, lo que sobra, a los de mayor
- *  resto (en empate, el de nivel más bajo). */
-function shares(areas: number[], n: number): number[] {
-  const total = areas.reduce((a, b) => a + b, 0);
-  const exact = areas.map((a) => (total > 0 ? (n * a) / total : 0));
+ *  resto (en empate, el de nivel más bajo y, en el mismo nivel, el primero de `floors`). */
+export function shares(floors: readonly { area: number; level: number }[], n: number): number[] {
+  const total = floors.reduce((a, f) => a + f.area, 0);
+  const exact = floors.map((f) => (total > 0 ? (n * f.area) / total : 0));
   const out = exact.map(Math.floor);
-  const order = exact.map((e, k) => ({ k, r: e - Math.floor(e) })).sort((u, v) => v.r - u.r || u.k - v.k);
+  const order = exact.map((e, k) => ({ k, r: e - Math.floor(e) }))
+    .sort((u, v) => v.r - u.r || floors[u.k].level - floors[v.k].level || u.k - v.k);
   for (let j = 0; j < n - out.reduce((a, b) => a + b, 0); j++) out[order[j].k]++;
   return out;
 }
@@ -197,16 +198,16 @@ const dist3 = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1],
  * sobre su piso, y a CLEAR de la pared y de los huecos de ese piso (la caja de munición no cae por el hueco de una
  * escalera). Se eligen por punto más lejano: el primero, el más lejos de la puerta principal; cada uno de los que siguen,
  * el más lejos de la puerta y de los ya elegidos (en 3D; en empate, la primera celda en el orden de los pisos y de la
- * grilla), a ≥ PLACE_SEP de todos ellos y de los puntos de techo (`taken`). Si no entran todos, avisa.
+ * grilla), a ≥ PLACE_SEP de todos ellos y de los puntos de techo (`taken`). Si no entran todos, avisa. `armed`: los
+ * interiores de map.interiors ya armados, en el mismo orden; `world`: el mundo del juego, con sus edificios huecos.
  */
-function interiorSpots(map: MapData, world: CollisionWorld, taken: readonly LootSpot[]): { spots: LootSpot[]; warnings: string[] } {
+function interiorSpots(map: MapData, world: CollisionWorld, armed: readonly Interior[], taken: readonly LootSpot[]): { spots: LootSpot[]; warnings: string[] } {
   const spots: LootSpot[] = [];
   const warnings: string[] = [];
-  const interiors = buildInteriors(map);
-  interiors.forEach((i, idx) => {
+  armed.forEach((i, idx) => {
     const frame = map.interiors[idx].frame;
     const n = placeLootCount(publicFloorArea(i));
-    const quota = shares(i.floors.map((f) => f.area), n);
+    const quota = shares(i.floors, n);
     const grids = walkable(world, i, frame);
     const near = taken.filter((t) => pointInPolygon([t.pos[0], t.pos[2]], i.footprint)).map((t) => t.pos);
     const cands: { p: Vec3; k: number }[] = [];
@@ -246,9 +247,9 @@ function interiorSpots(map: MapData, world: CollisionWorld, taken: readonly Loot
 /**
  * Calle: un punto cada STREET_STEP m de cada calle vehicular, en el medio de la vereda, alternando el lado (el primero,
  * sorteado por calle). Si el punto ideal no está libre se corre a lo largo de la vereda; si tampoco, prueba la de
- * enfrente. Queda a STREET_GAP (en planta) de los ya puestos y de `taken`: la puerta principal de cada lugar con
- * interior, que ya tiene su botín adentro (es donde estaba el botín del frente antes de los interiores: la calle queda
- * como estaba).
+ * enfrente. Queda a STREET_GAP (en planta) de los ya puestos y de `taken`, la puerta principal de cada lugar con
+ * interior: la vereda de la entrada de un lugar con interior queda a ≥ STREET_GAP de su puerta principal, porque su
+ * botín está adentro.
  */
 function streetSpots(ctx: Ctx, taken: Vec2[]): LootSpot[] {
   const out: LootSpot[] = [];
@@ -378,18 +379,18 @@ function roofSpots(ctx: Ctx): LootSpot[] {
 
 /** Los puntos de botín del mapa: los de la calle, los de los techos y los de los lugares, en ese orden. `world`: el
  *  mundo de colisiones del mapa terminado (con los props y las ayudas de ascenso) para la calle y los techos. Los de los
- *  lugares van adentro de sus interiores (map.interiors) y se ubican en el mundo del juego, con los edificios huecos
- *  (buildCollisionWorld(map)), que se arma acá. */
-export function lootSpots(map: MapData, world: CollisionWorld): LootSpot[] {
-  return placeLootSpots(map, world).spots;
+ *  lugares van adentro de sus interiores: `armed`, los de map.interiors ya armados (buildInteriors, en el mismo orden), y
+ *  `hollow`, el mundo del juego, con esos edificios huecos (buildCollisionWorld(map, armed)). Si no vienen, se arman. */
+export function lootSpots(map: MapData, world: CollisionWorld, armed = buildInteriors(map), hollow = buildCollisionWorld(map, armed)): LootSpot[] {
+  return placeLootSpots(map, world, armed, hollow).spots;
 }
 
 /** Como `lootSpots`, con un aviso por cada interior donde no entraron todos sus puntos (rompe el build). */
-export function placeLootSpots(map: MapData, world: CollisionWorld): { spots: LootSpot[]; warnings: string[] } {
+export function placeLootSpots(map: MapData, world: CollisionWorld, armed: readonly Interior[], hollow: CollisionWorld): { spots: LootSpot[]; warnings: string[] } {
   const vehicular = map.roads.filter((r) => !NON_VEHICULAR.has(r.kind));
   const ctx: Ctx = { map, world, vehicular, roadGrid: createGrid(vehicular.map((r) => bboxOf(r.points, r.width / 2 + CURB))) };
   const roofs = roofSpots(ctx);
-  const places = interiorSpots(map, map.interiors.length > 0 ? buildCollisionWorld(map) : world, roofs);
+  const places = interiorSpots(map, hollow, armed, roofs);
   const street = streetSpots(ctx, map.places.flatMap((p) => (p.door ? [p.door] : [])));
   return { spots: [...street, ...roofs, ...places.spots], warnings: places.warnings };
 }

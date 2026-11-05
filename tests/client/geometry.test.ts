@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { extrudeBuilding, ribbon, polygonGeometry, BAY_W } from '../../src/client/world/geometry.ts';
 import { buildChunks, CHUNK } from '../../src/client/world/chunks.ts';
 import type { WorldMaterials } from '../../src/client/world/types.ts';
+import { FLOOR_H as CLIENT_FLOOR_H } from '../../src/client/world/wall-kit.ts';
 import { heightFor, FLOOR_H } from '../../src/mapgen/buildings.ts';
 import { polygonArea } from '../../src/shared/geo.ts';
+import { LEVEL_H } from '../../src/shared/interiors/openings.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import type { Building, MapData, Road } from '../../src/shared/mapdata.ts';
 
@@ -43,6 +45,13 @@ const faces = (g: THREE.BufferGeometry, cb: (geo: THREE.Vector3, attr: THREE.Vec
 };
 
 const g = extrudeBuilding({ ...square10, height: heightFor(2), floors: 2 });
+
+// m15 de la revisión final: el alto de un piso vive en tres lados (el cliente no importa mapgen, y shared no importa a
+// ninguno de los dos): las ventanas pintadas, los huecos de las puertas de cada nivel y la altura de los edificios
+test('el alto de un piso es uno solo: LEVEL_H (shared), FLOOR_H del cliente (wall-kit) y FLOOR_H de mapgen', () => {
+  expect(CLIENT_FLOOR_H).toBe(FLOOR_H);
+  expect(LEVEL_H).toBe(FLOOR_H);
+});
 
 describe('extrudeBuilding', () => {
   test('normales de pared hacia afuera (atributo y winding)', () => {

@@ -3,7 +3,9 @@
 //   ahí el interior se dibuja, la imagen no es lisa y queda una captura en test-results/interiores/<id>.png;
 // - en la Casa de la Cultura, ida y vuelta de calidad estando adentro (Review Focus 3): el interior se sigue dibujando,
 //   sin materiales liberados (negros) ni errores;
-// - el botín de un piso alto (un balcón de la Casa): se dibuja ahí, sale "E: juntar…" y E lo junta parado en el balcón.
+// - el botín de un piso alto (un balcón de la Casa): se dibuja ahí, sale "E: juntar…" y E lo junta parado en el balcón;
+// - el McDonald's desde la vereda de enfrente, mirando su puerta: alta → media → alta (I1 de la revisión final), y se
+//   dibuja en las tres; quedan capturas en test-results/interiores/mcdonalds-enfrente-<paso>-<calidad>.png.
 // Sin errores de consola en todo el recorrido.
 import { mkdirSync, rmSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
@@ -15,6 +17,7 @@ import { interiorOf } from '../src/shared/interiors/index.ts';
 import { isFreeSpot } from '../src/mapgen/spawns.ts';
 import { MATCH, newMatch } from '../src/shared/match.ts';
 import { PLAYER } from '../src/shared/player.ts';
+import { acrossTheStreet } from '../tests/helpers.ts';
 import { canvasLuma, collectErrors, frames, map, open, PERF_SEED, play, playing } from './helpers.ts';
 
 const DIR = 'test-results/interiores';
@@ -133,4 +136,25 @@ test('el botín de un balcón de la Casa de la Cultura: se ve sobre el balcón, 
   const s = await state(page);
   expect(s.pos[1], 'parado en el balcón').toBeCloseTo(y1, 3);
   expect(errors).toEqual([]);
+});
+
+// I1 de la revisión final: entre media y alta cambia el tope de mallas de un interior (18 y 20) y no el detalle, y el
+// cambio tiene que volver a compactarlos. Antes, el McDonald's armado en alta (19 mallas) quedaba igual en media, no
+// entraba en sus draw calls y desde afuera no se dibujaba más, hasta recargar la página
+test('el McDonald\'s desde la vereda de enfrente: alta → media → alta, y se dibuja en las tres', async ({ page }) => {
+  const errors = collectErrors(page);
+  mkdirSync(DIR, { recursive: true });
+  const across = acrossTheStreet(map, 'mcdonalds');
+  await open(page, `?debug=1&semilla=${PERF_SEED}&maniquis=0`);
+  await page.evaluate(() => window.__adrogue.photosReady);
+  await play(page);
+  const steps = ['alta', 'media', 'alta'] as const;
+  for (const [k, q] of steps.entries()) {
+    await page.evaluate((x) => window.__adrogue.setQuality(x), q);
+    await page.evaluate(([p, yaw]) => window.__adrogue.placeAt(p, yaw), [across.pos, across.yaw] as const);
+    await frames(page, 8);
+    expect(await drawn(page), `paso ${k + 1}, en ${q}`).toContain('mcdonalds');
+    await page.screenshot({ path: `${DIR}/mcdonalds-enfrente-${k + 1}-${q}.png` });
+    expect(errors, `paso ${k + 1}, en ${q}`).toEqual([]);
+  }
 });

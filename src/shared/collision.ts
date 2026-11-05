@@ -624,7 +624,7 @@ function octagon([cx, cz]: Vec2, r: number): Vec2[] {
 }
 
 /** Caja centrada en c con el largo sobre el eje local +x: rotación three.js sobre +Y, +x local → (cos θ, −sin θ). */
-function orientedBox([cx, cz]: Vec2, rotation: number, length: number, depth: number): Vec2[] {
+export function orientedBox([cx, cz]: Vec2, rotation: number, length: number, depth: number): Vec2[] {
   const c = Math.cos(rotation), s = Math.sin(rotation);
   const ux = (c * length) / 2, uz = (-s * length) / 2; // medio largo, sobre +x local
   const vx = (s * depth) / 2, vz = (c * depth) / 2; // medio ancho, sobre +z local
@@ -650,14 +650,17 @@ export function interiorPrisms(i: Interior): Prism[] {
 }
 
 /** Los sólidos y las escaleras del mapa. Tags: el id del edificio (y de lo macizo de su interior), `glass:<id>` en sus
- *  vidrios y barandas, `parapet:<id>` en su pretil, `station-post` en los postes de la estación, o el tipo de prop. */
-export function collisionPrisms(map: CollisionMap): { prisms: Prism[]; ladders: LadderVolume[] } {
+ *  vidrios y barandas, `parapet:<id>` en su pretil, `station-post` en los postes de la estación, o el tipo de prop.
+ *  Huecos son los edificios de `map.interiors`; `armed`: sus interiores ya armados (buildInteriors), para no armarlos de
+ *  nuevo (el que no venga se arma acá). */
+export function collisionPrisms(map: CollisionMap, armed: readonly Interior[] = []): { prisms: Prism[]; ladders: LadderVolume[] } {
   const prisms: Prism[] = [];
   const ladders: LadderVolume[] = [];
   const inside = new Map((map.interiors ?? []).map((i) => [i.buildingId, i]));
+  const built = new Map(armed.map((i) => [i.buildingId, i]));
   for (const b of map.buildings) {
     const input = inside.get(b.id);
-    if (input) prisms.push(...interiorPrisms(buildInterior(b, input, map.platforms)));
+    if (input) prisms.push(...interiorPrisms(built.get(b.id) ?? buildInterior(b, input, map.platforms)));
     else prisms.push({ polygon: b.footprint, minY: 0, maxY: b.height, tag: b.id });
     if (b.fill) continue; // un relleno de hueco es un parche entre vecinos: sin pretil
     for (const e of parapetEdges(ensureCCW(b.footprint))) {
@@ -691,7 +694,8 @@ export function collisionPrisms(map: CollisionMap): { prisms: Prism[]; ladders: 
   return { prisms, ladders };
 }
 
-export function buildCollisionWorld(map: CollisionMap): CollisionWorld {
-  const { prisms, ladders } = collisionPrisms(map);
+/** El mundo de colisiones del mapa (collisionPrisms; `armed`: los interiores de `map.interiors` ya armados). */
+export function buildCollisionWorld(map: CollisionMap, armed: readonly Interior[] = []): CollisionWorld {
+  const { prisms, ladders } = collisionPrisms(map, armed);
   return new CollisionWorld(prisms, ladders, map.bounds);
 }

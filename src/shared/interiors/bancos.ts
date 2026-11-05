@@ -17,8 +17,8 @@ import type { SignLook } from '../mapdata.ts';
 import type { InteriorPlan } from './index.ts';
 import { MODEL_BOX, WALL_IN } from './kit.ts';
 import type { Kit } from './kit.ts';
-import { add, MIRA, rect, zocalo } from './plan-util.ts';
-import type { Rect } from './plan-util.ts';
+import { add, caras, MIRA, rect, zocalo } from './plan-util.ts';
+import type { Caras, Rect } from './plan-util.ts';
 import type { ItemModel, Look } from './types.ts';
 
 export type Marca = 'nacion' | 'galicia' | 'bbva';
@@ -144,14 +144,6 @@ const span = (ua: number, ub: number, va: number, vb: number): Rect => [Math.min
 const dir = (a: number): Vec2 => [Math.sin(a), Math.cos(a)];
 /** El ángulo local que mira hacia ±U. */
 const miraU = (s: number): number => (s > 0 ? MIRA.U : MIRA.menosU);
-
-/** Las caras de adentro de las paredes de afuera (la planta corrida del Kit): los lotes son casi rectángulos (se tuercen
- *  a lo sumo 1 cm), así que se toma lo más adentro de cada lado. */
-interface Caras { U0: number; U1: number; V0: number; V1: number }
-function caras(k: Kit): Caras {
-  const us = k.inside.map((p) => p[0]).sort((a, b) => a - b), vs = k.inside.map((p) => p[1]).sort((a, b) => a - b);
-  return { U0: us[1], U1: us[us.length - 2], V0: vs[1], V1: vs[vs.length - 2] };
-}
 
 // ---------- piezas ----------
 

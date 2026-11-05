@@ -8,7 +8,7 @@ import { ensureCCW, insetRing, pointInPolygon, polygonArea, signedAreaFromAbove,
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { Building, InteriorInput, Opening, SignLook, Tree } from '../mapdata.ts';
 import { LEVEL_H, LINTEL_MIN, doorsOf } from './openings.ts';
-import { add } from './plan-util.ts';
+import { add, sub } from './plan-util.ts';
 import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, LabelDrawing, Lamp, Look, Pane, Role, StairRun, Viewpoint } from './types.ts';
 
 /** Espesores (m): pared de afuera, tabique, losa entre pisos y techo. */
@@ -64,8 +64,8 @@ export interface ShellOpts { publicFloors: number; terrace?: true; holes?: { lev
 /** Un tabique de `from` a `to` (marco local), centrado en esa recta. `gaps`: huecos con `at` (m desde `from`, al medio
  *  del hueco), `width` y `height` desde `y0`; arriba, dintel. `glassLeaf`: la hoja de vidrio dibujada abierta (D10). */
 export interface WallOpts { t?: number; y0?: number; y1?: number; gaps?: { at: number; width: number; height: number; glassLeaf?: true }[]; look: Look; collide?: Collide }
-/** Una escalera del nivel `from` al `to`: `foot` es el medio del primer escalón, en el piso de abajo, y sube hacia `dir`.
- *  `railStyle`: el de las barandas de su hueco (RailStyle). */
+/** Una escalera del nivel `from` al `to`: `foot` es el medio del borde de abajo del primer escalón (donde arranca), en
+ *  el piso de abajo, y sube hacia `dir`. `railStyle`: el de las barandas de su hueco (RailStyle). */
 export interface StairOpts {
   from: number; to: number; foot: Vec2; dir: Vec2; width: number; look: Look; rail?: Look; railStyle?: RailStyle; out?: true;
   /**
@@ -124,13 +124,13 @@ const RAIL_PIECE = 0.5, RAIL_PROBE = 0.15;
 const EPS = 1e-9;
 
 type Ring = [number, number][];
-const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
 const dist = (a: Vec2, b: Vec2): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const unit = (a: Vec2): Vec2 => {
   const l = Math.hypot(a[0], a[1]);
   return l > 0 ? [a[0] / l, a[1] / l] : [0, 0];
 };
-const closed = (r: Vec2[]): [Ring] => [[...r, r[0]].map((p): [number, number] => [p[0], p[1]])];
+/** Un anillo como polígono de polygon-clipping: cerrado (el primer punto repetido al final). */
+export const closed = (r: Vec2[]): [Ring] => [[...r, r[0]].map((p): [number, number] => [p[0], p[1]])];
 const opened = (r: Ring): Vec2[] => r.slice(0, -1).map((p): Vec2 => [p[0], p[1]]);
 const pick = (l: Look | Look[], k: number): Look => (Array.isArray(l) ? l[Math.min(k, l.length - 1)] : l);
 const looksOf = (l: Pick<Block, 'top' | 'bottom' | 'side'>): Pick<Block, 'top' | 'bottom' | 'side'> =>
@@ -188,7 +188,6 @@ export class Kit {
   private readonly runs: StairRun[] = [];
   /** El hueco (marco local) que abre cada escalera en las losas de los niveles from + 1 … to, y la baranda de su borde. */
   private readonly stairHoles: { from: number; to: number; poly: Vec2[]; rail: Look; style: RailStyle }[] = [];
-  /** Los pasamanos de las escaleras: se arman en done(), cuando ya están todos los huecos. */
   /** Los pasamanos de las escaleras (StairOpts.handrail), que se arman en done(); `out`, el de la escalera. */
   private readonly handrails: { from: number; to: number; foot: Vec2; d: Vec2; side: Vec2; w: number; treads: [number, number][]; y0: number; y1: number; rail: Look; look: Look; style: RailStyle; out?: true }[] = [];
 

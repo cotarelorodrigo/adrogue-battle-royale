@@ -128,8 +128,8 @@ function plantaOpenings(placeId: string, b: Building, s: PlantaShape, warnings: 
 
 /**
  * Un interior por lugar entrable cuyo edificio es un lote relevado (`lotFronts`: la fachada de cada lote, por id) o una
- * planta relevada (`plantas`, por id del lugar). Un lugar entrable sin ninguno de los dos todavía no tiene interior (los
- * de SIN_LOTE sin planta ya avisan que falta relevarla). `buildings` y `places`: los ya redondeados.
+ * planta relevada (`plantas`, por id del lugar). Un lugar entrable sin ninguno de los dos no tiene interior: avisa, y el
+ * aviso rompe el build (m1). `buildings` y `places`: los ya redondeados.
  */
 export function interiorInputs(
   buildings: Building[], places: Omit<Place, 'spawn'>[], plantas: Map<string, PlantaShape>, lotFronts: Map<string, Vec2[]>,
@@ -170,5 +170,8 @@ export function interiorInputs(
     });
     inputs.push(input);
   }
+  // un lugar entrable sin interior se queda sin botín y con la puerta contra un prisma macizo: rompe el build (m1)
+  const has = new Set(inputs.map((i) => i.placeId));
+  for (const p of places) if (p.enterable && !has.has(p.id)) warnings.push(`${p.id}: es entrable y no tiene interior (falta su planta o su lote)`);
   return { inputs, warnings };
 }

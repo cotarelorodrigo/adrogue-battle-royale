@@ -15,6 +15,7 @@ import type { MapData } from '../../../src/shared/mapdata.ts';
 import { initialState, stepPlayer } from '../../../src/shared/player.ts';
 import type { PlayerState } from '../../../src/shared/player.ts';
 import { climbStair } from './walk.ts';
+import { fmt } from '../../helpers.ts';
 
 const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
 const world = buildCollisionWorld(map);
@@ -22,7 +23,6 @@ const i = interiorOf(map, 'la-veneciana');
 const b = map.buildings.find((x) => x.id === i.buildingId)!;
 const H = b.height;
 
-const fmt = (p: readonly number[]): string => p.map((v) => v.toFixed(2)).join(', ');
 const xz = (p: Vec3): Vec2 => [p[0], p[2]];
 const dist2 = (a: Vec2, c: Vec2): number => Math.hypot(a[0] - c[0], a[1] - c[1]);
 const unit = (a: Vec2): Vec2 => [a[0] / Math.hypot(a[0], a[1]), a[1] / Math.hypot(a[0], a[1])];

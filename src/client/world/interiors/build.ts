@@ -364,8 +364,8 @@ function packLabels(canvases: HTMLCanvasElement[], onePage: boolean): { canvases
   }
 }
 
-/** Los carteles de adentro: un cuadro por cartel y una malla por página de atlas. */
-function labelMeshes(i: Interior, labels: Label[], canvases: HTMLCanvasElement[], packed: ReturnType<typeof packSigns>, light: Light): THREE.Mesh[] {
+/** Los carteles de adentro: un cuadro por cartel y una malla por página de atlas, con la anisotropía de la calidad. */
+function labelMeshes(i: Interior, labels: Label[], canvases: HTMLCanvasElement[], packed: ReturnType<typeof packSigns>, light: Light, anisotropy: number): THREE.Mesh[] {
   const { rects, pages } = packed;
   const pageCanvases = pages.map((pg) => {
     const c = document.createElement('canvas');
@@ -408,7 +408,7 @@ function labelMeshes(i: Interior, labels: Label[], canvases: HTMLCanvasElement[]
   return builders.map((b, k) => {
     const map = new THREE.CanvasTexture(pageCanvases[k]);
     map.colorSpace = THREE.SRGBColorSpace;
-    map.anisotropy = 4;
+    map.anisotropy = anisotropy;
     const mesh = new THREE.Mesh(toGeometry(b), bakedMaterial(map));
     mesh.name = `labels:${k}`;
     return mesh;
@@ -494,53 +494,89 @@ function prismOf(meshes: THREE.Mesh[]): { hull: Vec2[]; y0: number; y1: number; 
   return { hull: convexHull(ps), y0: box.min.y, y1: box.max.y, box };
 }
 
-/** El interior para dibujar con los materiales `m` en la calidad `q`, y su caja (planta, patios y lo de adentro). Con
- *  un patio, en dos partes (dos grupos dentro del suyo, cada uno con su caja: view.ts los decide por separado parado en
- *  el patio); sin patio, una (el grupo mismo). Se compacta hasta que las mallas de todas las partes entren en
- *  min(MAX_MESHES, interiors.calls); si ni así entran, tira un error con el lugar. */
-export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): { group: THREE.Group; box: THREE.Box3; parts: InteriorPart[] } {
-  const { detail, calls } = QUALITY[q].interiors;
-  const cap = Math.min(MAX_MESHES, calls);
+/** Lo horneado de una parte del interior (el edificio o el patio): sus bloques, paños, muebles y carteles, las caras
+ *  de lo opaco por Mat y el vidrio en una malla, con la luz en el color; los textos de sus carteles, cuántas páginas
+ *  ocupan sin achicar y qué muebles se repiten. */
+interface BakedPart {
+  name: Region; blocks: Block[]; panes: Pane[]; items: Item[]; labels: Label[];
+  geometries: Map<Mat, THREE.BufferGeometry>; opaque: Mat[]; glass: THREE.BufferGeometry | null;
+  canvases: HTMLCanvasElement[]; fullPages: number; plan: ReturnType<typeof itemPlan>;
+}
+
+/**
+ * Lo horneado de un interior en un detalle (I1 de la revisión final): lo caro de armarlo (la luz de cada cara, en la
+ * grilla del detalle, y los textos de los carteles), que no depende del tope de mallas de la calidad. Media y alta
+ * tienen el mismo detalle y distinto tope: al pasar de una a otra se compacta de nuevo (compactInterior) sin volver a
+ * hornear. `shared`: sus geometrías. Las mallas que arma compactInterior las usan tal cual (salvo las que cambia, que
+ * copia), así que al liberar un armado no se liberan: las libera disposeBaked, cuando lo horneado deja de usarse.
+ */
+export interface BakedInterior { readonly i: Interior; readonly detail: 1 | 2; readonly parts: readonly BakedPart[]; readonly shared: ReadonlySet<THREE.BufferGeometry> }
+
+/** Lo armado de un interior: su grupo, su caja (planta, patios y lo de adentro) y sus partes. */
+export interface Interior3D { group: THREE.Group; box: THREE.Box3; parts: InteriorPart[] }
+
+/** El tope de mallas de un interior en la calidad `q`: min(MAX_MESHES, interiors.calls). */
+export const meshCap = (q: Quality): number => Math.min(MAX_MESHES, QUALITY[q].interiors.calls);
+
+/** Hornea `i` con el detalle `detail`: las caras de los bloques y los paños (partidas en la grilla de BAKE_STEP), el
+ *  vidrio, los textos de los carteles y los muebles hasta ese detalle, por parte (la del patio, si tiene algo). */
+export function bakeInterior(i: Interior, detail: 1 | 2): BakedInterior {
   const light = baker(i);
-  const sides = sideFaces(i, BAKE_STEP[detail]);
+  const step = BAKE_STEP[detail];
+  const sides = sideFaces(i, step);
   const region = regionOf(i);
   const xz = (p: Vec3): Vec2 => [p[0], p[2]];
-  // lo de cada parte (la del patio, si tiene algo)
-  const split = (['edificio', 'patio'] as const).map((name) => ({
+  const parts = (['edificio', 'patio'] as const).map((name) => ({
     name,
     blocks: i.blocks.filter((b) => !b.out && region(middle(b.polygon, 0, 1)) === name),
     panes: i.panes.filter((pn) => !pn.out && region(middle(pn.corners, 0, 2)) === name),
     items: i.items.filter((it) => (it.detail ?? 1) <= detail && region(xz(it.at)) === name),
     labels: i.labels.filter((l) => !l.out && region(xz(l.at)) === name),
-  })).filter((r) => r.name === 'edificio' || r.blocks.length + r.panes.length + r.items.length + r.labels.length > 0);
-  const prep = split.map((r) => {
-    const blocks = blockGeometries(i, r.blocks, r.panes, BAKE_STEP[detail], light, sides);
+  })).filter((r) => r.name === 'edificio' || r.blocks.length + r.panes.length + r.items.length + r.labels.length > 0).map((r): BakedPart => {
+    const geometries = blockGeometries(i, r.blocks, r.panes, step, light, sides);
     const canvases = labelCanvases(r.labels);
     const fullPages = r.labels.length === 0 ? 0 : packSigns(canvases.map((c) => ({ w: c.width, h: c.height })), PAGE, LABEL_GUTTER).pages.length;
-    const opaque = [...blocks.keys()].filter((mat) => mat !== 'vidrio');
     // el vidrio de los bloques y el de los muebles, en una malla sin uv (no tiene textura)
-    const glassParts = [...(blocks.has('vidrio') ? [blocks.get('vidrio')!] : []), ...itemGlass(i, r.items)];
+    const glassParts = [...(geometries.has('vidrio') ? [geometries.get('vidrio')!] : []), ...itemGlass(i, r.items)];
+    geometries.delete('vidrio');
     for (const g of glassParts) if (g.getAttribute('uv')) g.deleteAttribute('uv');
-    return { ...r, geometries: blocks, canvases, plan: itemPlan(r.items), fullPages, opaque, glassParts };
+    return { ...r, geometries, opaque: [...geometries.keys()], glass: merged(i, glassParts), canvases, fullPages, plan: itemPlan(r.items) };
   });
-  type Prep = (typeof prep)[number];
-  const countOf = (p: Prep, level: Level): number => {
-    const hasGlass = p.glassParts.length > 0 ? 1 : 0;
+  const shared = new Set(parts.flatMap((p) => [...p.geometries.values(), ...(p.glass ? [p.glass] : [])]));
+  return { i, detail, parts, shared };
+}
+
+/** Libera las geometrías de lo horneado (después de liberar lo que se armó con eso). */
+export function disposeBaked(b: BakedInterior): void {
+  for (const g of b.shared) g.dispose();
+}
+
+/** El interior horneado `b`, para dibujar con los materiales `m` en la calidad `q` (que tiene que ser del detalle de
+ *  `b`): compactado hasta que las mallas de todas sus partes entren en meshCap(q) (si ni así entran, tira un error con el
+ *  lugar). Con un patio, en dos partes (dos grupos dentro del suyo, cada uno con su caja: view.ts los decide por
+ *  separado parado en el patio); sin patio, una (el grupo mismo). Usa las geometrías de `b` sin copiarlas, salvo las
+ *  que cambia (en baja, lo opaco sin textura). */
+export function compactInterior(b: BakedInterior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): Interior3D {
+  const { i } = b;
+  const { detail } = QUALITY[q].interiors;
+  if (detail !== b.detail) throw new Error(`${i.placeId}: lo horneado es del detalle ${b.detail} y ${q} pide el ${detail}`);
+  const cap = meshCap(q);
+  // la luz de los muebles y de los carteles, en su lugar (pocos puntos: la de los bloques ya está horneada)
+  const light = baker(i);
+  const countOf = (p: BakedPart, level: Level): number => {
+    const hasGlass = p.glass ? 1 : 0;
     const blockMeshes = level < 3 ? p.opaque.length + hasGlass : (p.opaque.length + p.items.length > 0 ? 1 : 0) + hasGlass;
     const itemMeshes = level === 3 ? 0 : level === 0 ? p.plan.repeated.length + (p.plan.rest.length > 0 ? 1 : 0) : p.items.length > 0 ? 1 : 0;
     const labelPages = level < 2 ? p.fullPages : p.labels.length > 0 ? 1 : 0;
     return blockMeshes + itemMeshes + labelPages;
   };
-  const count = (level: Level): number => prep.reduce((t, p) => t + countOf(p, level), 0);
+  const count = (level: Level): number => b.parts.reduce((t, p) => t + countOf(p, level), 0);
   const levels: Level[] = q === 'baja' ? [0, 1, 2, 3] : [0, 1, 2];
   const level = levels.find((l) => count(l) <= cap);
-  if (level === undefined) {
-    for (const p of prep) for (const g of [...p.geometries.values(), ...p.glassParts]) g.dispose();
-    throw new Error(`${i.placeId}: no entra en ${cap} mallas en ${q}, ni compactado (${count(levels[levels.length - 1])})`);
-  }
+  if (level === undefined) throw new Error(`${i.placeId}: no entra en ${cap} mallas en ${q}, ni compactado (${count(levels[levels.length - 1])})`);
 
   /** Las mallas de una parte, compactada a `level`. */
-  const meshesOf = (p: Prep): THREE.Mesh[] => {
+  const meshesOf = (p: BakedPart): THREE.Mesh[] => {
     const meshes: THREE.Mesh[] = [];
     // los modelos que esta parte nunca instancia (en el nivel 0, el resto del plan): sueltos en todos los niveles
     const single = new Set(p.plan.rest.map((it) => it.model));
@@ -550,14 +586,15 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
       mesh.name = key;
       meshes.push(mesh);
     };
-    add(merged(i, p.glassParts), 'in_vidrio');
+    add(p.glass, 'in_vidrio');
     if (level < 3) {
       for (const mat of p.opaque) add(p.geometries.get(mat)!, `in_${mat}`);
     } else {
       // sin textura: el color por vértice ya lleva el Look y la luz, y además el color medio de la textura que se le saca
-      // (userData.tone): sin él, el liso (0,69) o el ladrillo se verían más claros que en alta (item 8 de la T11c)
+      // (userData.tone): sin él, el liso (0,69) o el ladrillo se verían más claros que en alta (item 8 de la T11c). Sobre
+      // una copia: lo horneado queda como está, para la próxima compactación
       const flat = p.opaque.map((mat) => {
-        const g = p.geometries.get(mat)!;
+        const g = p.geometries.get(mat)!.clone();
         g.deleteAttribute('uv');
         toned(g, (m[`in_${mat}`] as THREE.MeshBasicMaterial).map?.userData.tone as Vec3 | undefined);
         return g;
@@ -575,7 +612,7 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
     }
     if (p.labels.length > 0) {
       const { canvases: cs, packed } = packLabels(p.canvases, level >= 2);
-      meshes.push(...labelMeshes(i, p.labels, cs, packed, light));
+      meshes.push(...labelMeshes(i, p.labels, cs, packed, light, QUALITY[q].anisotropy));
     }
     for (const mesh of meshes) {
       mesh.castShadow = mesh.receiveShadow = false;
@@ -589,17 +626,17 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   group.name = `interior:${i.placeId}`;
   group.userData.level = level; // hasta dónde se compactó (para los tests: H8 de la tarea 7)
   const box = new THREE.Box3();
-  const top = Math.max(0, ...i.blocks.filter((b) => !b.out).map((b) => b.y1));
-  for (const ring of [i.footprint, ...i.patios, ...i.blocks.filter((b) => !b.out).map((b) => b.polygon)]) {
+  const top = Math.max(0, ...i.blocks.filter((x) => !x.out).map((x) => x.y1));
+  for (const ring of [i.footprint, ...i.patios, ...i.blocks.filter((x) => !x.out).map((x) => x.polygon)]) {
     for (const [x, z] of ring) box.expandByPoint(new THREE.Vector3(x, 0, z)).expandByPoint(new THREE.Vector3(x, top, z));
   }
   for (const pn of i.panes.filter((x) => !x.out)) for (const p of pn.corners) box.expandByPoint(new THREE.Vector3(...p));
   for (const it of i.items) box.expandByPoint(new THREE.Vector3(...it.at));
-  if (prep.length === 1) {
-    group.add(...meshesOf(prep[0]));
+  if (b.parts.length === 1) {
+    group.add(...meshesOf(b.parts[0]));
     return { group, box, parts: [{ name: 'edificio', group, box, hull: convexHull(i.footprint), y0: box.min.y, y1: box.max.y }] };
   }
-  const parts = prep.map((p): InteriorPart => {
+  const parts = b.parts.map((p): InteriorPart => {
     const g = new THREE.Group();
     g.name = `${group.name}:${p.name}`;
     const meshes = meshesOf(p);
@@ -609,4 +646,16 @@ export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey
   group.add(...parts.map((p) => p.group));
   for (const p of parts) box.union(p.box);
   return { group, box, parts };
+}
+
+/** El interior para dibujar con los materiales `m` en la calidad `q`: horneado con su detalle y compactado a su tope
+ *  (bakeInterior y compactInterior). Lo horneado queda en las mallas: se libera con ellas. */
+export function buildInterior3D(i: Interior, m: Pick<WorldMaterials, InteriorKey>, q: Quality): Interior3D {
+  const baked = bakeInterior(i, QUALITY[q].interiors.detail);
+  try {
+    return compactInterior(baked, m, q);
+  } catch (e) {
+    disposeBaked(baked);
+    throw e;
+  }
 }

@@ -5,14 +5,17 @@
 //
 // Se mide jugando una partida con semilla fija (PERF_SEED): en cada punto se dibuja el botín, los maniquíes y la zona
 // que haya a la vista. La última parada, "combate", es el peor caso del combate: 11 maniquíes adelante, el punto de
-// botín más cargado, la pared de la zona cerca y el rifle disparando (fogonazo, trazadores y marcas).
+// botín más cargado, la pared de la zona cerca y el rifle disparando (fogonazo, trazadores y marcas). Además del
+// recorrido, cada calidad mide sus POSES_JUSTAS: las poses de la estación que más cerca quedan del tope.
 import { mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { QUALITY } from '../src/client/render/quality.ts';
 import type { Quality } from '../src/client/render/quality.ts';
+import { MOUSE_SENSITIVITY } from '../src/client/input.ts';
 import { collectErrors, combatStop, frames, goTo, goToCombat, maxStats, open, PERF_SEED, play, TOUR } from './helpers.ts';
 import type { DebugStats } from '../src/client/debug.ts';
+import type { Vec3 } from '../src/shared/geo.ts';
 
 const DIR = 'test-results/perf';
 
@@ -31,6 +34,16 @@ const BUDGET: Record<Quality, { drawCalls: number; triangles: number }> = {
   media: { drawCalls: 245, triangles: 230_000 },
   alta: { drawCalls: 385, triangles: 305_000 },
 };
+
+// m4 de la revisión final de la etapa 2b: las 3 poses más justas de las 15 de la T11b, en la calidad en que son justas
+// (alta, en el andén de la estación: la escalera, desde la vía y las ventanas; en f59e6a3, 368 / 299.108, 365 / 295.157
+// y 363 / 294.669 contra 385 / 305.000). Son solo de perf: no son paradas del recorrido (TOUR, tour.spec). Cada una es
+// [x, y, z, yaw, pitch]: los pies, hacia dónde mira y cuánto arriba (pitch > 0) o abajo, como las midió la T11b.
+const POSES_JUSTAS: { id: string; q: Quality; pose: [number, number, number, number, number] }[] = [
+  { id: 'es-anden-escalera', q: 'alta', pose: [-322.0979757177082, 1, 37.93050354686764, -1.4903715548629979, -0.25] },
+  { id: 'es-desde-via', q: 'alta', pose: [-328.00271879120646, 0, 31.88533942701334, -1.4903715548629979, 0.15] },
+  { id: 'es-anden-ventanas', q: 'alta', pose: [-324.09598620790933, 1, 30.567219355622125, -1.59004020735416, 0.12] },
+];
 
 // SwiftShader dibuja ~3 cuadros por segundo y cada lugar nuevo compila shaders.
 test.describe.configure({ timeout: 240_000 });
@@ -72,6 +85,17 @@ for (const q of ['baja', 'media', 'alta'] as const) {
       const s = await page.evaluate(() => window.__adrogue.stats());
       await page.screenshot({ path: `${DIR}/${q}-${stop.id}.png` });
       check(q, stop.id, s);
+    }
+    for (const { id, pose: [x, y, z, yaw, pitch] } of POSES_JUSTAS.filter((p) => p.q === q)) {
+      // placeAt deja el pitch en 0; el mouse (con el puntero capturado) lo sube o lo baja
+      await page.evaluate(([pos, yw, dy]) => {
+        window.__adrogue.placeAt(pos, yw);
+        window.dispatchEvent(new MouseEvent('mousemove', { movementX: 0, movementY: dy }));
+      }, [[x, y, z] as Vec3, yaw, -pitch / MOUSE_SENSITIVITY] as const);
+      await frames(page, 6);
+      const s = await page.evaluate(() => window.__adrogue.stats());
+      await page.screenshot({ path: `${DIR}/${q}-${id}.png` });
+      check(q, id, s);
     }
 
     await goToCombat(page, COMBAT);

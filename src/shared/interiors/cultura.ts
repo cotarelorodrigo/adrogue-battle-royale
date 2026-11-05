@@ -24,8 +24,8 @@ import type { InteriorPlan } from './index.ts';
 import { RAIL_H, TREAD, WALL_IN } from './kit.ts';
 import type { Kit } from './kit.ts';
 import { LEVEL_H } from './openings.ts';
-import { add, MIRA, rect } from './plan-util.ts';
-import type { Rect } from './plan-util.ts';
+import { add, caras, MIRA, rect, sub } from './plan-util.ts';
+import type { Caras, Rect } from './plan-util.ts';
 import type { Collide, Look, Role } from './types.ts';
 
 // ---------- materiales ----------
@@ -117,18 +117,10 @@ const GUARDA_GALERIA = 0.6, GUARDA_HALL = { w: 0.3, aire: 0.6 };
 /** Puertas de adentro: ancho y alto. */
 const PUERTA = { w: 1.6, h: 2.3 };
 
-const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
 const len = (a: Vec2): number => Math.hypot(a[0], a[1]);
 /** Polígono regular de `n` lados alrededor de `c`, de radio `r` (al vértice), girado `rot`. */
 const ngon = (c: Vec2, r: number, n: number, rot = 0): Vec2[] =>
   Array.from({ length: n }, (_, k): Vec2 => [c[0] + r * Math.cos(rot + (2 * Math.PI * k) / n), c[1] + r * Math.sin(rot + (2 * Math.PI * k) / n)]);
-
-/** Las caras de adentro de las paredes de afuera (la planta corrida del Kit): lo más adentro de cada lado. */
-interface Caras { U0: number; U1: number; V0: number; V1: number }
-function caras(k: Kit): Caras {
-  const us = k.inside.map((p) => p[0]).sort((a, b) => a - b), vs = k.inside.map((p) => p[1]).sort((a, b) => a - b);
-  return { U0: us[1], U1: us[us.length - 2], V0: vs[1], V1: vs[vs.length - 2] };
-}
 
 /** Un rectángulo de esquinas redondeadas (radio r, en `seg` tramos cada una), antihorario en el marco local: las cuatro
  *  curvas (de la de U1·V0 a la de U0·V0), cada una con sus seg + 1 puntos. */
