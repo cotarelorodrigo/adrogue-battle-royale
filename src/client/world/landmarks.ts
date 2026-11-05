@@ -1,4 +1,4 @@
-// La estación (andenes, alero de chapa, vías y carteles ADROGUÉ) y los monumentos (pedestal + figura simplificada).
+// La estación (andenes con su franja táctil, alero verde de chapa, vías y carteles ADROGUÉ) y los monumentos (pedestal + figura simplificada).
 // Las medidas que se pisan (andén, pedestales) salen de collision.ts, y dónde van el alero, sus postes y los carteles,
 // de shared/station.ts (la colisión usa los mismos postes): lo que se ve es lo que se pisa.
 import * as THREE from 'three';
@@ -34,8 +34,14 @@ const Y_BALLAST = 0.03;
 // menos de 1 m del eje de la vía y sin el hueco el riel más cercano quedaría adentro del andén.
 const COPING_H = 0.25;
 const RECESS = 0.6;
-const EDGE_W = 0.35;
+/** La franja del borde (§4.9), del lado de la vía hacia adentro: la línea amarilla pintada en el filo (8 cm), el piso
+ *  del andén (sin pintar: la textura es transparente y alphaTest la recorta) y la hilera de baldosas podotáctiles de
+ *  alerta, amarillas y con botones, de 40 × 40 cm (de 0,35 a 0,75 m del filo). Una sola malla, como antes. */
+const EDGE_W = 0.75;
 const EDGE_Y = PLATFORM_H + 0.006;
+const EDGE_LINE = 0.08;
+const TACTILE_FROM = 0.35;
+const TACTILE_TILE = 0.4;
 
 type V3 = [number, number, number];
 
@@ -136,6 +142,38 @@ const corrugatedTexture = (): THREE.CanvasTexture =>
   });
 const CORRUGATION_REPEAT = 0.48; // m por textura (4 ondas de 12 cm)
 
+/** La franja del borde: u, una baldosa a lo largo (TACTILE_TILE); v, el ancho de la franja (0 en el filo, 1 adentro).
+ *  Lo que no es amarillo queda transparente. Las baldosas con su junta y 8 × 8 botones, claros arriba y con la sombra
+ *  hacia la vía (la luz de la tarde): el color lo pone el material (el amarillo), la textura solo aclara y oscurece. */
+const tactileTexture = (): THREE.CanvasTexture =>
+  canvasTexture(64, 120, (ctx) => {
+    const px = 120 / EDGE_W; // px por metro a lo ancho (y a lo largo: 64 px = 0,4 m → 160 px/m, casi igual)
+    const y = (v: number): number => 120 - v * px; // la textura va con flipY: v = 0 (el filo) abajo
+    ctx.clearRect(0, 0, 64, 120);
+    ctx.fillStyle = '#f2f2f2';
+    ctx.fillRect(0, y(EDGE_LINE), 64, EDGE_LINE * px);
+    const t0 = y(TACTILE_FROM + TACTILE_TILE), t1 = y(TACTILE_FROM);
+    ctx.fillStyle = '#e4e4e4';
+    ctx.fillRect(0, t0, 64, t1 - t0);
+    ctx.fillStyle = '#9a9a9a'; // la junta entre baldosas
+    ctx.fillRect(0, t0, 64, 1);
+    ctx.fillRect(0, t1 - 1, 64, 1);
+    ctx.fillRect(0, t0, 1, t1 - t0);
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 8; j++) {
+        const cx = 4 + i * 8, cy = t0 + 3.5 + j * ((t1 - t0 - 7) / 7);
+        ctx.fillStyle = '#a8a8a8';
+        ctx.beginPath();
+        ctx.arc(cx + 0.6, cy + 0.6, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(cx - 0.3, cy - 0.3, 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  });
+
 // ─── Vías ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Desplazamiento a la izquierda (normal (−dz, dx)) de cada punto, con inglete limitado a 2×. */
@@ -202,7 +240,7 @@ function platformGeometry(ring: Vec2[], rail: boolean[], walls: Builder, edge: B
     const dx = c[0] - a[0], dz = c[1] - a[1], len = Math.hypot(dx, dz);
     if (len < 1e-6) continue;
     const nx = -dz / len, nz = dx / len; // hacia afuera (anillo antihorario visto desde arriba)
-    const u0 = s / 4, u1 = (s + len) / 4;
+    const u0 = s / 4, u1 = (s + len) / 4, e0 = s / TACTILE_TILE, e1 = (s + len) / TACTILE_TILE;
     s += len;
     const wall = (p: Vec2, q: Vec2, y0: number, y1: number, nrm: V3): void =>
       walls.quad([[p[0], y0, p[1]], [q[0], y0, q[1]], [q[0], y1, q[1]], [p[0], y1, p[1]]], nrm, [[u0, y0 / 4], [u1, y0 / 4], [u1, y1 / 4], [u0, y1 / 4]]);
@@ -218,7 +256,7 @@ function platformGeometry(ring: Vec2[], rail: boolean[], walls: Builder, edge: B
     wall(a, ai, 0, yc, [dx / len, 0, dz / len]); // tapas del hueco en las puntas
     wall(ci, c, 0, yc, [-dx / len, 0, -dz / len]);
     const ae = inset(a, EDGE_W), ce = inset(c, EDGE_W);
-    edge.quad([[a[0], EDGE_Y, a[1]], [c[0], EDGE_Y, c[1]], [ce[0], EDGE_Y, ce[1]], [ae[0], EDGE_Y, ae[1]]], [0, 1, 0]);
+    edge.quad([[a[0], EDGE_Y, a[1]], [c[0], EDGE_Y, c[1]], [ce[0], EDGE_Y, ce[1]], [ae[0], EDGE_Y, ae[1]]], [0, 1, 0], [[e0, 0], [e1, 0], [e1, 1], [e0, 1]]);
   }
 }
 
@@ -312,11 +350,13 @@ export function buildStation(map: MapData, materials: WorldMaterials): THREE.Gro
     }
     group.add(mesh('platform', merge([...tops, walls.build()], 'andenes'), materials.platform, true));
     group.add(mesh('platformEdge', edge.build(), new THREE.MeshLambertMaterial({
-      color: '#e9c21b', polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+      map: tactileTexture(), alphaTest: 0.5, color: '#e9c21b', polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
     })));
+    // el alero de los ferrocarriles: chapa y estructura pintadas de verde inglés, oscuro y apagado (la textura de la
+    // chapa acanalada lo oscurece todavía: 150–220 de 255); los postes y vigas, un verde más oscuro
     const roofMap = corrugatedTexture();
-    group.add(mesh('canopy', roof.build(), new THREE.MeshLambertMaterial({ map: roofMap, color: '#9a5a44' }), true));
-    group.add(mesh('steel', merge(steel, 'postes'), new THREE.MeshLambertMaterial({ color: '#2f4a3a' })));
+    group.add(mesh('canopy', roof.build(), new THREE.MeshLambertMaterial({ map: roofMap, color: '#4a8558' }), true));
+    group.add(mesh('steel', merge(steel, 'postes'), new THREE.MeshLambertMaterial({ color: '#2f5a3f' })));
     group.add(mesh('stationSigns', merge(signs, 'carteles'), signMaterial(signTexture('ADROGUÉ', TYPE_LOOK.station, STATION_SIGN_W))));
   }
   for (const c of group.children) c.updateMatrix();

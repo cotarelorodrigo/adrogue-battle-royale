@@ -84,7 +84,8 @@ describe('estación', () => {
     const edge = meshesOf(g).find((m) => m.name === 'platformEdge')!;
     const pos = edge.geometry.getAttribute('position');
     expect(pos.count).toBe(4); // un solo cuadrilátero: el lado largo que da a la vía
-    for (let i = 0; i < pos.count; i++) expect(pos.getX(i)).toBeGreaterThan(-2.1);
+    // la franja mide 0,75 m (llega a x −2,45); la de la punta iría de x −5,7 a −1,7
+    for (let i = 0; i < pos.count; i++) expect(pos.getX(i)).toBeGreaterThan(-2.5);
   });
 
   test('vías con rieles y durmientes instanciados cada 0,6 m, partidos en celdas de 250 m', () => {
@@ -133,6 +134,56 @@ describe('estación', () => {
 
   test('a lo sumo 9 draw calls más los durmientes (uno por celda)', () => {
     expect(meshes.filter((m) => m.name !== 'sleepers').length).toBeLessThanOrEqual(9);
+  });
+
+  // §4.9: el alero pasa a verde, con columnas y chapa verdes, como el real. Verde ferroviario: oscuro y apagado, no flúo.
+  test('el alero es verde: la chapa (canopy) y los postes y vigas (steel), con G > R y G > B, oscuros y apagados', () => {
+    for (const name of ['canopy', 'steel']) {
+      const m = meshes.find((x) => x.name === name)!;
+      const c = (m.material as THREE.MeshLambertMaterial).color;
+      const say = `${name}: #${c.getHexString()}`;
+      expect(c.g > c.r && c.g > c.b, say).toBe(true);
+      const hsl = c.getHSL({ h: 0, s: 0, l: 0 }, THREE.SRGBColorSpace); // como se ve el hex, no en lineal
+      expect(hsl.l, `${say}: oscuro`).toBeLessThan(0.45);
+      expect(hsl.s, `${say}: apagado, no flúo`).toBeLessThan(0.5);
+    }
+  });
+
+  test('los carteles ADROGUÉ: fondo azul, marco azul y letras blancas', () => {
+    const fills: string[] = [];
+    stubCanvas((prop, value) => { if (prop === 'fillStyle') fills.push(String(value)); });
+    buildStation(map, materials);
+    // signTexture pinta el marco, el fondo y las letras, en ese orden (es lo último que se pinta de la estación)
+    const k = fills.lastIndexOf('#ffffff');
+    expect(k).toBeGreaterThanOrEqual(2);
+    const azul = (hex: string): boolean => {
+      const c = new THREE.Color(hex);
+      return c.b > c.r && c.b > c.g && c.getHSL({ h: 0, s: 0, l: 0 }, THREE.SRGBColorSpace).l < 0.45;
+    };
+    const [marco, fondo] = [fills[k - 2], fills[k - 1]];
+    expect(azul(fondo), `fondo ${fondo}`).toBe(true);
+    expect(azul(marco), `marco ${marco}`).toBe(true);
+  });
+
+  test('la franja amarilla táctil del borde: una textura con los botones, recortada (alphaTest), sin draw calls nuevos', () => {
+    const edge = meshes.find((m) => m.name === 'platformEdge')!;
+    const mat = edge.material as THREE.MeshLambertMaterial;
+    expect(mat.map, 'la textura de la franja').toBeTruthy();
+    expect(mat.alphaTest).toBeGreaterThan(0);
+    const c = mat.color;
+    expect(c.r > c.b && c.g > c.b && c.r > 0.5, `amarilla: #${c.getHexString()}`).toBe(true);
+    // del borde de la vía hacia adentro, entre 0,6 y 0,8 m (la línea del borde, el aire y las baldosas con botones)
+    const pos = edge.geometry.getAttribute('position');
+    const west: number[] = [];
+    for (let i = 0; i < pos.count; i++) if (pos.getX(i) < 2) west.push(pos.getX(i));
+    const ancho = Math.max(...west) - Math.min(...west);
+    expect(ancho).toBeGreaterThanOrEqual(0.6);
+    expect(ancho).toBeLessThanOrEqual(0.8);
+    // las uv a lo largo van en metros (la textura se repite, no se estira con el andén)
+    const uv = edge.geometry.getAttribute('uv');
+    let along = 0;
+    for (let i = 0; i < uv.count; i++) along = Math.max(along, Math.abs(uv.getX(i)));
+    expect(along).toBeGreaterThan(50);
   });
 });
 

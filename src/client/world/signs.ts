@@ -44,7 +44,8 @@ export const TYPE_LOOK: Record<PlaceType, SignLook & { weight: Weight }> = {
   clinic: { fondo: '#ffffff', letra: '#00796b', marco: '#00796b', fuente: 'sans', weight: 'bold' },
   school: { fondo: '#7a1f2b', letra: '#ffffff', marco: '#d8c9a3', fuente: 'serif', weight: 'bold' },
   culture: { fondo: '#efe6cf', letra: '#4a3423', marco: '#8a6d46', fuente: 'serif', weight: 'normal' },
-  station: { fondo: '#1f3f73', letra: '#ffffff', marco: '#e6e6e6', fuente: 'sans', weight: 'bold' },
+  // la estación: como los nomencladores azules de los andenes (fondo y borde azules, letras blancas)
+  station: { fondo: '#1c3f8f', letra: '#ffffff', marco: '#16336f', fuente: 'sans', weight: 'bold' },
   monument: { fondo: '#2f4a32', letra: '#f0f0e6', marco: '#c9c2a8', fuente: 'serif', weight: 'normal' },
   plaza: { fondo: '#2f4a32', letra: '#f0f0e6', marco: '#c9c2a8', fuente: 'sans', weight: 'bold' },
 };

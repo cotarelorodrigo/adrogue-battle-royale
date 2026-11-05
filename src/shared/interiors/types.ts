@@ -32,13 +32,16 @@ export interface Pane { corners: Vec3[]; normal: Vec3; look: Look; back?: true; 
  *  es la campana colgada (el origen, en el borde de abajo de la campana) y el sillón, un módulo de banqueta tapizada.
  *  Cine Pixel y Guernica (tarea 9): la butaca de cine con apoyabrazos, la máquina de pochoclo, el marco de un afiche (su
  *  dibujo es un cartel), una botella de estante, la torre de canillas en arco, un tramo de guirnalda de lamparitas (de
- *  `at` a 3 m hacia +x del modelo, colgando) y la mesa alta de pie de hierro. Los árboles del patio no son muebles: van
- *  en Interior.trees. */
+ *  `at` a 3 m hacia +x del modelo, colgando) y la mesa alta de pie de hierro. Estación Adrogué (tarea 10): el molinete
+ *  de trípode (su gabinete y el paso con los brazos, con el lector SUBE arriba), la terminal de carga SUBE de pie, el
+ *  banco de listones con respaldo y la ventanilla de la boletería (el marco, la reja, el pasaplatos y la repisa; el
+ *  origen, en el borde de abajo del hueco). Los árboles del patio no son muebles: van en Interior.trees. */
 export type ItemModel = 'silla' | 'banqueta' | 'lampara' | 'mesa' | 'sillon' | 'hoja-vidrio'
   | 'cajero' | 'escritorio' | 'turnero' | 'puesto-caja' | 'sillas-espera'
   | 'plafon' | 'silla-auditorio' | 'panel-muestra'
   | 'mesa-redonda' | 'freidora' | 'heladera' | 'pantalla' | 'mesa-picnic' | 'sombrilla' | 'silla-director' | 'metegol' | 'balde-helado'
-  | 'butaca' | 'pochoclera' | 'afiche' | 'botella' | 'canillas' | 'guirnalda' | 'mesa-alta' | 'lamparita';
+  | 'butaca' | 'pochoclera' | 'afiche' | 'botella' | 'canillas' | 'guirnalda' | 'mesa-alta' | 'lamparita'
+  | 'molinete' | 'sube' | 'banco-respaldo' | 'ventanilla';
 /** yaw: rotación three.js sobre +Y, como Prop.rotation. detail 2: no se dibuja en baja. */
 export interface Item { model: ItemModel; at: Vec3; yaw: number; color?: string; detail?: 2 }
 /** Lo que un cartel puede llevar dibujado en vez de su texto (el cliente lo dibuja en canvas): la puerta redonda del

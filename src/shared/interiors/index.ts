@@ -8,6 +8,7 @@ import type { Building, InteriorInput, MapData } from '../mapdata.ts';
 import { LINTEL_MIN } from './openings.ts';
 import { bancoPlan } from './bancos.ts';
 import { cinePlan } from './cine.ts';
+import { estacionPlan } from './estacion.ts';
 import { guernicaPlan } from './guernica.ts';
 import { culturaPlan } from './cultura.ts';
 import { mcdonaldsPlan } from './mcdonalds.ts';
@@ -27,6 +28,7 @@ export const INTERIOR_PLANS: Partial<Record<string, InteriorPlan>> = {
   'la-veneciana': venecianaPlan,
   'cine-pixel': cinePlan,
   'guernica-bar': guernicaPlan,
+  'estacion-adrogue': estacionPlan,
 };
 
 /** Los looks de la caja de un lugar sin plan. */

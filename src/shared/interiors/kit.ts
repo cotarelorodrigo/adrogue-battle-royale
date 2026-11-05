@@ -49,6 +49,12 @@ export const MODEL_BOX: Partial<Record<ItemModel, { w: number; d: number; h: num
   butaca: { w: 0.55, d: 0.62, h: 1.0 },
   pochoclera: { w: 0.9, d: 0.6, h: 1.75 },
   'mesa-alta': { w: 0.6, d: 0.6, h: 1.05 },
+  // Estación Adrogué (tarea 10): el molinete de trípode entero, su gabinete y el paso con los brazos (0,28 + 0,6 m a lo
+  // ancho, 0,9 de fondo: sólido, §2.3; se pasa por el molinete ancho, D3), la terminal de carga SUBE de pie y el banco
+  // de listones con su respaldo de 0,8 m
+  molinete: { w: 0.88, d: 0.9, h: 1.0 },
+  sube: { w: 0.56, d: 0.42, h: 1.62 },
+  'banco-respaldo': { w: 1.8, d: 0.56, h: 0.8 },
 };
 
 /** `holes`: huecos (marco local) en la losa de un nivel; los del nivel `publicFloors` atraviesan el bloque cerrado o el

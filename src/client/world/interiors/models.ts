@@ -189,6 +189,72 @@ const garland = (): THREE.BufferGeometry[] => {
   return parts;
 };
 
+// La estación (tarea 10). El molinete de trípode de acero inoxidable (el gabinete con su tapa oscura, el lector SUBE
+// arriba y los tres brazos de caño hacia el paso), el banco de listones de madera barnizada sobre patas de hierro verde,
+// la ventanilla de la boletería (marco de madera, repisa de mármol, reja de bronce, pasaplatos y la rejilla para hablar)
+// y la terminal de carga SUBE. La terminal brilla (ITEM_GLOW): su cuerpo y su franja llevan ya lo oscuro que tendrían a
+// la luz del hall (lo calibra tests/client/estacion.test.ts con la ACES y la luz horneada de donde está).
+const INOX_M = '#b7bbbf', INOX_LID = '#3b3e42', ARM = '#d2d5d8', READER = '#2b2e33', READER_PAD = '#2f86c8', LED = '#2f9a4a';
+const BENCH_WOOD = '#9a6a3c', BENCH_IRON = '#2a3a2f';
+const WIN_FRAME = '#6b4a2e', MARBLE = '#dcd8cf', BRONZE = '#8a7444', GRILLE_DARK = '#55595d';
+/** La terminal SUBE: la pintura de su cuerpo (gris claro) y de su franja (el celeste de la tarjeta), y lo que llevan
+ *  ya oscurecido (brilla: va sin hornear); la pantalla prendida, el lector y la boca de billetes. */
+export const SUBE_COLORES = { pintura: '#e2e4e6', cuerpo: '#48494a', franjaPintura: '#1e9bd7', franja: '#042f44', pantalla: '#8fb4d4', lector: '#1a1c1f' } as const;
+/** Un caño de radio r de `a` a `b` (sin tapas). */
+const rod = (a: Vec3, b: Vec3, r: number, color: string, segments = 6): THREE.BufferGeometry => {
+  const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const len = d.length();
+  const g = new THREE.CylinderGeometry(r, r, len, segments, 1, true).translate(0, len / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()));
+  return paint(g, a, color);
+};
+/** El molinete (MODEL_BOX 0,88 × 0,9 × 1,0): el gabinete en la punta de +x (0,28 de ancho), el paso hacia −x y los
+ *  tres brazos desde el cubo, en el costado del gabinete: uno cruza el paso a 0,85 m y los otros dos bajan hacia los
+ *  costados del paso. El frente (+z), hacia el que llega. */
+const turnstile = (): THREE.BufferGeometry[] => {
+  const hub: Vec3 = [0.12, 0.84, 0.05];
+  return [
+    box(0.28, 0.88, 0.9, [0.3, 0, 0], INOX_M), box(0.28, 0.08, 0.9, [0.3, 0.88, 0], INOX_LID),
+    box(0.16, 0.035, 0.22, [0.3, 0.96, 0.2], READER), box(0.11, 0.005, 0.11, [0.3, 0.995, 0.2], READER_PAD),
+    box(0.07, 0.05, 0.005, [0.3, 0.78, 0.45], LED),
+    box(0.06, 0.12, 0.12, [0.13, 0.78, 0.05], INOX_LID),
+    rod(hub, [-0.425, 0.84, 0.05], 0.018, ARM), rod(hub, [-0.3, 0.5, 0.36], 0.018, ARM), rod(hub, [-0.3, 0.5, -0.26], 0.018, ARM),
+  ];
+};
+/** El banco (MODEL_BOX 1,8 × 0,56 × 0,8): cuatro listones de asiento a 0,45 m, tres de respaldo hasta 0,8 m y tres
+ *  patas de hierro (la de cada punta y la del medio). Se sienta mirando a +z. */
+const bench = (): THREE.BufferGeometry[] => [
+  ...[-0.85, 0, 0.85].flatMap((x) => [
+    box(0.05, 0.42, 0.05, [x, 0, 0.245], BENCH_IRON), box(0.05, 0.8, 0.05, [x, 0, -0.255], BENCH_IRON),
+    box(0.05, 0.04, 0.52, [x, 0.38, -0.01], BENCH_IRON),
+  ]),
+  ...[0.215, 0.105, -0.005, -0.115].map((z) => box(1.8, 0.035, 0.09, [0, 0.415, z], BENCH_WOOD)),
+  ...[0.5, 0.6, 0.7].map((y) => box(1.8, 0.075, 0.03, [0, y, -0.25], BENCH_WOOD)),
+];
+/** La ventanilla (origen: el medio del borde de abajo del hueco, en el plano del vidrio; el frente, +z, hacia el
+ *  público): el hueco de 0,9 × 1,15 m con el marco sobre la cara del tabique (a 5 cm), la repisa de mármol, la reja de
+ *  bronce (siete barrotes y un travesaño), el pasaplatos que atraviesa el vidrio y la rejilla redonda para hablar. */
+const ticketWindow = (): THREE.BufferGeometry[] => [
+  box(0.07, 1.26, 0.06, [-0.485, -0.04, 0.075], WIN_FRAME), box(0.07, 1.26, 0.06, [0.485, -0.04, 0.075], WIN_FRAME),
+  box(1.04, 0.07, 0.06, [0, 1.15, 0.075], WIN_FRAME),
+  box(1.06, 0.04, 0.28, [0, -0.04, 0.17], MARBLE),
+  ...[-0.36, -0.24, -0.12, 0, 0.12, 0.24, 0.36].map((x) => box(0.016, 1.15, 0.016, [x, 0, 0.12], BRONZE)),
+  box(0.9, 0.02, 0.012, [0, 0.62, 0.12], BRONZE),
+  box(0.32, 0.03, 0.24, [0, 0, 0], INOX_M),
+  paint(new THREE.CylinderGeometry(0.06, 0.06, 0.006, 12).rotateX(Math.PI / 2), [0, 0.78, 0.013], GRILLE_DARK),
+];
+/** La terminal de carga SUBE (MODEL_BOX 0,56 × 0,42 × 1,62): el cuerpo gris claro, la franja celeste de arriba (su
+ *  cartel, "CARGA SUBE", lo pone el plan), la pantalla, el lector de la tarjeta, la boca de billetes y la base. */
+const subeTerminal = (): THREE.BufferGeometry[] => {
+  const { cuerpo, franja, pantalla, lector } = SUBE_COLORES;
+  return [
+    box(0.56, 0.04, 0.42, [0, 0, 0], lector), box(0.54, 1.46, 0.4, [0, 0.04, 0], cuerpo), box(0.56, 0.12, 0.42, [0, 1.5, 0], franja),
+    box(0.36, 0.27, 0.012, [0, 1.08, 0.2], lector), box(0.32, 0.23, 0.004, [0, 1.1, 0.207], pantalla),
+    box(0.16, 0.12, 0.03, [0, 0.86, 0.2], lector), box(0.1, 0.07, 0.006, [0, 0.885, 0.215], franja),
+    box(0.14, 0.03, 0.02, [0.13, 0.74, 0.2], lector), box(0.56, 0.05, 0.42, [0, 1.42, 0], franja),
+  ];
+};
+
 /** Los muebles, en su marco: el frente mira a +z (Item.yaw lo gira) y, si no se dice otra cosa, el origen va en el piso,
  *  en el medio de su planta (la caja de MODEL_BOX, si la tiene, lo rodea). Los colgados lo dicen en su comentario:
  *  `lampara` (el borde de abajo de la campana), `pantalla` (el medio de su borde de abajo), `plafon` (el medio de su cara
@@ -339,11 +405,17 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   // la mesa alta de bar (MODEL_BOX: 0,6 × 0,6 × 1,05): la tapa de madera, el pie de hierro, el apoyapiés y la base
   'mesa-alta': () => model(cyl(0.3, 0.04, [0, 1.01, 0], BAR_TOP, 12), cyl(0.035, 1.0, [0, 0.01, 0], IRON, 6),
     cyl(0.2, 0.02, [0, 0.3, 0], IRON, 8), cyl(0.24, 0.02, [0, 0, 0], IRON, 10)),
+  // la estación (tarea 10): el molinete (el gabinete en +x, el paso hacia −x), la terminal SUBE (brilla), el banco con
+  // respaldo y la ventanilla (origen: el medio del borde de abajo del hueco, sobre el vidrio)
+  molinete: () => model(...turnstile()),
+  sube: () => model(...subeTerminal()),
+  'banco-respaldo': () => model(...bench()),
+  ventanilla: () => model(...ticketWindow()),
 };
 
 /** Los que brillan: van con su color pleno, sin la luz horneada. */
 export const ITEM_GLOW: Partial<Record<ItemModel, true>> = { lampara: true, cajero: true, turnero: true, pantalla: true, 'balde-helado': true,
-  guirnalda: true, botella: true, lamparita: true };
+  guirnalda: true, botella: true, lamparita: true, sube: true };
 
 /** Las partes de vidrio de un modelo, en su marco: van en la malla de in_vidrio del interior (con su material
  *  transparente), no en la de los muebles. El color lo pone el interior (es el lado de la cara, glass.ts). */
