@@ -62,6 +62,20 @@ const guestChair = (x: number, z: number, back: 1 | -1): THREE.BufferGeometry[] 
   box(0.46, 0.06, 0.44, [x, 0.42, z], CHAIR), box(0.44, 0.4, 0.05, [x, 0.48, z + back * 0.2], CHAIR),
 ];
 
+// La Casa de la Cultura (tarea 7): el plafón, las butacas del auditorio y los paneles de las muestras.
+const PLAFON_BACK = '#efeae0', PLAFON_RIM = '#3a3530', CABLE = '#2a2a2a';
+const SEAT_FABRIC = '#b82a36', SEAT_FRAME = '#3a3a3e';
+const PANEL_FACE = '#f3f1ec', PANEL_FOOT = '#3b3d40';
+/** El plafón: un disco de 7 m (su cara de abajo, la pintada, es un cartel), con el aro del borde y los cuatro cables de
+ *  los que cuelga, hasta el lucernario (2,6 m más arriba). */
+const PLAFON_R = 3.5, PLAFON_T = 0.1, PLAFON_CABLE = 2.5;
+/** La butaca: asiento, respaldo y el costado de −x con su apoyabrazos (el de +x es el de la butaca de al lado), de 0,55
+ *  m de ancho; mira a +z (al escenario). Son ~200 en el auditorio: tres cajas cada una. */
+const seat = (): THREE.BufferGeometry[] => [
+  box(0.5, 0.1, 0.46, [0, 0.4, 0.02], SEAT_FABRIC), box(0.5, 0.56, 0.09, [0, 0.42, -0.23], SEAT_FABRIC),
+  box(0.05, 0.62, 0.52, [-0.275, 0, -0.02], SEAT_FRAME),
+];
+
 export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   silla: () => model(box(0.42, 0.04, 0.42, [0, 0.43, 0], WOOD), box(0.42, 0.42, 0.03, [0, 0.47, -0.195], WOOD), ...legs(0.42, 0.42, 0.43, 0.03, STEEL)),
   banqueta: () => model(cyl(0.18, 0.05, [0, 0.7, 0], WOOD), cyl(0.025, 0.7, [0, 0, 0], STEEL, 6), cyl(0.2, 0.02, [0, 0, 0], STEEL)),
@@ -101,6 +115,14 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   'sillas-espera': () => model(box(2.2, 0.05, 0.06, [0, 0.35, -0.04], ALUMINIUM),
     ...[-0.8, 0.8].flatMap((x) => [box(0.05, 0.35, 0.05, [x, 0, -0.04], ALUMINIUM), box(0.07, 0.03, 0.5, [x, 0, -0.02], ALUMINIUM)]),
     ...[-0.825, -0.275, 0.275, 0.825].flatMap((x) => [box(0.48, 0.05, 0.44, [x, 0.4, 0.02], SEAT), box(0.46, 0.38, 0.04, [x, 0.48, -0.21], SEAT)])),
+  // el plafón (sin caja: se atraviesa), con el origen en el medio de su cara de abajo
+  plafon: () => model(cyl(PLAFON_R, PLAFON_T, [0, 0, 0], PLAFON_BACK, 48), cyl(PLAFON_R + 0.03, 0.04, [0, 0.03, 0], PLAFON_RIM, 48),
+    ...[0, 1, 2, 3].map((k) => cyl(0.012, PLAFON_CABLE, [Math.cos(k * Math.PI / 2 + Math.PI / 4) * 2.6, PLAFON_T, Math.sin(k * Math.PI / 2 + Math.PI / 4) * 2.6], CABLE, 4))),
+  // la butaca del auditorio (sin caja: las filas se cruzan caminando)
+  'silla-auditorio': () => model(...seat()),
+  // el panel de una muestra (MODEL_BOX: 1,6 × 0,12 × 2,2): el tablero blanco sobre dos pies; los cuadros son carteles
+  'panel-muestra': () => model(box(1.6, 2.1, 0.08, [0, 0.1, 0], PANEL_FACE), box(1.62, 0.03, 0.1, [0, 2.17, 0], PANEL_FOOT),
+    ...[-0.62, 0.62].flatMap((x) => [box(0.08, 0.12, 0.5, [x, 0, 0], PANEL_FOOT), box(0.05, 0.1, 0.05, [x, 0.08, 0], PANEL_FOOT)])),
 };
 
 /** Los que brillan: van con su color pleno, sin la luz horneada. */

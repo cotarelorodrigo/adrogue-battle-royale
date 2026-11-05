@@ -7,6 +7,7 @@ import type { Interior } from '../../../shared/interiors/types.ts';
 import { SIGN_H } from '../../../shared/mapdata.ts';
 import type { Sign } from '../../../shared/mapdata.ts';
 import { triangulateUp } from '../geometry.ts';
+import type { RoofCut } from '../geometry.ts';
 import { BAY_W, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from '../wall-kit.ts';
 
 /** uv del techo y de los pisos, como en geometry.ts: una unidad cada 4 m. */
@@ -51,3 +52,10 @@ export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
 export const exteriorSigns = (i: Interior): Sign[] => i.labels.filter((l) => l.out).map((l): Sign => ({
   text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - SIGN_H / 2, look: l.look,
 }));
+
+/** Lo que el interior le abre al techo de su edificio (D13): sus huecos y las franjas de vidrio del lucernario que los
+ *  tapan desde arriba del techo (los bloques `sky` de vidrio), para extrudeBuilding. */
+export const roofCut = (i: Interior): RoofCut => ({
+  holes: i.roofHoles,
+  skylight: i.blocks.filter((b) => b.sky && b.role === 'vidrio').map((b) => ({ polygon: b.polygon, y0: b.y0, y1: b.y1 })),
+});

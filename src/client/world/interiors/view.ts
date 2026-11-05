@@ -69,7 +69,9 @@ export function createInteriorViews(interiors: Interior[], m: WorldMaterials, q:
   const views: View[] = interiors.map((i) => {
     const hidden = new THREE.Group();
     hidden.visible = false;
-    return { i, group: hidden, box: new THREE.Box3(), tapas: [...(tapas.get(i.placeId) ?? [])], top: Math.max(0, ...i.blocks.filter((b) => !b.out).map((b) => b.y1)), meshes: 0 };
+    // lo de arriba del techo (`sky`: el lucernario y su estructura) no cuenta: parado encima no se está adentro
+    const top = Math.max(0, ...i.blocks.filter((b) => !b.out && !b.sky).map((b) => b.y1));
+    return { i, group: hidden, box: new THREE.Box3(), tapas: [...(tapas.get(i.placeId) ?? [])], top, meshes: 0 };
   });
   /** Arma (o vuelve a armar) un interior con los materiales de ahora, y queda a la vista si lo estaba. */
   const build = (v: View): void => {

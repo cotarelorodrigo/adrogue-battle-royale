@@ -6,6 +6,7 @@ import type { Vec2 } from '../geo.ts';
 import type { Building, InteriorInput, MapData } from '../mapdata.ts';
 import { LINTEL_MIN } from './openings.ts';
 import { bancoPlan } from './bancos.ts';
+import { culturaPlan } from './cultura.ts';
 import { Kit, MODEL_BOX, RAIL_H, RISER_MAX, STAIR_MIN_W, TREAD, WALL_IN, WALL_OUT, areaOf } from './kit.ts';
 import type { Block, Interior, Look } from './types.ts';
 
@@ -16,6 +17,7 @@ export const INTERIOR_PLANS: Partial<Record<string, InteriorPlan>> = {
   'banco-nacion': bancoPlan('nacion'),
   galicia: bancoPlan('galicia'),
   bbva: bancoPlan('bbva'),
+  'casa-de-la-cultura': culturaPlan,
 };
 
 /** Los looks de la caja de un lugar sin plan. */

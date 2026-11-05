@@ -5,7 +5,7 @@ import type { Vec2 } from '../../shared/geo.ts';
 import type { Interior } from '../../shared/interiors/types.ts';
 import type { MapData, Park, Road } from '../../shared/mapdata.ts';
 import { extrudeBuilding, GROUND_MAT, polygonGeometry, ribbon, wallMaterials } from './geometry.ts';
-import { exteriorGeometry } from './interiors/exterior.ts';
+import { exteriorGeometry, roofCut } from './interiors/exterior.ts';
 import type { WorldMaterials } from './types.ts';
 
 export const CHUNK = 250;
@@ -33,7 +33,8 @@ const cell = (x: number, z: number): [number, number] => [Math.floor(x / CHUNK),
 
 /**
  * Las mallas del mundo, juntas por chunk y material. Un edificio con interior (de `interiors`) tiene huecos en sus
- * aberturas y suma a `parapet` lo suyo de afuera (exterior.ts); los pedazos recortados quedan como tapas (D6): una
+ * aberturas y en el techo (los de su interior, D13) y suma a `parapet` lo suyo de afuera (exterior.ts); los pedazos
+ * recortados quedan como tapas (D6): una
  * malla por interior y material en el grupo de su chunk, nombrada con la clave del material, que las vistas de los
  * interiores muestran mientras el interior no se dibuja.
  */
@@ -75,7 +76,7 @@ export function buildChunks(map: MapData, materials: WorldMaterials, interiors: 
     for (const [x, z] of b.footprint) { cx += x; cz += z; }
     const ij = cell(inside(cx / b.footprint.length, bd.minX, bd.maxX), inside(cz / b.footprint.length, bd.minZ, bd.maxZ));
     const interior = withInterior.get(b.id);
-    const e = extrudeBuilding(b, interior ? openingsOf.get(b.id) ?? [] : []);
+    const e = interior ? extrudeBuilding(b, openingsOf.get(b.id) ?? [], roofCut(interior)) : extrudeBuilding(b);
     const mats = wallMaterials(b);
     add(ij, mats.ground, e.walls.ground);
     add(ij, 'front', e.walls.front);

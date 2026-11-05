@@ -86,19 +86,22 @@ describe.each(interiors.map((i) => [i.placeId, i] as const))('%s', (id, i) => {
     }
   });
 
-  test('la planta corrida 0,2 m: en lo alto, las paredes y el techo cubren la planta justa, sin pisarse', () => {
+  // Los huecos del techo (`roofHoles`: el atrio de la Casa de la Cultura, D13) quedan abiertos: nada los cubre a esa
+  // altura (el lucernario va arriba, desde height) y el chunk los abre igual en su techo.
+  test('la planta corrida 0,2 m: en lo alto, las paredes y el techo cubren la planta justa (menos los huecos del techo), sin pisarse', () => {
     const y = b.height - 0.01;
     const top = solidBlocks(i).filter((x) => x.y0 < y && x.y1 > y);
     const slabs = top.filter((x) => x.role === 'losa').map((x) => x.polygon);
     const walls = top.filter((x) => x.role !== 'losa').map((x) => x.polygon);
     const all = unionOf([...slabs, ...walls]);
-    const fp = closed(ensureCCW(b.footprint));
+    const holes = unionOf(i.roofHoles);
+    const fp = polygonClipping.difference(closed(ensureCCW(b.footprint)), ...(holes.length > 0 ? [holes] : []));
     expect(area(polygonClipping.difference(fp, all)), `${id}: lo que queda sin cubrir`).toBeLessThan(0.01);
-    expect(area(polygonClipping.difference(all, fp)), `${id}: lo que sale de la planta`).toBeLessThan(0.01);
+    expect(area(polygonClipping.difference(all, fp)), `${id}: lo que sale de la planta o pisa un hueco del techo`).toBeLessThan(0.01);
     expect(area(polygonClipping.intersection(unionOf(slabs), unionOf(walls))), `${id}: techo sobre las paredes`).toBeLessThan(0.01);
     // la arista de adentro del pretil es la misma planta corrida
     const inner = parapetEdges(ensureCCW(b.footprint)).map((e) => e.ai);
-    expect(Math.abs(area(unionOf(slabs)) - polygonArea(inner)), id).toBeLessThan(0.01);
+    expect(Math.abs(area(unionOf(slabs)) - (polygonArea(inner) - area(holes))), id).toBeLessThan(0.01);
   });
 
   test('todo marks cumple isFreeSpot a su altura', () => {

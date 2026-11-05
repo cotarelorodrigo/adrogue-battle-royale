@@ -2,8 +2,10 @@
 // el color de su instancia). Es la luz pareja del lugar (`ambient`), más la de sus lámparas, más la que entra por los
 // vidrios y las puertas, menos la oclusión de los rincones (donde una cara se junta con otra). Las lámparas y las
 // aberturas no iluminan detrás de una pared, un tabique o una losa (H5); el vidrio deja pasar. Solo dan al cielo los
-// vidrios de las paredes de afuera: uno de adentro (la pared de vidrio de un vestíbulo, una mampara) no es una fuente.
-import { pointInPolygon } from '../../../shared/geo.ts';
+// vidrios de las paredes de afuera y los huecos del techo (D13: el lucernario, mirando para abajo): un vidrio de adentro
+// (la pared de vidrio de un vestíbulo, una mampara) no es una fuente.
+import polygonClipping from 'polygon-clipping';
+import { pointInPolygon, polygonArea } from '../../../shared/geo.ts';
 import type { Vec2, Vec3 } from '../../../shared/geo.ts';
 import { WALL_OUT } from '../../../shared/interiors/kit.ts';
 import { LEVEL_H, LINTEL_MIN } from '../../../shared/interiors/openings.ts';
@@ -16,6 +18,8 @@ import type { Block, Interior } from '../../../shared/interiors/types.ts';
  * una vidriera en paños no cambia la luz, y un salón con muchos paños no queda iluminado entero.
  */
 const CELL = 0.5, GLASS_T = 0.8, DOOR_T = 1, OPEN_GAIN = 2, OPEN_CAP = 0.35;
+/** Lado (m) de las celdas de un hueco del techo: es grande y está lejos de casi todo, alcanza con celdas más grandes. */
+const SKY_CELL = 2;
 /** Lo más que suman las aberturas a un punto. */
 export const OPENING_MAX = OPEN_GAIN * OPEN_CAP;
 /** Oclusión de rincón: lo más que oscurece, cuánto pesa cada cara vecina pegada y hasta dónde se nota (m). */
@@ -34,9 +38,11 @@ const TRIM = 0.02;
 interface Prism { poly: Vec2[]; y0: number; y1: number; minX: number; maxX: number; minZ: number; maxZ: number; turn: number; stamp: number }
 /** Un pedazo de una abertura: su centro y su área. */
 interface Cell { at: Vec3; area: number }
-/** Una abertura como fuente: sus celdas (centro y área), su normal en planta, 3 puntos para ver si se la ve (y el del
- *  medio solo), y la abertura entera como una sola celda (`disc`) con su lado mayor, para verla de lejos. */
-interface Source { k: number; normal: Vec2; cells: Cell[]; samples: Vec3[]; middle: Vec3[]; disc: Cell[]; size: number }
+/** Una abertura como fuente: sus celdas (centro y área), su normal, 3 puntos para ver si se la ve (y el del medio
+ *  solo), y la abertura entera como una sola celda (`disc`) con su lado mayor, para verla de lejos. Las de las paredes
+ *  alumbran a los dos lados (`twoSided`: su normal es horizontal); un hueco del techo, solo hacia donde mira su normal
+ *  (abajo). */
+interface Source { k: number; normal: Vec3; twoSided: boolean; cells: Cell[]; samples: Vec3[]; middle: Vec3[]; disc: Cell[]; size: number }
 interface Grid { x0: number; z0: number; nx: number; nz: number; cells: Prism[][] }
 interface Prepared { sources: Source[]; blockers: Grid; slabs: Prism[]; occluders: Prism[]; query: { n: number } }
 
@@ -68,8 +74,38 @@ function source(mid: Vec2, e: Vec2, width: number, y0: number, y1: number, k: nu
   for (let a = 0; a < nw; a++) for (let b = 0; b < nh; b++) cells.push({ at: at(-width / 2 + (a + 0.5) * cw, y0 + (b + 0.5) * ch), area: cw * ch });
   const ym = (y0 + y1) / 2;
   const centre = at(0, ym);
-  return { k, normal: [-e[1], e[0]], cells, samples: [at(-0.3 * width, ym), centre, at(0.3 * width, ym)], middle: [centre],
+  return { k, normal: [-e[1], 0, e[0]], twoSided: true, cells, samples: [at(-0.3 * width, ym), centre, at(0.3 * width, ym)], middle: [centre],
     disc: [{ at: centre, area: width * (y1 - y0) }], size: Math.max(width, y1 - y0) };
+}
+
+/** Un hueco del techo (D13) como fuente horizontal a la altura `y`, mirando para abajo: sus celdas son los pedazos del
+ *  hueco en una grilla de SKY_CELL m; deja pasar GLASS_T si lo tapa un lucernario, o todo si está abierto. */
+function skySource(hole: Vec2[], y: number, k: number): Source {
+  const xs = hole.map((p) => p[0]), zs = hole.map((p) => p[1]);
+  const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
+  const ring: polygonClipping.Polygon = [[...hole, hole[0]].map((p): [number, number] => [p[0], p[1]])];
+  const cells: Cell[] = [];
+  const [nx, nz] = [Math.max(1, Math.ceil((x1 - x0) / SKY_CELL - 1e-9)), Math.max(1, Math.ceil((z1 - z0) / SKY_CELL - 1e-9))];
+  const [cw, cd] = [(x1 - x0) / nx, (z1 - z0) / nz];
+  for (let a = 0; a < nx; a++) {
+    for (let b = 0; b < nz; b++) {
+      const [ax, az] = [x0 + a * cw, z0 + b * cd];
+      const cell: [number, number][] = [[ax, az], [ax + cw, az], [ax + cw, az + cd], [ax, az + cd], [ax, az]];
+      for (const pg of polygonClipping.intersection(ring, [cell])) {
+        const r = pg[0].slice(0, -1).map((p): Vec2 => [p[0], p[1]]);
+        const area = polygonArea(r);
+        if (area < 1e-4) continue;
+        const c = r.reduce<Vec2>((s, p) => [s[0] + p[0] / r.length, s[1] + p[1] / r.length], [0, 0]);
+        cells.push({ at: [c[0], y, c[1]], area });
+      }
+    }
+  }
+  const total = cells.reduce((s, c) => s + c.area, 0);
+  const centre: Vec3 = [cells.reduce((s, c) => s + c.at[0] * c.area, 0) / total, y, cells.reduce((s, c) => s + c.at[2] * c.area, 0) / total];
+  // las muestras de la visibilidad: el medio y, a lo largo del lado mayor, a un 30 % de cada punta
+  const along: Vec2 = x1 - x0 >= z1 - z0 ? [0.3 * (x1 - x0), 0] : [0, 0.3 * (z1 - z0)];
+  const samples: Vec3[] = [[centre[0] - along[0], y, centre[2] - along[1]], centre, [centre[0] + along[0], y, centre[2] + along[1]]];
+  return { k, normal: [0, -1, 0], twoSided: false, cells, samples, middle: [centre], disc: [{ at: centre, area: total }], size: Math.max(x1 - x0, z1 - z0) };
 }
 
 /** Un vidrio: el paño va a lo largo de su arista más larga, por el medio del bloque. */
@@ -120,11 +156,17 @@ const cache = new WeakMap<Interior, Prepared>();
 function prepare(i: Interior): Prepared {
   let p = cache.get(i);
   if (p) return p;
+  // los huecos del techo, a la altura del techo (el tope de las losas: el bloque cerrado o el techo); los tapa un
+  // lucernario si alguna de sus franjas de vidrio cae adentro
+  const roof = Math.max(0, ...i.blocks.filter((b) => b.role === 'losa').map((b) => b.y1));
+  const skyGlass = i.blocks.filter((b) => b.sky && b.role === 'vidrio');
+  const covered = (h: Vec2[]): boolean => skyGlass.some((b) => pointInPolygon(b.polygon.reduce<Vec2>((s, q) => [s[0] + q[0] / b.polygon.length, s[1] + q[1] / b.polygon.length], [0, 0]), h));
   p = {
     sources: [
-      ...i.blocks.filter((b) => b.role === 'vidrio' && outerGlass(i, b)).map((b) => glassSource(b.polygon, b.y0, b.y1)),
+      ...i.blocks.filter((b) => b.role === 'vidrio' && !b.sky && outerGlass(i, b)).map((b) => glassSource(b.polygon, b.y0, b.y1)),
       // el hueco de la puerta, como una lámina sobre la cara de afuera
       ...i.doors.map((d) => source(d.at, [-d.normal[1], d.normal[0]], d.width, d.level * LEVEL_H, d.level * LEVEL_H + LINTEL_MIN, DOOR_T)),
+      ...i.roofHoles.map((h) => skySource(h, roof, covered(h) ? GLASS_T : DOOR_T)),
     ],
     // las paredes y los tabiques van en la grilla; las losas, que ocupan toda la planta (estarían en todas las celdas), aparte
     blockers: gridOf(i.blocks.filter((b) => b.role === 'pared' || b.role === 'tabique').map((b) => prism(b.polygon, b.y0, b.y1))),
@@ -305,7 +347,9 @@ function formFactor(s: Source, p: Vec3, n: Vec3): number {
     const d2 = dx * dx + dy * dy + dz * dz;
     const l = Math.sqrt(d2);
     if (l < 1e-6) continue;
-    const cosS = Math.abs((dx * s.normal[0] + dz * s.normal[1]) / l);
+    const along = (dx * s.normal[0] + dy * s.normal[1] + dz * s.normal[2]) / l;
+    // la luz sale de la celda hacia el punto (−d): de un hueco del techo, solo hacia donde mira su normal
+    const cosS = s.twoSided ? Math.abs(along) : Math.max(0, -along);
     const face = 0.5 + 0.5 * ((dx * n[0] + dy * n[1] + dz * n[2]) / l); // facing(p, c.at, n), sin volver a medir
     f += (c.area * face * cosS) / (Math.PI * d2 + c.area);
   }

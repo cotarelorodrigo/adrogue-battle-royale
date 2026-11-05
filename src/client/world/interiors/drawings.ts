@@ -1,10 +1,37 @@
 // Los carteles que llevan un dibujo en vez de su texto (Label.drawing), dibujados en canvas al armar el interior: no se
-// baja ninguna imagen (§2.4). Como los carteles de texto, son claros y se hornean con la luz del lugar.
+// baja ninguna imagen (§2.4). Como los carteles de texto, son claros y se hornean con la luz del lugar. Los que varían
+// (el plafón, los cuadros) salen de un PRNG con el texto del cartel de semilla: el mismo cartel, el mismo dibujo.
+import { hash01 } from '../../../shared/geo.ts';
 import type { LabelDrawing } from '../../../shared/interiors/types.ts';
 import type { SignLook } from '../../../shared/mapdata.ts';
+import { createRng } from '../../../shared/rng.ts';
+import type { Rng } from '../../../shared/rng.ts';
 import { PX_PER_M } from '../signs.ts';
 
 type Ctx = CanvasRenderingContext2D;
+
+/** Un canvas de width × height m a PX_PER_M (al menos 64 px de lado) y su contexto. */
+function sheet(width: number, height: number): { canvas: HTMLCanvasElement; c: Ctx; w: number; h: number } {
+  const w = Math.max(64, Math.round(width * PX_PER_M)), h = Math.max(64, Math.round(height * PX_PER_M));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  return { canvas, c: canvas.getContext('2d')!, w, h };
+}
+
+/** El PRNG de un dibujo: su semilla es el texto del cartel. */
+const rngOf = (seed: string): Rng => createRng(Math.floor(hash01(seed) * 4294967296));
+/** Un elemento de `list` al azar. */
+const any = <T>(rng: Rng, list: readonly T[]): T => list[Math.floor(rng.next() * list.length) % list.length];
+/** Los colores de `list` en un orden al azar (Fisher-Yates). */
+function shuffled<T>(rng: Rng, list: readonly T[]): T[] {
+  const out = [...list];
+  for (let k = out.length - 1; k > 0; k--) {
+    const j = Math.floor(rng.next() * (k + 1)) % (k + 1);
+    [out[k], out[j]] = [out[j], out[k]];
+  }
+  return out;
+}
 
 const circle = (c: Ctx, x: number, y: number, r: number): void => {
   c.beginPath();
@@ -28,11 +55,7 @@ function bevel(c: Ctx, x: number, y: number, r: number, w: number, light: string
  * cuadrado del cartel; el acero sale de `look.fondo` y los bulones y el volante, de `look.letra`.
  */
 function tesoro(look: SignLook, width: number, height: number): HTMLCanvasElement {
-  const w = Math.max(64, Math.round(width * PX_PER_M)), h = Math.max(64, Math.round(height * PX_PER_M));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const c = canvas.getContext('2d')!;
+  const { canvas, c, w, h } = sheet(width, height);
   const [x, y, r] = [w / 2, h / 2, Math.min(w, h) * 0.46];
   // la chapa del marco, con un borde más oscuro
   c.fillStyle = look.marco;
@@ -86,5 +109,143 @@ function tesoro(look: SignLook, width: number, height: number): HTMLCanvasElemen
   return canvas;
 }
 
-/** El dibujo de cada Label.drawing, al tamaño del cartel (ancho × alto en metros, a PX_PER_M). */
-export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number) => HTMLCanvasElement> = { tesoro };
+/** Los colores del plafón: vivos y cálidos, con dos fríos de contrapunto. */
+const PLAFON_COLORS = ['#d8432e', '#f08a24', '#f5c431', '#e2557f', '#8e3f9e', '#2f7fc1', '#2fa59a', '#7cb342', '#c0392b', '#f3e2b8'] as const;
+
+/**
+ * La cara pintada del plafón que cuelga bajo el lucernario (§4.4): un disco propio, abstracto, que no copia la obra. Sobre
+ * el fondo (`look.fondo`), anillos concéntricos partidos en gajos de colores (cada anillo con su cantidad de gajos y
+ * su giro), unos arcos y unas manchas traslúcidas que cruzan los anillos, rayos finos y un medallón en el medio con un
+ * degradado; el borde, un aro oscuro (`look.letra`). Se ve desde abajo: ocupa el círculo inscripto del cartel.
+ */
+function plafon(look: SignLook, width: number, height: number, seed: string): HTMLCanvasElement {
+  const { canvas, c, w, h } = sheet(width, height);
+  const rng = rngOf(seed);
+  const [x, y, R] = [w / 2, h / 2, Math.min(w, h) / 2];
+  c.fillStyle = look.fondo;
+  c.fillRect(0, 0, w, h);
+  const colors = shuffled(rng, PLAFON_COLORS);
+  // los anillos, de afuera hacia adentro: cada uno con sus gajos, de colores que se alternan
+  const rings = 5 + Math.floor(rng.next() * 3);
+  for (let k = 0; k < rings; k++) {
+    const r0 = R * (0.94 - (k * 0.72) / rings), r1 = R * (0.94 - ((k + 1) * 0.72) / rings);
+    const n = 8 + 4 * Math.floor(rng.next() * 5), turn = rng.next() * Math.PI * 2;
+    for (let j = 0; j < n; j++) {
+      const [a0, a1] = [turn + (j * Math.PI * 2) / n, turn + ((j + 1) * Math.PI * 2) / n];
+      c.fillStyle = colors[(j + k * 3) % colors.length];
+      c.beginPath();
+      c.arc(x, y, r0, a0, a1);
+      c.arc(x, y, r1, a1, a0, true);
+      c.closePath();
+      c.fill();
+    }
+  }
+  // arcos anchos y manchas traslúcidas que cruzan los anillos (lo que lo hace de una mano y no de un compás)
+  c.globalAlpha = 0.45;
+  for (let k = 0; k < 7; k++) {
+    const a = rng.next() * Math.PI * 2, d = R * (0.2 + rng.next() * 0.6);
+    c.fillStyle = any(rng, colors);
+    circle(c, x + Math.cos(a) * d, y + Math.sin(a) * d, R * (0.08 + rng.next() * 0.16));
+    c.fill();
+  }
+  c.lineCap = 'round';
+  for (let k = 0; k < 5; k++) {
+    const a = rng.next() * Math.PI * 2;
+    c.strokeStyle = any(rng, colors);
+    c.lineWidth = R * (0.03 + rng.next() * 0.05);
+    c.beginPath();
+    c.arc(x, y, R * (0.3 + rng.next() * 0.55), a, a + 0.6 + rng.next() * 1.8);
+    c.stroke();
+  }
+  c.globalAlpha = 1;
+  // rayos finos, del medallón al borde
+  c.strokeStyle = 'rgba(30,24,20,0.35)';
+  c.lineWidth = Math.max(1, R * 0.006);
+  const rays = 24 + 12 * Math.floor(rng.next() * 3);
+  for (let k = 0; k < rays; k++) {
+    const a = (k * Math.PI * 2) / rays;
+    c.beginPath();
+    c.moveTo(x + Math.cos(a) * R * 0.22, y + Math.sin(a) * R * 0.22);
+    c.lineTo(x + Math.cos(a) * R * 0.94, y + Math.sin(a) * R * 0.94);
+    c.stroke();
+  }
+  // el medallón y el aro del borde
+  const g = c.createRadialGradient(x, y, R * 0.02, x, y, R * 0.22);
+  g.addColorStop(0, '#fff6dc');
+  g.addColorStop(1, colors[0]);
+  c.fillStyle = g;
+  circle(c, x, y, R * 0.22);
+  c.fill();
+  c.strokeStyle = look.letra;
+  c.lineWidth = R * 0.05;
+  circle(c, x, y, R * 0.97);
+  c.stroke();
+  return canvas;
+}
+
+/** Las paletas de los cuadros de las muestras: cada cuadro toma una. */
+const PALETTES = [
+  ['#1d3557', '#457b9d', '#a8dadc', '#f1faee', '#e63946'],
+  ['#264653', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51'],
+  ['#3d2c2e', '#8c5e58', '#d9a679', '#f2e3c6', '#5b7553'],
+  ['#0b132b', '#3a506b', '#5bc0be', '#f6ae2d', '#f26419'],
+  ['#2b2d42', '#8d99ae', '#edf2f4', '#ef233c', '#d90429'],
+  ['#3c1642', '#086375', '#1dd3b0', '#affc41', '#b2ff9e'],
+] as const;
+
+/**
+ * Un cuadro abstracto de una muestra (§4.4: salas con paneles), propio: el fondo de un color de su paleta, campos de
+ * color superpuestos, unos círculos, trazos gruesos y una línea fina; el marco (`look.marco`) alrededor.
+ */
+function cuadro(look: SignLook, width: number, height: number, seed: string): HTMLCanvasElement {
+  const { canvas, c, w, h } = sheet(width, height);
+  const rng = rngOf(seed);
+  const pal = shuffled(rng, any(rng, PALETTES));
+  const m = Math.max(4, Math.round(Math.min(w, h) * 0.06));
+  c.fillStyle = look.marco;
+  c.fillRect(0, 0, w, h);
+  c.fillStyle = pal[0];
+  c.fillRect(m, m, w - 2 * m, h - 2 * m);
+  const [iw, ih] = [w - 2 * m, h - 2 * m];
+  const px = (f: number): number => m + f * iw, py = (f: number): number => m + f * ih;
+  // campos de color
+  for (let k = 0; k < 3 + Math.floor(rng.next() * 3); k++) {
+    c.globalAlpha = 0.65 + rng.next() * 0.35;
+    c.fillStyle = pal[1 + (k % (pal.length - 1))];
+    const [a, b] = [rng.next() * 0.7, rng.next() * 0.7];
+    c.fillRect(px(a), py(b), iw * (0.15 + rng.next() * 0.5), ih * (0.1 + rng.next() * 0.45));
+  }
+  // círculos
+  for (let k = 0; k < 1 + Math.floor(rng.next() * 3); k++) {
+    c.globalAlpha = 0.8;
+    c.fillStyle = any(rng, pal);
+    circle(c, px(0.15 + rng.next() * 0.7), py(0.15 + rng.next() * 0.7), Math.min(iw, ih) * (0.06 + rng.next() * 0.18));
+    c.fill();
+  }
+  // trazos gruesos y una línea fina
+  c.globalAlpha = 1;
+  c.lineCap = 'round';
+  for (let k = 0; k < 2 + Math.floor(rng.next() * 2); k++) {
+    c.strokeStyle = any(rng, pal);
+    c.lineWidth = Math.min(iw, ih) * (0.02 + rng.next() * 0.05);
+    c.beginPath();
+    c.moveTo(px(rng.next()), py(rng.next()));
+    c.quadraticCurveTo(px(rng.next()), py(rng.next()), px(rng.next()), py(rng.next()));
+    c.stroke();
+  }
+  c.strokeStyle = pal[pal.length - 1];
+  c.lineWidth = Math.max(1, Math.min(iw, ih) * 0.008);
+  c.beginPath();
+  c.moveTo(px(0.05), py(0.2 + rng.next() * 0.6));
+  c.lineTo(px(0.95), py(0.2 + rng.next() * 0.6));
+  c.stroke();
+  // la sombra del marco sobre la tela
+  c.strokeStyle = 'rgba(0,0,0,0.25)';
+  c.lineWidth = Math.max(1, m * 0.3);
+  c.strokeRect(m, m, iw, ih);
+  return canvas;
+}
+
+/** El dibujo de cada Label.drawing, al tamaño del cartel (ancho × alto en metros, a PX_PER_M), con el texto del cartel
+ *  de semilla (el tesoro no la usa). */
+export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro };

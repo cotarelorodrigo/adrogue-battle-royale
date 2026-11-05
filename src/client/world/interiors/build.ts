@@ -16,7 +16,7 @@ import { cutRect, newBuilder, tintColor, toGeometry, vert } from '../wall-kit.ts
 import type { Builder, Rect } from '../wall-kit.ts';
 import { lightAt } from './bake.ts';
 import { LABEL_DRAWINGS } from './drawings.ts';
-import { glassTone } from './glass.ts';
+import { GLASS_INSIDE, GLASS_OUTSIDE, glassTone } from './glass.ts';
 import { ITEM_GLASS, ITEM_GLOW, ITEM_MODELS } from './models.ts';
 import { TILE_M } from './textures.ts';
 
@@ -33,6 +33,8 @@ const INSTANCE_MIN = 4;
 const BAKE_STEP: Record<1 | 2, number> = { 1: 2, 2: 1 };
 /** El cartel se separa esto (m) de lo que tenga detrás. */
 const LABEL_LIFT = 0.02;
+/** Un cartel redondo (`round`) es un disco de tantos lados. */
+const DISC_SIDES = 48;
 const LABEL_GUTTER = 4;
 const EPS = 1e-6;
 
@@ -144,9 +146,13 @@ function covered(p: Vec2, q: Vec2, y0: number, y1: number, others: Block[]): Rec
   return out;
 }
 
+/** El lado de una cara del vidrio de un lucernario (`sky`, D13): está arriba del techo, así que el tope y los costados
+ *  dan al cielo (GLASS_OUTSIDE) y la de abajo, al atrio (GLASS_INSIDE). */
+const skyTone = (_p: Vec3, n: Vec3): number => (n[1] < -0.5 ? GLASS_INSIDE : GLASS_OUTSIDE);
+
 /** Las caras de los bloques que no son `out`, por Mat, partidas en la grilla de `step` m y horneadas con `light`. */
 function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) => number): Map<Mat, THREE.BufferGeometry> {
-  const glass = (p: Vec3, n: Vec3): number => glassTone(i, p, n);
+  const inGlass = (p: Vec3, n: Vec3): number => glassTone(i, p, n);
   const builders = new Map<Mat, Builder>();
   const builder = (mat: Mat): Builder => {
     let b = builders.get(mat);
@@ -160,10 +166,13 @@ function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) =>
   };
   const occluders = i.blocks.filter(opaque).map((b) => ({ b, box: boxOf(b) }));
   const flat = (p: Vec3): [number, number] => [p[0] / TILE_M, p[2] / TILE_M];
+  // el vidrio y lo que brilla no se hornean (su color es uno por cara): van enteros, sin partir en la grilla
+  const stepOf = (mat: Mat): number => (mat === 'vidrio' || mat === 'luz' ? Infinity : step);
   for (const b of blocks) {
+    const glass = b.sky ? skyTone : inGlass;
     for (const [look, y, n] of [[b.top, b.y1, [0, 1, 0]], [b.bottom, b.y0, [0, -1, 0]]] as const) {
       if (!look) continue;
-      for (const c of cells(b.polygon, step)) {
+      for (const c of cells(b.polygon, stepOf(look.mat))) {
         const ring = n[1] > 0 ? c.ring : [...c.ring].reverse();
         emit(builder(look.mat), ring.map((p): Vec3 => [p[0], y, p[1]]), [...n], flat, { look, light, glass }, c.rect);
       }
@@ -186,7 +195,7 @@ function blockGeometries(i: Interior, step: number, light: (p: Vec3, n: Vec3) =>
       const at = (s: number, y: number): Vec3 => [p[0] + e[0] * s, y, p[1] + e[1] * s];
       const uv = (v: Vec3): [number, number] => [(v[0] * e[0] + v[2] * e[1]) / TILE_M, v[1] / TILE_M];
       for (const r of cutRect({ s0: 0, s1: len, y0: b.y0, y1: b.y1 }, covered(p, q, b.y0, b.y1, near)).solid) {
-        const [ns, ny] = [Math.max(1, Math.ceil((r.s1 - r.s0) / step - 1e-9)), Math.max(1, Math.ceil((r.y1 - r.y0) / step - 1e-9))];
+        const [ns, ny] = [Math.max(1, Math.ceil((r.s1 - r.s0) / stepOf(look.mat) - 1e-9)), Math.max(1, Math.ceil((r.y1 - r.y0) / stepOf(look.mat) - 1e-9))];
         for (let a = 0; a < ns; a++) {
           for (let c = 0; c < ny; c++) {
             const [s0, s1] = [r.s0 + ((r.s1 - r.s0) * a) / ns, r.s0 + ((r.s1 - r.s0) * (a + 1)) / ns];
@@ -268,9 +277,9 @@ function merged(i: Interior, parts: THREE.BufferGeometry[]): THREE.BufferGeometr
 }
 
 /** Los textos de los carteles (signTexture dibuja con la proporción ancho × SIGN_H: el ancho que se pide da la del
- *  cartel), o su dibujo si lo tienen (drawings.ts). */
+ *  cartel), o su dibujo si lo tienen (drawings.ts), con el texto de semilla. */
 const labelCanvases = (labels: Label[]): HTMLCanvasElement[] => labels.map((l) =>
-  (l.drawing ? LABEL_DRAWINGS[l.drawing](l.look, l.width, l.height) : signTexture(l.text, l.look, (l.width * SIGN_H) / l.height)));
+  (l.drawing ? LABEL_DRAWINGS[l.drawing](l.look, l.width, l.height, l.text) : signTexture(l.text, l.look, (l.width * SIGN_H) / l.height)));
 
 /** Las páginas de atlas de los carteles: con `onePage`, los textos se achican a la mitad hasta entrar en una. */
 function packLabels(canvases: HTMLCanvasElement[], onePage: boolean): { canvases: HTMLCanvasElement[]; packed: ReturnType<typeof packSigns> } {
@@ -304,17 +313,27 @@ function labelMeshes(labels: Label[], canvases: HTMLCanvasElement[], packed: Ret
     ctx.fillStyle = l.look.marco;
     ctx.fillRect(r.x - LABEL_GUTTER, r.y - LABEL_GUTTER, r.w + 2 * LABEL_GUTTER, r.h + 2 * LABEL_GUTTER);
     ctx.drawImage(canvases[k], r.x, r.y);
-    const n: Vec3 = [l.normal[0], 0, l.normal[1]];
-    const right: Vec2 = [l.normal[1], -l.normal[0]]; // a la derecha de quien lo lee
-    const c: Vec3 = [l.at[0] + n[0] * LABEL_LIFT, l.at[1], l.at[2] + n[2] * LABEL_LIFT];
-    const at = (sx: number, sy: number): Vec3 => [c[0] + (right[0] * sx * l.width) / 2, c[1] + (sy * l.height) / 2, c[2] + (right[1] * sx * l.width) / 2];
+    // de pie: mira hacia `normal` y su arriba es +y; acostado (`down`): mira hacia abajo y su arriba es `normal`. En los
+    // dos, la derecha de quien lo lee es (nz, −nx) y la cara va hacia derecha × arriba
+    const n: Vec3 = l.down ? [0, -1, 0] : [l.normal[0], 0, l.normal[1]];
+    const up: Vec3 = l.down ? [l.normal[0], 0, l.normal[1]] : [0, 1, 0];
+    const right: Vec3 = [l.normal[1], 0, -l.normal[0]];
+    const c: Vec3 = [l.at[0] + n[0] * LABEL_LIFT, l.at[1] + n[1] * LABEL_LIFT, l.at[2] + n[2] * LABEL_LIFT];
+    const at = (sx: number, sy: number): Vec3 => [0, 1, 2].map((a) => c[a] + (right[a] * sx * l.width) / 2 + (up[a] * sy * l.height) / 2) as Vec3;
     const [u0, u1] = [r.x / pg.w, (r.x + r.w) / pg.w];
     const [v0, v1] = [(pg.h - r.y - r.h) / pg.h, (pg.h - r.y) / pg.h];
-    const corners: [Vec3, [number, number]][] = [[at(-1, -1), [u0, v0]], [at(1, -1), [u1, v0]], [at(1, 1), [u1, v1]], [at(-1, 1), [u0, v1]]];
+    const uvAt = (sx: number, sy: number): [number, number] => [u0 + ((u1 - u0) * (sx + 1)) / 2, v0 + ((v1 - v0) * (sy + 1)) / 2];
+    // un rectángulo, o un disco (en abanico desde el medio) que toma el círculo inscripto del dibujo
+    const ring: [number, number][] = l.round
+      ? Array.from({ length: DISC_SIDES }, (_, j) => [Math.cos((2 * Math.PI * j) / DISC_SIDES), Math.sin((2 * Math.PI * j) / DISC_SIDES)])
+      : [[-1, -1], [1, -1], [1, 1], [-1, 1]];
     const b = builders[r.page], first = b.pos.length / 3;
     const k0 = l.glow ? 1 : light(c, n) * INTERIOR_EXPOSURE;
-    for (const [p, uv] of corners) vert(b, p, n, uv, new THREE.Color(k0, k0, k0));
-    b.idx.push(first, first + 1, first + 2, first, first + 2, first + 3);
+    const tone = new THREE.Color(k0, k0, k0);
+    if (l.round) vert(b, c, n, uvAt(0, 0), tone);
+    for (const [sx, sy] of ring) vert(b, at(sx, sy), n, uvAt(sx, sy), tone);
+    if (l.round) for (let j = 0; j < DISC_SIDES; j++) b.idx.push(first, first + 1 + j, first + 1 + ((j + 1) % DISC_SIDES));
+    else b.idx.push(first, first + 1, first + 2, first, first + 2, first + 3);
   });
   return builders.map((b, k) => {
     const map = new THREE.CanvasTexture(pageCanvases[k]);

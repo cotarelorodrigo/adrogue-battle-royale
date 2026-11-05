@@ -10,8 +10,9 @@ import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { buildChunks } from '../../src/client/world/chunks.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { buildInterior3D, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
+import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
-import { signedAreaFromAbove } from '../../src/shared/geo.ts';
+import { pointInPolygon, signedAreaFromAbove } from '../../src/shared/geo.ts';
 import type { Vec2 } from '../../src/shared/geo.ts';
 import { buildInteriors } from '../../src/shared/interiors/index.ts';
 import type { MapData } from '../../src/shared/mapdata.ts';
@@ -172,5 +173,54 @@ describe('sombra entera en el mapa real (H1)', () => {
     console.log(`sombra (H1): ${rays} rayos por aberturas de espaldas al sol, ${bad.length} con sol`);
     expect(rays).toBeGreaterThan(50);
     expect(bad).toEqual([]);
+  });
+});
+
+describe('el techo de la Casa de la Cultura (D13, tarea 7)', () => {
+  const WORLD = ['wallGroundHouse', 'wallGroundShop', 'wallUpper', 'brickGround', 'brickUpper', 'roof', 'parapet', 'asphalt',
+    'cobble', 'sidewalk', 'grass', 'path', 'platform', 'rail', 'front', ...KEYS] as const;
+  const fake = Object.fromEntries(WORLD.map((k) => [k, new THREE.MeshBasicMaterial({ name: k })])) as unknown as WorldMaterials;
+  /** El alto más alto en que una vertical por (x, z) corta los triángulos, o null. */
+  const topAt = (ts: THREE.Triangle[], [x, z]: Vec2): number | null => {
+    const ray = new THREE.Ray(new THREE.Vector3(x, 100, z), new THREE.Vector3(0, -1, 0));
+    let best: number | null = null;
+    for (const t of ts) {
+      const hit = ray.intersectTriangle(t.a, t.b, t.c, false, new THREE.Vector3());
+      if (hit && (best === null || hit.y > best)) best = hit.y;
+    }
+    return best;
+  };
+
+  test('el techo del chunk se abre sobre el atrio; lo tapa la tapa del frente (sin mallas nuevas), a dos aguas, que se esconde con el interior dibujado', () => {
+    const casa = interiors.find((i) => i.placeId === 'casa-de-la-cultura')!;
+    const b = map.buildings.find((x) => x.id === casa.buildingId)!;
+    const hole = casa.roofHoles[0];
+    const c: Vec2 = [hole.reduce((s, p) => s + p[0], 0) / hole.length, hole.reduce((s, p) => s + p[1], 0) / hole.length];
+    expect(pointInPolygon(c, hole)).toBe(true);
+    const { groups, tapas } = buildChunks(map, fake, interiors);
+    const roofs = groups.flatMap((g) => g.children.filter((m): m is THREE.Mesh => m instanceof THREE.Mesh && m.name === 'roof'));
+    expect(topAt(roofs.flatMap((m) => triangles(m.geometry)), c)).toBeNull();
+    // la tapa del techo va en la del frente: la Casa sigue con una sola tapa del chunk (las aberturas del frente)
+    const own = tapas.get('casa-de-la-cultura')!;
+    expect(own.map((m) => m.name)).toEqual(['front']);
+    expect(topAt(triangles(own[0].geometry), c)!).toBeGreaterThan(b.height + 0.5);
+    // un poco afuera del hueco, el techo del chunk sigue
+    const out: Vec2 = [c[0] + (hole[0][0] - c[0]) * 1.2, c[1] + (hole[0][1] - c[1]) * 1.2];
+    expect(topAt(roofs.flatMap((m) => triangles(m.geometry)), out)).toBeCloseTo(b.height, 6);
+    const views = createInteriorViews([casa], fake, 'alta', tapas);
+    const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.15, 1000);
+    cam.rotation.order = 'YXZ';
+    // en la vereda de enfrente, mirando la fachada (la puerta mira hacia afuera: de espaldas a ella)
+    const d = casa.doors[0];
+    cam.position.set(d.at[0] + d.normal[0] * 15, 1.6, d.at[1] + d.normal[1] * 15);
+    cam.rotation.set(0, Math.atan2(d.normal[0], d.normal[1]), 0);
+    views.update(cam);
+    expect(views.drawn()).toEqual(['casa-de-la-cultura']);
+    expect(own[0].visible).toBe(false);
+    cam.position.set(d.at[0] + d.normal[0] * 120, 30, d.at[1] + d.normal[1] * 120);
+    views.update(cam);
+    expect(views.drawn()).toEqual([]);
+    expect(own[0].visible).toBe(true);
+    views.dispose();
   });
 });

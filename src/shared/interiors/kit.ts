@@ -24,13 +24,16 @@ export const GROUND_Y = 0.02;
 /** Las cajas sólidas de los muebles de §2.3: `w` sobre el +x del modelo, `d` sobre su +z y `h` de alto desde su `at`.
  *  Lo que no está acá (sillas, banquetas, lámparas, la hoja de vidrio, el turnero colgado, las sillas de espera) se
  *  atraviesa. Bancos (tarea 6): el cajero automático de pie, el escritorio (sin sus sillas) y el tramo de mostrador de
- *  un puesto de caja, de 1,1 m de alto (la mampara de vidrio, de 1,1 a 2,4 m, la pone el plan como bloque `glass`). */
+ *  un puesto de caja, de 1,1 m de alto (la mampara de vidrio, de 1,1 a 2,4 m, la pone el plan como bloque `glass`).
+ *  Casa de la Cultura (tarea 7): el panel de una muestra, un tabique suelto de 1,6 × 2,2 m sobre dos pies; el plafón
+ *  (colgado sobre el atrio) y las butacas del auditorio se atraviesan. */
 export const MODEL_BOX: Partial<Record<ItemModel, { w: number; d: number; h: number }>> = {
   mesa: { w: 1.2, d: 0.8, h: 0.75 },
   sillon: { w: 0.85, d: 0.85, h: 0.8 },
   cajero: { w: 0.7, d: 0.6, h: 1.6 },
   escritorio: { w: 1.4, d: 0.7, h: 0.75 },
   'puesto-caja': { w: 1.9, d: 0.6, h: 1.1 },
+  'panel-muestra': { w: 1.6, d: 0.12, h: 2.2 },
 };
 
 /** `holes`: huecos (marco local) en la losa de un nivel; los del nivel `publicFloors` atraviesan el bloque cerrado o el
@@ -210,10 +213,11 @@ export class Kit {
     this.runs.push({ from: o.from, to: o.to, foot: [f[0], y0, f[1]], top: [t[0], y1, t[1]], yaw: this.yawToward(d) });
   }
 
-  /** Baranda de RAIL_H sobre el piso de `level`, centrada en `path` (marco local): clase glass (D4). */
-  railing(path: Vec2[], level: number, look: Look): void {
+  /** Baranda de RAIL_H sobre el piso de `level`, centrada en `path` (marco local): clase glass (D4). Con `y`, desde ese
+   *  alto en vez del piso (la de un tramo de escalera, sobre la huella de su escalón). */
+  railing(path: Vec2[], level: number, look: Look, o: { y?: number } = {}): void {
     this.need();
-    const y = this.floorY(level), x = RAIL_T / 2;
+    const y = o.y ?? this.floorY(level), x = RAIL_T / 2;
     for (let i = 0; i + 1 < path.length; i++) {
       const [p, q] = [path[i], path[i + 1]];
       if (dist(p, q) < EPS) continue;
@@ -224,10 +228,18 @@ export class Kit {
     }
   }
 
-  /** Un prisma de planta `poly` (marco local) entre y0 e y1. */
-  block(poly: Vec2[], y0: number, y1: number, collide: Collide, role: Role, looks: Pick<Block, 'top' | 'bottom' | 'side'>, out?: true): void {
+  /** Un prisma de planta `poly` (marco local) entre y0 e y1. `true` (o `out`): se dibuja con el edificio; `sky`: va
+   *  arriba del techo, sobre un hueco (D13); `hide`: las aristas de `poly` (la k va de poly[k] a poly[k + 1]) sin cara
+   *  del costado, como Block.hide (las cuenta de nuevo si la planta queda al revés en el mundo). */
+  block(poly: Vec2[], y0: number, y1: number, collide: Collide, role: Role, looks: Pick<Block, 'top' | 'bottom' | 'side'>,
+    o?: true | { out?: true; sky?: true; hide?: number[] }): void {
     this.open();
-    this.blocks.push({ polygon: this.toWorldRing(poly), y0, y1, collide, role, ...looksOf(looks), ...(out ? { out: true as const } : {}) });
+    const { out, sky, hide } = o === true ? { out: true as const, sky: undefined, hide: undefined } : (o ?? {});
+    const ring = poly.map((p) => this.at(p)), n = ring.length;
+    const flipped = signedAreaFromAbove(ring) < 0;
+    const polygon = flipped ? [...ring].reverse() : ring;
+    this.blocks.push({ polygon, y0, y1, collide, role, ...looksOf(looks), ...(out ? { out: true as const } : {}), ...(sky ? { sky: true as const } : {}),
+      ...(hide && hide.length > 0 ? { hide: hide.map((k) => (flipped ? (((n - 2 - k) % n) + n) % n : k)) } : {}) });
   }
 
   /** Un mueble en `p` sobre el piso `y`, mirando hacia `yaw` (local): su frente (el +z del modelo) va hacia ahí. Y su
@@ -249,12 +261,15 @@ export class Kit {
   }
 
   /** Cartel con el medio en `p` a la altura `y`; `normal` (local) apunta hacia quien lo lee. Con `drawing`, en vez del
-   *  texto lleva ese dibujo. */
-  label(text: string, p: Vec2, y: number, normal: Vec2, width: number, height: number, look: SignLook, o: { glow?: true; out?: true; drawing?: LabelDrawing } = {}): void {
+   *  texto lleva ese dibujo. `down`: acostado mirando abajo (`normal`, hacia el borde de arriba del dibujo); `round`: un
+   *  disco de diámetro `width`. */
+  label(text: string, p: Vec2, y: number, normal: Vec2, width: number, height: number, look: SignLook,
+    o: { glow?: true; out?: true; drawing?: LabelDrawing; down?: true; round?: true } = {}): void {
     this.open();
     const [x, z] = this.at(p);
     this.labels.push({ text, at: [x, y, z], normal: unit(this.vec(normal)), width, height, look, ...(o.glow ? { glow: true as const } : {}),
-      ...(o.out ? { out: true as const } : {}), ...(o.drawing ? { drawing: o.drawing } : {}) });
+      ...(o.out ? { out: true as const } : {}), ...(o.drawing ? { drawing: o.drawing } : {}), ...(o.down ? { down: true as const } : {}),
+      ...(o.round ? { round: true as const } : {}) });
   }
 
   lamp(p: Vec2, y: number, radius: number, power: number): void {
@@ -301,6 +316,7 @@ export class Kit {
       blocks: this.blocks, items: this.items, labels: this.labels, lamps: this.lamps, floors, stairs: this.runs,
       doors: doorsOf(this.b, this.input), views: this.views, marks: this.marks,
       footprint: this.fp, patios: this.input.patios.map((r) => ensureCCW(r.map((p): Vec2 => [p[0], p[1]]))),
+      roofHoles: this.holesAt(pf).map((h) => this.toWorldRing(h)),
     };
   }
 

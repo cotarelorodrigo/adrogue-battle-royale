@@ -1,9 +1,11 @@
+import polygonClipping from 'polygon-clipping';
 import * as THREE from 'three';
 import { PARAPET_H, parapetEdges } from '../../shared/collision.ts';
 import type { Vec2 } from '../../shared/geo.ts';
-import { ensureCCW } from '../../shared/geo.ts';
+import { ensureCCW, pointInPolygon } from '../../shared/geo.ts';
 import type { Building, FacadeGround, Opening } from '../../shared/mapdata.ts';
 import { SUN_DIR } from '../render/sun.ts';
+import { SHOP_GLASS, cellRect } from './front-atlas.ts';
 import { frontGeometry } from './fronts.ts';
 import type { WorldMaterials } from './types.ts';
 import { BAY_W, cutRect, edgeHoles, FLOOR_H, newBuilder, quad, tintColor, toGeometry, vert } from './wall-kit.ts';
@@ -13,28 +15,91 @@ export { FLOOR_H, BAY_W };
 const MITER_LIMIT = 2;
 const PLANAR_UV = 4;
 
-/** Triangula un polígono simple (x,z) y emite triángulos con normal +y. Los vértices ya están en b (en orden). */
-export function triangulateUp(poly: Vec2[], base: number, idx: number[]): void {
+/** Triangula un polígono simple (x,z), con sus agujeros si tiene, y emite triángulos con normal +y. Los vértices ya
+ *  están en b (en orden: los del contorno y después los de cada agujero). */
+export function triangulateUp(poly: Vec2[], base: number, idx: number[], holes: Vec2[][] = []): void {
   // Pasamos (x, −z): así un polígono antihorario desde arriba también lo es en el plano 2D.
-  const contour = poly.map(([x, z]) => new THREE.Vector2(x, -z));
-  for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(contour, [])) {
-    const cross = (poly[b][0] - poly[a][0]) * (poly[c][1] - poly[a][1]) - (poly[b][1] - poly[a][1]) * (poly[c][0] - poly[a][0]);
+  const flip = (r: Vec2[]): THREE.Vector2[] => r.map(([x, z]) => new THREE.Vector2(x, -z));
+  const all = holes.length === 0 ? poly : [...poly, ...holes.flat()];
+  for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(flip(poly), holes.map(flip))) {
+    const cross = (all[b][0] - all[a][0]) * (all[c][1] - all[a][1]) - (all[b][1] - all[a][1]) * (all[c][0] - all[a][0]);
     // normal.y = −(cross en x,z) con x/z de mano derecha invertida: y>0 si cross < 0
     if (cross < 0) idx.push(base + a, base + b, base + c);
     else idx.push(base + a, base + c, base + b);
   }
 }
 
+/** Lo que un interior le abre al techo de su edificio (D13, Interior.roofHoles): sus huecos (mundo) y, si un lucernario
+ *  los tapa y sobresale del techo, sus franjas (prismas de y0 a y1, mundo). */
+export interface RoofCut { holes: Vec2[][]; skylight: { polygon: Vec2[]; y0: number; y1: number }[] }
+const NO_CUT: RoofCut = { holes: [], skylight: [] };
+
+/** La planta menos los huecos: en pedazos, cada uno con su contorno y sus agujeros. Sin huecos, la planta tal cual. */
+function capPieces(fp: Vec2[], holes: Vec2[][]): Vec2[][][] {
+  if (holes.length === 0) return [[fp]];
+  const ring = (r: Vec2[]): [number, number][] => [...r, r[0]].map((p): [number, number] => [p[0], p[1]]);
+  return polygonClipping.difference([ring(fp)], ...holes.map((h) => [ring(h)]))
+    .map((pg) => pg.map((r) => r.slice(0, -1).map((p): Vec2 => [p[0], p[1]])));
+}
+
 /** El techo: la planta `fp` a la altura `y`, con normal +y; con `down`, la misma planta mirando para abajo (la cáscara
- *  de sombra). El techo del chunk y el de la cáscara salen de acá y del mismo polígono: un hueco que se le abra a uno
- *  (la escalera de una terraza) se abre en los dos. */
-function roofCap(b: Builder, fp: Vec2[], y: number, color: THREE.Color, down = false): void {
-  const base = b.pos.length / 3;
-  for (const [x, z] of fp) vert(b, [x, y, z], [0, down ? -1 : 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
-  const idx: number[] = [];
-  triangulateUp(fp, base, idx);
-  if (down) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
-  b.idx.push(...idx);
+ *  de sombra). El techo del chunk y el de la cáscara salen de acá y del mismo polígono, con los mismos huecos (`holes`,
+ *  los de RoofCut: el atrio de la Casa de la Cultura, la escalera de una terraza): un hueco se abre en los dos. */
+function roofCap(b: Builder, fp: Vec2[], y: number, color: THREE.Color, down = false, holes: Vec2[][] = []): void {
+  for (const [outer, ...inner] of capPieces(fp, holes)) {
+    const base = b.pos.length / 3;
+    for (const [x, z] of [outer, ...inner].flat()) vert(b, [x, y, z], [0, down ? -1 : 1, 0], [x / PLANAR_UV, z / PLANAR_UV], color);
+    const idx: number[] = [];
+    triangulateUp(outer, base, idx, inner);
+    if (down) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
+    b.idx.push(...idx);
+  }
+}
+
+/** El vidrio de la tapa de un lucernario en el atlas del frente: un punto fijo adentro del primer paño de la vidriera
+ *  (entre el marco y el primer parteluz, a media altura), así toda la tapa toma ese color (con uv constante no hay
+ *  mipmaps que lo mezclen con el marco). */
+const SKY_GLASS_UV: [number, number] = (() => {
+  const r = cellRect('vidriera');
+  return [r.u0 + ((r.u1 - r.u0) * 0.6) / BAY_W, r.v0 + ((r.v1 - r.v0) * 1.3) / FLOOR_H];
+})();
+
+/**
+ * La tapa de los huecos del techo (D6, D13): de lejos, mientras el interior no se dibuja. Un hueco sin lucernario se
+ * tapa con el techo, plano y a la altura del techo (material `roof`). Uno con lucernario, con sus franjas (el tope y los
+ * costados de cada una, del alto que sobresalen) y el color del vidrio: en un lote, en el atlas del frente con el vidrio
+ * de la vidriera (la tapa de sus aberturas ya es de ese material: no suma mallas); si no, en `parapet`, con el vértice
+ * del color del vidrio.
+ */
+function roofTapa(bd: Building, roof: RoofCut, color: THREE.Color, tapa: (mat: keyof WorldMaterials) => () => Builder): void {
+  const lot = bd.front !== undefined;
+  const glass = lot ? new THREE.Color(1, 1, 1) : tintColor(SHOP_GLASS[1]);
+  for (const hole of roof.holes) {
+    const strips = roof.skylight.filter((s) => {
+      const c = s.polygon.reduce<Vec2>((a, p) => [a[0] + p[0] / s.polygon.length, a[1] + p[1] / s.polygon.length], [0, 0]);
+      return pointInPolygon(c, hole);
+    });
+    if (strips.length === 0) {
+      roofCap(tapa('roof')(), hole, bd.height, color);
+      continue;
+    }
+    const t = tapa(lot ? 'front' : 'parapet')();
+    const uv = (x: number, z: number): [number, number] => (lot ? SKY_GLASS_UV : [x / PLANAR_UV, z / PLANAR_UV]);
+    for (const s of strips) {
+      const poly = ensureCCW(s.polygon);
+      const base = t.pos.length / 3;
+      for (const [x, z] of poly) vert(t, [x, s.y1, z], [0, 1, 0], uv(x, z), glass);
+      triangulateUp(poly, base, t.idx);
+      poly.forEach((p, k) => {
+        const q = poly[(k + 1) % poly.length];
+        const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (len < 1e-6) return;
+        const n: [number, number, number] = [-(q[1] - p[1]) / len, 0, (q[0] - p[0]) / len];
+        quad(t, [[p[0], s.y0, p[1]], [q[0], s.y0, q[1]], [q[0], s.y1, q[1]], [p[0], s.y1, p[1]]],
+          [uv(p[0], s.y0), uv(q[0], s.y0), uv(q[0], s.y1), uv(p[0], s.y1)], n, glass);
+      });
+    }
+  }
 }
 
 /** La cáscara de sombra (H1) se mete esto (m) adentro: las paredes, SHELL_WALL_IN de su arista, y el techo, SHELL_ROOF_IN
@@ -68,7 +133,7 @@ function cornerAt(o: number, oOther: number, away: Vec2, m: Vec2, other: Vec2): 
  * Depende del sol (fijo). Desde afuera son caras de atrás; desde adentro quedan detrás de las paredes y la losa del
  * interior. Un rayo que cruza dos aberturas sigue pasando.
  */
-function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, Rect[]>, color: THREE.Color): void {
+function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, Rect[]>, color: THREE.Color, roofHoles: Vec2[][]): void {
   const n = fp.length;
   // dirección y normal hacia adentro de cada arista: adentro es −n, con n = (−ez, ex) la normal de afuera
   const dir = fp.map((a, i): Vec2 => {
@@ -82,7 +147,7 @@ function shadowShell(b: Builder, fp: Vec2[], height: number, holes: Map<number, 
   const start = (i: number): number => cornerAt(off[i], off[prev(i)], dir[i], inward[i], inward[prev(i)]);
   // el contorno de la cáscara: en cada vértice de fp, donde se cortan las dos aristas corridas
   const inner = fp.map((a, i): Vec2 => [a[0] + dir[i][0] * start(i) + inward[i][0] * off[i], a[1] + dir[i][1] * start(i) + inward[i][1] * off[i]]);
-  roofCap(b, inner, height - SHELL_ROOF_IN, color, true);
+  roofCap(b, inner, height - SHELL_ROOF_IN, color, true, roofHoles);
   for (let i = 0; i < n; i++) {
     if (!sunny[i]) continue;
     const a = fp[i], c = fp[next(i)];
@@ -167,9 +232,10 @@ export function wallMaterials(bd: Building): { ground: keyof WorldMaterials; upp
  * Un lote (`bd.front`) saca de ground/upper las aristas de su frente y su esquina: las dibuja `walls.front`.
  * Las paredes no dibujan nada adentro de `openings` (las aberturas de su interior, en cualquier arista): lo recortado
  * vuelve en `tapas`, una geometría por material de pared (wallMaterials, GROUND_MAT o `front`), para taparlas de lejos
- * (D6). Con aberturas, `roof` suma la cáscara de sombra (shadowShell).
+ * (D6). Con aberturas, `roof` suma la cáscara de sombra (shadowShell). Los huecos del techo de `cut` (D13) se abren en
+ * el techo y en la cáscara, y sus tapas van también a `tapas` (roofTapa).
  */
-export function extrudeBuilding(bd: Building, openings: readonly Opening[] = []): {
+export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [], cut: RoofCut = NO_CUT): {
   walls: { ground: THREE.BufferGeometry; upper: THREE.BufferGeometry; front: THREE.BufferGeometry; overrides: { ground: FacadeGround; geometry: THREE.BufferGeometry }[] };
   roof: THREE.BufferGeometry;
   parapet: THREE.BufferGeometry;
@@ -200,8 +266,8 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [])
   const holes = edgeHoles(bd.footprint, fp, edgeOf, openings);
 
   const rb = newBuilder(true);
-  roofCap(rb, fp, bd.height, color);
-  if (openings.length > 0) shadowShell(rb, fp, bd.height, holes, color);
+  roofCap(rb, fp, bd.height, color, false, cut.holes);
+  if (openings.length > 0) shadowShell(rb, fp, bd.height, holes, color, cut.holes);
   const mats = wallMaterials(bd);
   const tapaBuilders = new Map<keyof WorldMaterials, Builder>();
   const tapa = (mat: keyof WorldMaterials) => (): Builder => {
@@ -209,6 +275,7 @@ export function extrudeBuilding(bd: Building, openings: readonly Opening[] = [])
     if (!t) tapaBuilders.set(mat, (t = newBuilder(true)));
     return t;
   };
+  roofTapa(bd, cut, color, tapa);
   const walls = {
     ground: wallBand(fp, cum, 0, groundH, (i) => (own.has(i) || lotEdges.has(i) ? null : color), holes, tapa(mats.ground)),
     // edificio más bajo que un piso: sin banda superior (geometría vacía)
