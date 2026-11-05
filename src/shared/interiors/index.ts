@@ -7,6 +7,8 @@ import type { Vec2 } from '../geo.ts';
 import type { Building, InteriorInput, MapData } from '../mapdata.ts';
 import { LINTEL_MIN } from './openings.ts';
 import { bancoPlan } from './bancos.ts';
+import { cinePlan } from './cine.ts';
+import { guernicaPlan } from './guernica.ts';
 import { culturaPlan } from './cultura.ts';
 import { mcdonaldsPlan } from './mcdonalds.ts';
 import { venecianaPlan } from './veneciana.ts';
@@ -23,6 +25,8 @@ export const INTERIOR_PLANS: Partial<Record<string, InteriorPlan>> = {
   'casa-de-la-cultura': culturaPlan,
   mcdonalds: mcdonaldsPlan,
   'la-veneciana': venecianaPlan,
+  'cine-pixel': cinePlan,
+  'guernica-bar': guernicaPlan,
 };
 
 /** Los looks de la caja de un lugar sin plan. */
@@ -135,7 +139,8 @@ export function validateInterior(i: Interior): string[] {
   return out;
 }
 
-/** Los escalones de cada StairRun (los `escalon` cuyo medio cae a lo largo de su corrida), en orden de subida. */
+/** Los escalones de cada StairRun (los `escalon` y los `descanso` cuyo medio cae a lo largo de su corrida), en orden de
+ *  subida: contrahuellas ≤ RISER_MAX, huellas de TREAD (las de los descansos, no) y ancho ≥ STAIR_MIN_W. */
 function checkStairs(i: Interior, say: (m: string) => void): void {
   const runs = i.stairs.map((s) => {
     const [dx, dz] = [s.top[0] - s.foot[0], s.top[2] - s.foot[2]];
@@ -143,7 +148,7 @@ function checkStairs(i: Interior, say: (m: string) => void): void {
     return { s, len, d: [dx / len, dz / len] as Vec2, steps: [] as { along: number; b: Block }[] };
   });
   for (const b of i.blocks) {
-    if (b.role !== 'escalon') continue;
+    if (b.role !== 'escalon' && b.role !== 'descanso') continue;
     const c = centroid(b.polygon);
     let best: (typeof runs)[number] | null = null, bestLat = Infinity, bestAlong = 0;
     for (const r of runs) {
@@ -164,6 +169,7 @@ function checkStairs(i: Interior, say: (m: string) => void): void {
       if (rise > RISER_MAX + 1e-6) say(`${name}: contrahuella de ${fmt(rise)} m ${at} (a lo sumo ${fmt(RISER_MAX)})`);
     }
     steps.forEach((b, j) => {
+      if (b.role === 'descanso') return;
       const tread = extent(b.polygon, r.d);
       if (Math.abs(tread - TREAD) > 0.01) say(`${name}: huella de ${fmt(tread)} m en el escalón ${j + 1} (tiene que medir ${fmt(TREAD)})`);
     });

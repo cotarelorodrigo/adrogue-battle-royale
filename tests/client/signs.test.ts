@@ -230,3 +230,36 @@ describe('packSigns', () => {
     expect(r.rects.map((x) => x.page)).toEqual([0, 1, 2, 3, 4]);
   });
 });
+
+// La T9: la letra de otro color de un cartel (la P magenta de "CINES PIXEL") y los carteles que brillan ("GUERNICA")
+test('acento: los caracteres de desde a hasta van de su color, en su lugar del renglón; el resto, de la letra', () => {
+  const texts: { text: string; x: number; fill: string }[] = [];
+  let fill = '';
+  stubCanvas((prop, value) => { if (prop === 'fillStyle') fill = String(value); }, (method, args) => {
+    if (method === 'fillText') texts.push({ text: String(args[0]), x: Number(args[1]), fill });
+  });
+  signTexture('CINES PIXEL', look({ letra: '#ffffff', acento: { letra: '#e5007e', desde: 6, hasta: 7 } }), 9, 0.8);
+  expect(texts.map((t) => [t.text, t.fill])).toEqual([['CINES ', '#ffffff'], ['P', '#e5007e'], ['IXEL', '#ffffff']]);
+  expect(texts[0].x).toBeLessThan(texts[1].x);
+  expect(texts[1].x).toBeLessThan(texts[2].x);
+  // sin acento, un solo fillText con todo el texto
+  texts.length = 0;
+  signTexture('CINES PIXEL', look({ letra: '#ffffff' }), 9, 0.8);
+  expect(texts.map((t) => t.text)).toEqual(['CINES PIXEL']);
+});
+
+test('glow: los vértices de un cartel que brilla llevan glow = 1 y los demás 0; el material lo usa para la emisión', () => {
+  const g = buildSigns([], [sign(0, { glow: true }), sign(1)]);
+  const m = g.children[0] as THREE.Mesh;
+  const glow = m.geometry.getAttribute('glow');
+  expect(glow).toBeDefined();
+  const values = Array.from({ length: glow.count }, (_, k) => glow.getX(k));
+  expect(values.filter((v) => v === 1).length).toBe(values.length / 2);
+  expect(values.filter((v) => v === 0).length).toBe(values.length / 2);
+  const mat = m.material as THREE.Material;
+  const shader = { vertexShader: '#include <common>\nvoid main() {\n#include <begin_vertex>\n}', fragmentShader: '#include <common>\n#include <emissivemap_fragment>\n', uniforms: {} };
+  mat.onBeforeCompile(shader as never, undefined as never);
+  expect(shader.vertexShader).toMatch(/attribute float glow/);
+  expect(shader.fragmentShader).toMatch(/vGlow/);
+  expect(mat.customProgramCacheKey()).toMatch(/glow/);
+});

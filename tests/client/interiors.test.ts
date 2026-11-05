@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // El dibujo de los interiores (tarea 5): texturas, luz horneada, mallas, vistas, fachada con huecos y tapas, cambio de
 // calidad y liberación. Sobre el local de prueba de la tarea 4 (tests/shared/interiors/fixture.ts).
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { ADAPT_TIME, adapt, createEye, INDOOR_EXPOSURE, OUTDOOR_EXPOSURE } from '../../src/client/render/exposure.ts';
 import { QUALITY } from '../../src/client/render/quality.ts';
@@ -8,20 +9,23 @@ import { SUN_DIR } from '../../src/client/render/scene.ts';
 import { extrudeBuilding } from '../../src/client/world/geometry.ts';
 import { crosses, crossesConvex, hitsBox, lightAt, OPENING_MAX, prism } from '../../src/client/world/interiors/bake.ts';
 import { buildInterior3D, INTERIOR_EXPOSURE, MAX_MESHES } from '../../src/client/world/interiors/build.ts';
-import { exteriorGeometry, exteriorSigns } from '../../src/client/world/interiors/exterior.ts';
+import { exteriorGeometry, exteriorSigns, ownSignPlaces } from '../../src/client/world/interiors/exterior.ts';
 import { GLASS_INSIDE, GLASS_OUTSIDE, glassMaterial } from '../../src/client/world/interiors/glass.ts';
-import { ITEM_GLASS, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
+import { BUTACA_TELA, ITEM_GLASS, ITEM_MODELS } from '../../src/client/world/interiors/models.ts';
 import { interiorTextures } from '../../src/client/world/interiors/textures.ts';
 import { createInteriorViews } from '../../src/client/world/interiors/view.ts';
 import { buildPhotoFacades } from '../../src/client/world/photo-facades.ts';
 import { tintColor } from '../../src/client/world/wall-kit.ts';
 import type { InteriorKey, WorldMaterials } from '../../src/client/world/types.ts';
+import { CollisionWorld } from '../../src/shared/collision.ts';
 import { pointInPolygon, signedAreaFromAbove } from '../../src/shared/geo.ts';
 import type { Vec2, Vec3 } from '../../src/shared/geo.ts';
-import { Kit } from '../../src/shared/interiors/kit.ts';
+import { interiorOf } from '../../src/shared/interiors/index.ts';
+import { GROUND_Y, Kit } from '../../src/shared/interiors/kit.ts';
 import type { Interior } from '../../src/shared/interiors/types.ts';
 import type { Building, MapData, Opening } from '../../src/shared/mapdata.ts';
 import { LOOKS, testInterior } from '../shared/interiors/fixture.ts';
+import { seen } from './aces.ts';
 import { stubCanvas } from './canvas-stub.ts';
 
 beforeEach(() => stubCanvas());
@@ -204,6 +208,16 @@ describe('buildInterior3D', () => {
     const out = exteriorGeometry(i);
     expect(areaOf(triangles(out))).toBeCloseTo(10 * 1.2 + 2 * (10 + 1.2) * 0.2, 4); // tope y costados
     expect(Object.keys(out.attributes).sort()).toEqual(['color', 'normal', 'position', 'uv']);
+  });
+
+  test('un cartel out que brilla pasa el glow al Sign; uno con placeSign hace que el del lote de su lugar no se dibuje', () => {
+    const look = { fondo: '#26292b', letra: '#f2c14e', marco: '#26292b', fuente: 'condensada' as const };
+    const { interior: i } = testInterior({ extra: (k) => {
+      k.label('GUERNICA', [5, -0.06], 6, [0, -1], 6, 0.8, look, { out: true, glow: true, placeSign: true });
+      k.label('★', [1, -0.06], 6, [0, -1], 0.6, 0.6, look, { out: true, glow: true });
+    } });
+    expect(exteriorSigns(i).map((s) => [s.text, s.glow])).toEqual([['GUERNICA', true], ['★', true]]);
+    expect([...ownSignPlaces([i, testInterior().interior])]).toEqual(['prueba']);
   });
 });
 
@@ -827,5 +841,102 @@ describe('calidad y liberación', () => {
     const shared = new Set<unknown>(Object.values(m));
     expect(mat.mock.contexts.filter((x) => shared.has(x))).toEqual([]);
     expect(views.group.children).toHaveLength(0);
+  });
+});
+
+// La T9: el cine oscuro (§2.4) y el Guernica, sobre el mapa real
+describe('el cine oscuro (§2.4) y las botellas del Guernica', () => {
+  const map = JSON.parse(readFileSync('public/map/adrogue.map.json', 'utf8')) as MapData;
+  const cine = interiorOf(map, 'cine-pixel');
+  const butacas = cine.items.filter((it) => it.model === 'butaca');
+  const m = fakeMaterials();
+  const luma = ([r, g, b]: number[]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+  test('la luz horneada: sobre las butacas, en promedio ≤ 0,15; en el piso del hall, ≥ 0,6', () => {
+    expect(butacas.length).toBeGreaterThanOrEqual(40);
+    const avg = butacas.reduce((s, it) => s + lightAt(cine, [it.at[0], it.at[1] + 0.6, it.at[2]], [0, 1, 0]), 0) / butacas.length;
+    expect(avg).toBeLessThanOrEqual(0.15);
+    const h = cine.marks.hall;
+    expect(lightAt(cine, [h[0], h[1] + GROUND_Y, h[2]], [0, 1, 0])).toBeGreaterThanOrEqual(0.6);
+  });
+
+  test('las butacas van en una sola InstancedMesh (≥ 40 instancias), en media y en alta', () => {
+    for (const q of ['media', 'alta'] as const) {
+      const meshes = meshesOf(buildInterior3D(cine, m, q).group).filter((x): x is THREE.InstancedMesh => x instanceof THREE.InstancedMesh);
+      expect(meshes.filter((x) => x.count === butacas.length), q).toHaveLength(1);
+    }
+  });
+
+  /**
+   * Lo que se ve desde ultima-fila, de pie, mirando la pantalla de la sala grande, con la ACES a INDOOR_EXPOSURE (el ojo
+   * adaptado a lo más claro que da adentro): un rayo por píxel de una grilla de 96 × 54 sobre el cuadro de la cámara del
+   * juego (75° de alto, 16:9; las tiras y las narices de los escalones son finitas: con menos rayos se pierden). Cada rayo pega en el primer bloque con algo dibujado (el vidrio y lo que no se ve, no); su
+   * luma sale de la luz horneada en ese punto (o 1, si brilla) y del color de la cara (en una butaca, su tela).
+   */
+  test('desde ultima-fila la sala grande se ve oscura: la pantalla apagada, las tiras y los escalones brillan, las butacas apenas se leen', () => {
+    const shown = cine.blocks.map((b, k) => ({ b, k })).filter(({ b }) => b.role === 'mueble' || ((b.top || b.side || b.bottom) && b.top?.mat !== 'vidrio' && b.side?.mat !== 'vidrio'));
+    const xs = shown.flatMap(({ b }) => b.polygon.map((p) => p[0])), zs = shown.flatMap(({ b }) => b.polygon.map((p) => p[1]));
+    const world = new CollisionWorld(shown.map(({ b, k }) => ({ polygon: b.polygon, minY: b.y0, maxY: b.y1, tag: String(k) })), [],
+      { minX: Math.min(...xs) - 1, maxX: Math.max(...xs) + 1, minZ: Math.min(...zs) - 1, maxZ: Math.max(...zs) + 1 });
+    const seat = new Map(butacas.map((it) => [`${it.at[0].toFixed(2)},${it.at[2].toFixed(2)}`, it]));
+    const u = cine.marks['ultima-fila'], g = cine.marks['sala-grande'];
+    const eye: Vec3 = [u[0], u[1] + 1.6, u[2]];
+    // mirando la pantalla: hacia sala-grande (delante de ella), a la altura de su medio (≈ 4 m)
+    const fwd = new THREE.Vector3(g[0] - eye[0], 4 - eye[1], g[2] - eye[2]).normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, fwd);
+    const ty = Math.tan((75 / 2) * Math.PI / 180), tx = ty * 16 / 9;
+    const kinds: Record<'pantalla' | 'brilla' | 'butaca' | 'resto', number[]> = { pantalla: [], brilla: [], butaca: [], resto: [] };
+    for (let r = 0; r < 54; r++) for (let c = 0; c < 96; c++) {
+      const dx = ((c + 0.5) / 96 * 2 - 1) * tx, dy = (1 - (r + 0.5) / 54 * 2) * ty;
+      const d = fwd.clone().addScaledVector(right, dx).addScaledVector(up, dy).normalize();
+      const hit = world.raycast(eye, [d.x, d.y, d.z], 80);
+      if (!hit) { kinds.resto.push(0); continue; }
+      const b = cine.blocks[Number(hit.tag)];
+      const n = hit.normal;
+      const p: Vec3 = [hit.point[0] + n[0] * 0.01, hit.point[1] + n[1] * 0.01, hit.point[2] + n[2] * 0.01];
+      if (b.role === 'mueble') {
+        const c0 = b.polygon.reduce((s, q) => [s[0] + q[0] / b.polygon.length, s[1] + q[1] / b.polygon.length], [0, 0]);
+        const it = seat.get(`${c0[0].toFixed(2)},${c0[1].toFixed(2)}`);
+        const light = lightAt(cine, [c0[0], b.y0 + 0.6, c0[1]], [0, 1, 0]);
+        (it ? kinds.butaca : kinds.resto).push(luma(seen(it ? BUTACA_TELA : '#808080', light * INTERIOR_EXPOSURE)));
+        continue;
+      }
+      const look = n[1] > 0.5 ? b.top : n[1] < -0.5 ? b.bottom : b.side;
+      if (!look) { kinds.resto.push(0); continue; }
+      if (look.mat === 'luz') {
+        const big = (b.y1 - b.y0) > 3;
+        (big ? kinds.pantalla : kinds.brilla).push(luma(seen(look.color, 1)));
+        continue;
+      }
+      kinds.resto.push(luma(seen(look.color, lightAt(cine, p, n) * INTERIOR_EXPOSURE)));
+    }
+    const all = Object.values(kinds).flat();
+    const mean = (a: number[]): number => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);
+    const report = Object.entries(kinds).map(([k, a]) => `${k}: ${a.length} rayos, luma media ${mean(a).toFixed(1)}`).join('; ');
+    // la pantalla se ve (un gris claro apagado: brilla poco) y ocupa buena parte del cuadro
+    expect(kinds.pantalla.length, report).toBeGreaterThan(320);
+    expect(mean(kinds.pantalla), report).toBeGreaterThanOrEqual(35);
+    expect(mean(kinds.pantalla), report).toBeLessThanOrEqual(110);
+    // las tiras ámbar y las luces de los escalones brillan
+    expect(kinds.brilla.length, report).toBeGreaterThan(12);
+    expect(mean(kinds.brilla), report).toBeGreaterThanOrEqual(100);
+    // las butacas apenas se leen: no son negro puro, pero quedan muy oscuras
+    expect(kinds.butaca.length, report).toBeGreaterThan(400);
+    expect(mean(kinds.butaca), report).toBeGreaterThanOrEqual(2);
+    expect(mean(kinds.butaca), report).toBeLessThanOrEqual(25);
+    // y el resto (paredes, gradas, cielorraso) casi negro: la sala, en conjunto, oscura
+    expect(mean(kinds.resto), report).toBeLessThanOrEqual(12);
+    expect(mean(all), report).toBeLessThanOrEqual(30);
+  });
+
+  test('las botellas del Guernica son de detalle 2: en baja no se dibujan (lo mismo que sin ellas); en media, sí', () => {
+    const gb = interiorOf(map, 'guernica-bar');
+    expect(gb.items.filter((it) => it.model === 'botella').length).toBeGreaterThanOrEqual(30);
+    const sin = { ...gb, items: gb.items.filter((it) => it.model !== 'botella') };
+    const tris = (i: Interior, q: 'baja' | 'media'): number => meshesOf(buildInterior3D(i, m, q).group)
+      .reduce((s, x) => s + ((x.geometry.index?.count ?? x.geometry.getAttribute('position').count) / 3) * (x instanceof THREE.InstancedMesh ? x.count : 1), 0);
+    expect(tris(gb, 'baja')).toBe(tris(sin, 'baja'));
+    expect(tris(gb, 'media')).toBeGreaterThan(tris(sin, 'media'));
   });
 });

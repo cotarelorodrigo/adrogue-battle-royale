@@ -611,6 +611,9 @@ export function parapetEdges(fp: Vec2[]): ParapetEdge[] {
   return out;
 }
 
+/** El tronco de un árbol: el octógono de TRUNK_R hasta trunkHeight. */
+const treePrism = (t: Tree): Prism => ({ polygon: octagon(t.position, TRUNK_R), minY: 0, maxY: trunkHeight(t), tag: 'tree' });
+
 function octagon([cx, cz]: Vec2, r: number): Vec2[] {
   const out: Vec2[] = [];
   for (let k = 0; k < 8; k++) {
@@ -635,11 +638,15 @@ export type CollisionMap = Pick<MapData, 'buildings' | 'platforms' | 'trees' | '
   interiors?: InteriorInput[];
 };
 
-/** Los sólidos de un interior: los bloques que colisionan, con el tag de su edificio o, los de vidrio, `glass:<id>`. */
+/** Los sólidos de un interior: los bloques que colisionan, con el tag de su edificio o, los de vidrio, `glass:<id>`; y
+ *  el tronco de cada árbol de sus patios, como el de cualquier árbol del mapa. */
 export function interiorPrisms(i: Interior): Prism[] {
-  return i.blocks.filter((b) => b.collide !== 'none').map((b): Prism => ({
-    polygon: b.polygon, minY: b.y0, maxY: b.y1, tag: b.collide === 'glass' ? `${GLASS_TAG}${i.buildingId}` : i.buildingId,
-  }));
+  return [
+    ...i.blocks.filter((b) => b.collide !== 'none').map((b): Prism => ({
+      polygon: b.polygon, minY: b.y0, maxY: b.y1, tag: b.collide === 'glass' ? `${GLASS_TAG}${i.buildingId}` : i.buildingId,
+    })),
+    ...i.trees.map(treePrism),
+  ];
 }
 
 /** Los sólidos y las escaleras del mapa. Tags: el id del edificio (y de lo macizo de su interior), `glass:<id>` en sus
@@ -659,7 +666,7 @@ export function collisionPrisms(map: CollisionMap): { prisms: Prism[]; ladders: 
   }
   for (const p of map.platforms) prisms.push({ polygon: p, minY: 0, maxY: PLATFORM_H, tag: 'platform' });
   for (const p of stationPosts(map)) prisms.push({ polygon: octagon(p.at, p.r), minY: p.y0, maxY: p.y1, tag: 'station-post' });
-  for (const t of map.trees) prisms.push({ polygon: octagon(t.position, TRUNK_R), minY: 0, maxY: trunkHeight(t), tag: 'tree' });
+  for (const t of map.trees) prisms.push(treePrism(t));
   for (const p of map.props) {
     switch (p.kind) {
       case 'ladder':

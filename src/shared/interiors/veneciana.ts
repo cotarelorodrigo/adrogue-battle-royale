@@ -15,7 +15,6 @@
 import { ensureCCW, insetRing } from '../geo.ts';
 import type { Vec2, Vec3 } from '../geo.ts';
 import type { SignLook } from '../mapdata.ts';
-import { barra } from './cultura.ts';
 import type { InteriorPlan } from './index.ts';
 import { GROUND_Y, RAIL_H, RAIL_T, TREAD } from './kit.ts';
 import type { Kit } from './kit.ts';
@@ -133,8 +132,7 @@ export const venecianaPlan: InteriorPlan = (k) => {
 
   // ---- la escalera a la terraza, contra el costado sur, con su baranda blanca de caño del lado del salón
   const foot = L(ESCALERA.d0, ESCALERA.p);
-  k.stair({ from: 0, to: 1, foot, dir: m.D, width: ESCALERA.w, look: CERAMICO, rail: CAÑO, railStyle: { caño: true, out: true }, approach: ESCALERA.antes });
-  barandaDeEscalera(k, m, ESCALERA.d0, ESCALERA.p + ESCALERA.w / 2 - RAIL_T / 2, 0, H, TECHO);
+  k.stair({ from: 0, to: 1, foot, dir: m.D, width: ESCALERA.w, look: CERAMICO, rail: CAÑO, railStyle: { caño: true, out: true }, approach: ESCALERA.antes, handrail: 'izq' });
 
   // ---- la terraza: la baranda de caño todo alrededor, contra el pretil
   const anillo = insetRing(ensureCCW(k.inside), RAIL_T / 2, 2);
@@ -218,30 +216,6 @@ export const venecianaPlan: InteriorPlan = (k) => {
   return k.done(AMBIENT);
 };
 
-/** La baranda del costado de la escalera que da al salón, sobre el borde de las huellas (adentro del hueco): un paño de
- *  clase glass (que no se ve) por escalón, y la de caño blanca en pendiente: el pasamanos y un caño intermedio (barras)
- *  y un parante cada tres escalones. `p` es la línea de la baranda (de través), de y0 a y1. Los paños llegan hasta el
- *  cielorraso (`techo`): más arriba, el costado lo cierra la losa del techo, que el cuerpo ya toca. */
-function barandaDeEscalera(k: Kit, m: Marco, d0: number, p: number, y0: number, y1: number, techo: number): void {
-  const n = Math.ceil((y1 - y0) / 0.2 - 1e-9), r = (y1 - y0) / n, t = RAIL_T / 2;
-  const L = (d: number, q: number): Vec2 => add(add(m.S0, m.D, d), m.P, q);
-  const nariz = (s: number): number => y0 + r + (s * r) / TREAD;
-  for (let i = 1; i < n; i++) {
-    const [s0, s1] = [d0 + (i - 1) * TREAD - t, d0 + i * TREAD + t];
-    if (y0 + i * r + RAIL_H <= techo + 1e-6) k.block([L(s0, p - t), L(s1, p - t), L(s1, p + t), L(s0, p + t)], y0 + i * r, y0 + i * r + RAIL_H, 'glass', 'baranda', {});
-    if ((i - 1) % 3 === 0 || i === n - 1) {
-      const c = L(d0 + (i - 0.5) * TREAD, p), h = 0.0225;
-      k.block([add(c, [-h, -h]), add(c, [h, -h]), add(c, [h, h]), add(c, [-h, h])], y0 + i * r, nariz((i - 0.5) * TREAD) + 0.88, 'none', 'otro', { side: CAÑO, top: CAÑO });
-    }
-  }
-  const fin = (n - 1) * TREAD;
-  const [a, b] = [L(d0, p), L(d0 + fin, p)];
-  for (const [alto, h] of [[0.9, 0.045], [0.45, 0.04]] as const) {
-    const pa: Vec3 = [a[0], nariz(0) + alto, a[1]], pb: Vec3 = [b[0], nariz(fin) + alto, b[1]];
-    barra(k, pa, pb, h, h, CAÑO, { puntas: true });
-  }
-}
-
 /** El vidrio de la vitrina de helados, de D d0 a d1 sobre el mostrador (de través, de pm0, el lado de los clientes, a
  *  pm1): el frente en dos franjas inclinadas, la tapa y las puntas, de vidrio (paños: se ven de los dos lados), con los
  *  perfiles de acero en los bordes; lo que frena son dos bloques de vidrio sin dibujo (el frente y la tapa). */
@@ -264,8 +238,8 @@ function vitrina(k: Kit, m: Marco, d0: number, d1: number, pm0: number, pm1: num
   }
   // los perfiles: a lo largo, en el pie, el quiebre y los dos bordes de la tapa; de través, en las puntas y en el medio;
   // y los parantes de atrás, en las puntas
-  for (const c of [pie, q, top, back]) barra(k, at(d0, c), at(d1, c), perfil, perfil, ACERO, { puntas: true });
-  for (const d of [d0, (d0 + d1) / 2, d1]) for (const [a, b] of [[pie, q], [q, top], [top, back]] as const) barra(k, at(d, a), at(d, b), perfil, perfil, ACERO);
+  for (const c of [pie, q, top, back]) k.bar(at(d0, c), at(d1, c), perfil, perfil, ACERO, { ends: true });
+  for (const d of [d0, (d0 + d1) / 2, d1]) for (const [a, b] of [[pie, q], [q, top], [top, back]] as const) k.bar(at(d, a), at(d, b), perfil, perfil, ACERO);
   const h = perfil / 2;
   for (const d of [d0, d1]) k.block([L(d - h, back[0] - h), L(d + h, back[0] - h), L(d + h, back[0] + h), L(d - h, back[0] + h)], y0, alto, 'none', 'otro', { side: ACERO });
   // lo que frena: el frente (hasta el borde de arriba) y la tapa

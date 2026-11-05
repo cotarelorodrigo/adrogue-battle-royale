@@ -38,7 +38,7 @@ import { createHud, FpsMeter } from './ui/hud.ts';
 import { createOverlay, showFatal } from './ui/overlay.ts';
 import type { Overlay } from './ui/overlay.ts';
 import { buildChunks } from './world/chunks.ts';
-import { exteriorSigns } from './world/interiors/exterior.ts';
+import { exteriorSigns, ownSignPlaces } from './world/interiors/exterior.ts';
 import { createInteriorViews } from './world/interiors/view.ts';
 import { buildMonuments, buildStation } from './world/landmarks.ts';
 import { createMaterials, disposeMaterials } from './world/materials.ts';
@@ -226,7 +226,9 @@ async function run(boot: Boot): Promise<void> {
   const warmInteriors = (): void => void scene.compile(interiorViews.group).catch((e: unknown) => console.warn('No se precompilaron los interiores:', e));
   warmInteriors();
   const outSigns = interiors.flatMap(exteriorSigns); // la geometría de afuera ya va en el chunk
-  const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark);
+  // el cartel del lote no va donde el interior pone el suyo (la marquesina del cine, la chapa del Guernica)
+  const ownSign = ownSignPlaces(interiors);
+  const trees = buildTrees(map.trees, QUALITY[quality].treeDensity, bark, interiors.flatMap((i) => i.trees)); // y los de los patios
   // Las fotos (~1,7 MB y la rectificación) se suman cuando llegan: el juego no las espera. Se recortan en las aberturas
   // de los interiores, y lo recortado tapa los huecos de lejos.
   const photoOpenings = new Map(map.interiors.map((i) => [i.placeId, i.openings]));
@@ -244,7 +246,7 @@ async function run(boot: Boot): Promise<void> {
     buildStation(map, materials),
     buildParks(map, materials),
     buildMonuments(map.props, map.places),
-    buildSigns(map.places, [...map.signs, ...outSigns]),
+    buildSigns(map.places.filter((p) => !ownSign.has(p.id)), [...map.signs, ...outSigns]),
     ...trees,
     ...climbProps,
   ]);

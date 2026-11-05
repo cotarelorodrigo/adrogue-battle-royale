@@ -47,10 +47,17 @@ export function exteriorGeometry(i: Interior): THREE.BufferGeometry {
   return toGeometry(b);
 }
 
-/** Los carteles `out` del interior, como Sign del mapa (los dibuja buildSigns con los demás), de su alto. */
+/** Los carteles `out` del interior, como Sign del mapa (los dibuja buildSigns con los demás), de su alto; los que
+ *  brillan, con `glow`. */
 export const exteriorSigns = (i: Interior): Sign[] => i.labels.filter((l) => l.out).map((l): Sign => ({
   text: l.text, anchor: [l.at[0], l.at[2]], normal: l.normal, width: l.width, bottomY: l.at[1] - l.height / 2, height: l.height, look: l.look,
+  ...(l.glow ? { glow: true as const } : {}),
 }));
+
+/** Los lugares cuyo interior trae su propio cartel (un `out` con placeSign): el del lote (Place.sign) no se dibuja, así
+ *  no queda uno encima del otro. Place.sign sigue en el mapa: de él salen el botín y el spawn del frente. */
+export const ownSignPlaces = (interiors: Interior[]): Set<string> =>
+  new Set(interiors.filter((i) => i.labels.some((l) => l.out && l.placeSign)).map((i) => i.placeId));
 
 /** Lo que el interior le abre al techo de su edificio (D13): sus huecos y los paños de vidrio del lucernario que los
  *  tapan desde arriba del techo (los Pane `sky` de vidrio), para extrudeBuilding. */

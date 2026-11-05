@@ -99,6 +99,19 @@ describe('árboles', () => {
     for (const mesh of a) expect(mesh.boundingSphere).toBeNull(); // se recalcula con las instancias que quedan
   });
 
+  // Tarea 9: los árboles de los patios de los interiores (Interior.trees) van con los del mapa, pero se dibujan siempre:
+  // su tronco sólido está en cualquier calidad y un tronco invisible en un patio sería una pared fantasma.
+  test('los árboles fijos (los de los patios) van en las mismas mallas y se dibujan con cualquier densidad', () => {
+    const pinned: Tree[] = [{ position: [-299, -239], variant: 2, scale: 0.62 }, { position: [5, 5], variant: 2, scale: 0.62 }];
+    const ms = buildTrees(trees, 0, undefined, pinned);
+    expect(ms).toHaveLength(buildTrees(trees, 1).length); // sin celdas ni mallas nuevas
+    for (const part of ['trunk', 'crown'] as const) expect(drawn(ms, part)).toEqual(new Set(['-299,-239', '5,5']));
+    setTreeDensity(ms, 0.5);
+    expect(drawn(ms, 'crown')).toEqual(new Set([...expected(0.5), '-299,-239', '5,5']));
+    setTreeDensity(ms, 1);
+    expect(instances(ms, 'trunk')).toBe(2002);
+  });
+
   test('cada copa tiene el tamaño de su variante y su tercio del atlas de hojas', () => {
     const ms = buildTrees(trees, 1);
     const byPos = new Map(trees.map((t) => [`${t.position[0]},${t.position[1]}`, t]));

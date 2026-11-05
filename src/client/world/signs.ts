@@ -92,8 +92,36 @@ export function signTexture(text: string, look: Look, width: number, height = SI
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const step = px * 1.1;
-  lines.forEach((line, i) => ctx.fillText(line, w / 2, h / 2 + (i - (lines.length - 1) / 2) * step + px * 0.04));
+  let start = 0; // dónde empieza cada línea en el texto (las separa un espacio)
+  lines.forEach((line, i) => {
+    const y = h / 2 + (i - (lines.length - 1) / 2) * step + px * 0.04;
+    const runs = look.acento ? accentRuns(line, start, look) : [];
+    start += line.length + 1;
+    if (runs.length < 2) {
+      if (runs.length === 1) ctx.fillStyle = runs[0].color;
+      ctx.fillText(line, w / 2, y);
+      return;
+    }
+    // con acento: los tramos uno detrás del otro, desde la punta izquierda de la línea centrada
+    ctx.textAlign = 'left';
+    let x = w / 2 - ctx.measureText(line).width / 2;
+    for (const r of runs) {
+      ctx.fillStyle = r.color;
+      ctx.fillText(r.text, x, y);
+      x += ctx.measureText(r.text).width;
+    }
+    ctx.textAlign = 'center';
+  });
   return c;
+}
+
+/** Los tramos de una línea (que empieza en `start` del texto) con su color: el del acento de `desde` a `hasta` y el de
+ *  la letra en el resto. */
+function accentRuns(line: string, start: number, look: Look): { text: string; color: string }[] {
+  const a = look.acento!, a0 = Math.max(0, a.desde - start), a1 = Math.min(line.length, a.hasta - start);
+  if (a1 <= a0) return [];
+  return [{ text: line.slice(0, a0), color: look.letra }, { text: line.slice(a0, a1), color: a.letra }, { text: line.slice(a1), color: look.letra }]
+    .filter((r) => r.text.length > 0);
 }
 
 export interface AtlasRect { page: number; x: number; y: number; w: number; h: number }
@@ -133,12 +161,31 @@ export function signGeometry(width: number, twoSided = false, height = SIGN_H): 
   return g;
 }
 
-/** Lambert con un poco de emisión: se lee también en la fachada a la sombra (los carteles suelen ser luminosos). */
-export function signMaterial(canvas: HTMLCanvasElement): THREE.Material {
+/** La emisión de un cartel: la de todos y la de uno que brilla (Sign.glow), que además toma menos luz del sol (así, a
+ *  pleno sol, no se quema). */
+const EMISSIVE = 0.3, GLOW_EMISSIVE = 1.0, GLOW_DIFFUSE = 0.35;
+
+/** Lambert con un poco de emisión: se lee también en la fachada a la sombra (los carteles suelen ser luminosos). Con
+ *  `glow`, lee el atributo `glow` de cada vértice (0 o 1: buildSigns) y en los que brillan sube la emisión a
+ *  GLOW_EMISSIVE: el mismo material y la misma malla, sin draw calls de más. */
+export function signMaterial(canvas: HTMLCanvasElement, glow = false): THREE.Material {
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
   map.anisotropy = 4; // three lo limita al máximo del equipo; ayuda a leer el cartel en ángulo desde la vereda
-  return new THREE.MeshLambertMaterial({ map, emissive: 0xffffff, emissiveMap: map, emissiveIntensity: 0.3 });
+  const m = new THREE.MeshLambertMaterial({ map, emissive: 0xffffff, emissiveMap: map, emissiveIntensity: EMISSIVE });
+  if (!glow) return m;
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float glow;\nvarying float vGlow;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlow = glow;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vGlow;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+\ttotalEmissiveRadiance *= mix( 1.0, ${(GLOW_EMISSIVE / EMISSIVE).toFixed(4)}, vGlow );
+\tdiffuseColor.rgb *= mix( 1.0, ${GLOW_DIFFUSE.toFixed(4)}, vGlow );`);
+  };
+  m.customProgramCacheKey = () => 'sign-glow';
+  return m;
 }
 
 const lookOf = (s: Sign, type?: PlaceType): Look => (s.look ? { ...s.look, weight: 'bold' } : TYPE_LOOK[type ?? 'plaza']);
@@ -172,6 +219,7 @@ export function buildSigns(places: Place[], signs: Sign[]): THREE.Group {
     const len = Math.hypot(normal[0], normal[1]) || 1;
     const nx = normal[0] / len, nz = normal[1] / len;
     const g = signGeometry(width, !!blade, height);
+    g.setAttribute('glow', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(sign.glow ? 1 : 0), 1));
     // UV del cartel (0..1) → su rectángulo de la página (v hacia arriba; el canvas cuenta y hacia abajo)
     const uv = g.getAttribute('uv');
     for (let k = 0; k < uv.count; k++) {
@@ -185,7 +233,7 @@ export function buildSigns(places: Place[], signs: Sign[]): THREE.Group {
     geos[r.page].push(g);
   });
   geos.forEach((list, i) => {
-    const mesh = new THREE.Mesh(mergeGeometries(list, false), signMaterial(pageCanvases[i]));
+    const mesh = new THREE.Mesh(mergeGeometries(list, false), signMaterial(pageCanvases[i], true));
     list.forEach((g) => g.dispose());
     mesh.name = `signs:${i}`;
     mesh.receiveShadow = true;

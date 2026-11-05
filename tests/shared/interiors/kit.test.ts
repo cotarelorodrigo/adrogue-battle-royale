@@ -1,6 +1,6 @@
 import { analyzeGround, exitPockets } from '../../../src/mapgen/pockets.ts';
 import { isFreeSpot } from '../../../src/mapgen/spawns.ts';
-import { CollisionWorld, interiorPrisms } from '../../../src/shared/collision.ts';
+import { CollisionWorld, TRUNK_R, interiorPrisms, trunkHeight } from '../../../src/shared/collision.ts';
 import type { Prism } from '../../../src/shared/collision.ts';
 import { hitscan } from '../../../src/shared/combat.ts';
 import { SIM_HZ } from '../../../src/shared/fixed-step.ts';
@@ -302,6 +302,161 @@ describe('escalera', () => {
   });
 });
 
+// H9 de la revisión de la T8: el pasamanos en pendiente de una escalera lo pone el kit (antes, una copia en cada plan)
+describe('pasamanos de escalera (handrail)', () => {
+  const VIDRIO = { mat: 'vidrio', color: '#b8d0d6' } as const, NEGRO = { mat: 'liso', color: '#1b1b1c' } as const;
+  const BLANCO = { mat: 'metal', color: '#f2f2ef' } as const;
+  // la del fixture: de 1,2 m contra la pared de x = 10, sube hacia +z desde z = 4; subiendo, la izquierda es +x (la pared)
+  // y la derecha −x (el local, con la losa del piso 1 al lado)
+  const conPasamanos = (o: Partial<Parameters<Kit['stair']>[0]>) => testInterior({ publicFloors: 2, extra: (k) => k.stair({
+    from: 0, to: 1, foot: [9.2, 4], dir: [0, 1], width: 1.2, look: LOOKS.escalera, rail: VIDRIO, ...o }) });
+  const cx = (x: { polygon: Vec2[] }): number => x.polygon.reduce((t, p) => t + p[0], 0) / x.polygon.length;
+  const enEscalon = (x: Block): boolean => x.role === 'baranda' && x.y0 > 0.1 && x.y0 < 3.1;
+  // 16 contrahuellas de 0,2 y 15 escalones: la nariz del k (1..15) está a z = 4 + (k − 1) · 0,3 y a 0,2 · k; la de la
+  // llegada, a 4 + 15 · 0,3 y 3,2
+  const nose = (z: number): number => 0.2 + ((z - 4) * 0.2) / TREAD;
+  /** Las caras de arriba de las barras en pendiente de `color` (largas: las tapas de las puntas también miran un poco
+   *  para arriba). */
+  const barTops = (i: Interior, color: string) => i.panes.filter((p) => p.look.color === color && p.normal[1] > 0.3 && p.normal[1] < 0.99
+    && Math.max(...p.corners.map((q) => q[2])) - Math.min(...p.corners.map((q) => q[2])) > 1);
+
+  test('der, de vidrio: un paño por escalón sobre el borde de la huella (adentro del ancho) y el pasamanos de handrailLook a 0,93 m de las narices', () => {
+    const { interior: i } = conPasamanos({ handrail: 'der', handrailLook: NEGRO });
+    const panes = i.blocks.filter(enEscalon);
+    for (const x of panes) {
+      expect(x.collide).toBe('glass');
+      expect(x.y1 - x.y0).toBeCloseTo(RAIL_H, 9);
+      expect(cx(x)).toBeCloseTo(8.6 + RAIL_T / 2, 6);
+      expect(x.side?.color).toBe(VIDRIO.color);
+    }
+    // del lado del local, la losa del piso 1 (de 3,0 a 3,2) tapa el costado: van los paños que entran abajo de ella
+    // (0,2 · k + 1,0 ≤ 3,0) y los de más arriba no (el último, a 3,0, la tiene al lado)
+    expect(panes.map((x) => +x.y0.toFixed(3)).sort((p, q) => p - q)).toEqual([...Array(10).keys()].map((k) => +(0.2 * (k + 1)).toFixed(3)));
+    const tops = barTops(i, NEGRO.color);
+    expect(tops).toHaveLength(1);
+    for (const q of tops[0].corners) {
+      expect(q[0]).toBeGreaterThan(8.6 - 0.011);
+      expect(q[0]).toBeLessThan(8.6 + 0.08);
+      within(q[1] - nose(q[2]), 0.93, 0.005);
+    }
+    const zs = tops[0].corners.map((q) => q[2]);
+    within(Math.min(...zs), 4, 0.01);
+    within(Math.max(...zs), 4 + 15 * TREAD, 0.01);
+    // los parantes: cada tres escalones y en el último, del color del pasamanos, hasta abajo del pasamanos
+    const posts = i.blocks.filter((x) => x.collide === 'none' && x.side?.color === NEGRO.color);
+    expect(posts.map((x) => +x.y0.toFixed(3)).sort((p, q) => p - q)).toEqual([0.2, 0.8, 1.4, 2, 2.6, 3]);
+    for (const x of posts) within(x.y1 - nose((Math.min(...x.polygon.map((p) => p[1])) + Math.max(...x.polygon.map((p) => p[1]))) / 2), 0.87, 0.005);
+    // del lado de la pared, nada
+    expect(i.blocks.filter((x) => enEscalon(x) && cx(x) > 9)).toHaveLength(0);
+    expect(validateInterior(i)).toEqual([]);
+  });
+
+  test('izq va del otro lado (contra la pared: sin losa al lado, todos los paños) y ambos, de los dos', () => {
+    const izq = conPasamanos({ handrail: 'izq', handrailLook: NEGRO }).interior.blocks.filter(enEscalon);
+    expect(izq).toHaveLength(15);
+    for (const x of izq) expect(cx(x)).toBeCloseTo(9.8 - RAIL_T / 2, 6);
+    const ambos = conPasamanos({ handrail: 'ambos', handrailLook: NEGRO }).interior;
+    expect(ambos.blocks.filter(enEscalon)).toHaveLength(25);
+    expect(barTops(ambos, NEGRO.color)).toHaveLength(2);
+    // sin handrail, como antes: ningún paño sobre los escalones
+    expect(conPasamanos({}).interior.blocks.filter(enEscalon)).toHaveLength(0);
+  });
+
+  test('de caño (railStyle): los paños frenan y no se ven; se ven el pasamanos (0,9) y un intermedio (0,45) del color de rail, y los parantes', () => {
+    const { interior: i } = conPasamanos({ rail: BLANCO, railStyle: { caño: true }, handrail: 'der' });
+    const panes = i.blocks.filter(enEscalon);
+    expect(panes).toHaveLength(10);
+    for (const x of panes) {
+      expect(x.collide).toBe('glass');
+      expect(x.side).toBeUndefined();
+      expect(x.top).toBeUndefined();
+    }
+    const tops = barTops(i, BLANCO.color);
+    expect(tops).toHaveLength(2);
+    const alturas = tops.map((p) => +(p.corners[0][1] - nose(p.corners[0][2])).toFixed(3)).sort((p, q) => p - q);
+    expect(alturas).toEqual([0.45, 0.9]);
+    const posts = i.blocks.filter((x) => x.collide === 'none' && x.side?.color === BLANCO.color && x.y0 > 0.1 && x.y0 < 3.1
+      && Math.max(...x.polygon.map((p) => p[1])) - Math.min(...x.polygon.map((p) => p[1])) < 0.1);
+    expect(posts).toHaveLength(6);
+    for (const x of posts) expect(x.top?.color).toBe(BLANCO.color);
+  });
+
+  test('con pasamanos de los dos lados se sube y se baja igual', () => {
+    const { interior: i, world } = conPasamanos({ handrail: 'ambos', handrailLook: NEGRO });
+    const [s] = i.stairs;
+    const up = climbStair(world, s);
+    within(up.pos[1], 3.2);
+    expect(up.onGround && up.mode === 'walk', where(up)).toBe(true);
+    const down = climbStair(world, s, true);
+    within(down.pos[1], 0);
+    expect(down.onGround && down.mode === 'walk', where(down)).toBe(true);
+  });
+});
+
+// Las gradas de un cine (T9): un tramo adentro de un nivel (rise, sin hueco) con descansos (landings)
+describe('tramo adentro de un nivel, con descansos (gradas)', () => {
+  const CAÑO = { mat: 'metal', color: '#2a2a2c' } as const;
+  // de 1,2 m contra la pared de x = 10, sube 1,2 m hacia +z desde z = 4: escalón (0,3), descanso (0,85), escalón…; arriba,
+  // una plataforma a 1,2 m (la última grada) hasta el fondo
+  const grada = (o: Partial<Parameters<Kit['stair']>[0]> = {}) => testInterior({ extra: (k) => {
+    k.stair({ from: 0, to: 0, rise: 1.2, landings: { every: 2, length: 0.85 }, foot: [9.2, 4], dir: [0, 1], width: 1.2, look: LOOKS.escalera, ...o });
+    k.block([[8.6, 4 + 3 * TREAD + 2 * 0.85], [9.8, 4 + 3 * TREAD + 2 * 0.85], [9.8, 14.8], [8.6, 14.8]], 0, 1.2, 'solid', 'otro', { top: LOOKS.escalera, side: LOOKS.escalera });
+  } });
+
+  test('6 contrahuellas de 0,2: escalones de 0,3 y descansos de 0,85 alternados, sin hueco en el techo, y su StairRun en el nivel 0', () => {
+    const { interior: i } = grada();
+    const steps = i.blocks.filter((x) => x.role === 'escalon' || x.role === 'descanso')
+      .map((x) => ({ role: x.role, y: +x.y1.toFixed(3), z0: +Math.min(...x.polygon.map((p) => p[1])).toFixed(3), z1: +Math.max(...x.polygon.map((p) => p[1])).toFixed(3) }))
+      .sort((p, q) => p.z0 - q.z0);
+    expect(steps).toEqual([
+      { role: 'escalon', y: 0.2, z0: 4, z1: 4.3 }, { role: 'descanso', y: 0.4, z0: 4.3, z1: 5.15 },
+      { role: 'escalon', y: 0.6, z0: 5.15, z1: 5.45 }, { role: 'descanso', y: 0.8, z0: 5.45, z1: 6.3 },
+      { role: 'escalon', y: 1, z0: 6.3, z1: 6.6 },
+    ]);
+    expect(i.roofHoles).toEqual([]);
+    expect(i.floors.map((f) => f.holes.length)).toEqual([0]);
+    expect(i.blocks.filter((x) => x.role === 'baranda')).toEqual([]);
+    const [s] = i.stairs;
+    expect([s.from, s.to]).toEqual([0, 0]);
+    expect(s.foot[1]).toBe(0);
+    expect(s.top[1]).toBeCloseTo(1.2, 9);
+    expect(s.top[2]).toBeCloseTo(6.6 + 0.6, 9);
+    expect(validateInterior(i)).toEqual([]);
+  });
+
+  test('se sube caminando hasta la plataforma de arriba (1,2 m) y se baja', () => {
+    const { interior: i, world } = grada();
+    const up = climbStair(world, i.stairs[0]);
+    within(up.pos[1], 1.2);
+    expect(up.onGround && up.mode === 'walk', where(up)).toBe(true);
+    const down = climbStair(world, i.stairs[0], true);
+    within(down.pos[1], 0);
+  });
+
+  test('validateInterior: el descanso no cuenta como huella, pero la contrahuella sí (una de 0,4 avisa)', () => {
+    const { interior: i } = grada();
+    expect(validateInterior(i)).toEqual([]);
+    // sin el escalón del medio, del pie (0) al primer descanso (0,4) hay 0,4
+    const sinEscalon = { ...i, blocks: i.blocks.filter((x) => !(x.role === 'escalon' && Math.abs(x.y1 - 0.2) < 1e-6)) };
+    expect(validateInterior(sinEscalon).join('\n')).toMatch(/contrahuella de 0,4/);
+  });
+
+  test('el pasamanos sigue la pendiente media del tramo (de la primera nariz a la llegada), con un paño por escalón y por descanso', () => {
+    const { interior: i } = grada({ rail: CAÑO, railStyle: { caño: true }, handrail: 'izq' });
+    const panes = i.blocks.filter((x) => x.role === 'baranda');
+    expect(panes).toHaveLength(5);
+    for (const x of panes) expect(x.y1 - x.y0).toBeCloseTo(RAIL_H, 9);
+    const tops = i.panes.filter((p) => p.look.color === CAÑO.color && p.normal[1] > 0.1 && p.normal[1] < 0.99
+      && Math.max(...p.corners.map((q) => q[2])) - Math.min(...p.corners.map((q) => q[2])) > 1);
+    expect(tops).toHaveLength(2);
+    const run = 3 * TREAD + 2 * 0.85;
+    const line = (z: number): number => 0.2 + ((z - 4) * (1.2 - 0.2)) / run;
+    const alturas = tops.map((p) => p.corners.map((q) => +(q[1] - line(q[2])).toFixed(3)));
+    for (const a of alturas) expect(new Set(a).size, a.join(' ')).toBe(1);
+    expect(alturas.map((a) => a[0]).sort((p, q) => p - q)).toEqual([0.45, 0.9]);
+  });
+});
+
 describe('validateInterior', () => {
   const msgs = (i: Interior): string => validateInterior(i).join('\n');
 
@@ -408,6 +563,36 @@ describe('muebles', () => {
     };
     expect(shoot(true)?.kind).toBe('world');
     expect(shoot(false)).toMatchObject({ kind: 'target', id: 'detras' }); // parado, la mesa no lo tapa
+  });
+});
+
+// Tarea 9: los árboles del patio del Guernica (D12) son árboles del mapa: los dibuja vegetation.ts con los de la calle
+// (la misma copa y la misma corteza) y su tronco sólido sale de collision.ts igual que el de cualquier árbol.
+describe('árboles del patio (k.tree)', () => {
+  const PATIO: Vec2[] = [[0, 0], [10, 0], [10, -4], [0, -4]];
+  test('k.tree deja el árbol (mundo) en Interior.trees, no como mueble, y su tronco es el de un árbol del mapa: TRUNK_R, trunkHeight', () => {
+    const { b, input } = testInterior();
+    const k = new Kit(b, { ...input, patios: [PATIO] });
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    k.tree([3, -2], 2, 0.6);
+    const i = k.done(0.8);
+    expect(i.trees).toEqual([{ position: [3, -2], variant: 2, scale: 0.6 }]);
+    expect(i.items).toEqual([]);
+    const trunks = interiorPrisms(i).filter((p) => p.tag === 'tree');
+    expect(trunks).toHaveLength(1);
+    expect(trunks[0].minY).toBe(0);
+    expect(trunks[0].maxY).toBeCloseTo(trunkHeight({ variant: 2, scale: 0.6 }), 9);
+    for (const [x, z] of trunks[0].polygon) expect(Math.hypot(x - 3, z + 2)).toBeCloseTo(TRUNK_R, 9);
+    const world = new CollisionWorld(interiorPrisms(i), [], FIXTURE_BOUNDS);
+    expect(world.overlaps(3, -2, 0.1, 0.05, 1.8)).toBe(true);
+    expect(world.overlaps(3, -2 - TRUNK_R - 0.2, 0.1, 0.05, 1.8)).toBe(false);
+  });
+
+  test('un árbol fuera de los patios es un error', () => {
+    const { b, input } = testInterior();
+    const k = new Kit(b, { ...input, patios: [PATIO] });
+    k.shell({ publicFloors: 1, wall: LOOKS.pared, floor: LOOKS.piso, ceiling: LOOKS.techo });
+    expect(() => k.tree([3, 6], 2, 0.6)).toThrow(/patio/);
   });
 });
 

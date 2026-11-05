@@ -25,7 +25,9 @@ export interface Sign { text: string; anchor: Vec2; normal: Vec2; width: number;
   /** Alto de la caja (m); sin él, SIGN_H. Lo usan los carteles `out` de un interior (la "M" de una torre, el de un toldo). */
   height?: number;
   /** Cartel de bandera: perpendicular a la fachada y de dos caras. */
-  blade?: true }
+  blade?: true;
+  /** Brilla: se ve a pleno también de noche o a la sombra (el "GUERNICA" de la chapa, de un interior `out` con glow). */
+  glow?: true }
 export interface Place { id: string; name: string; type: PlaceType; position: Vec2; enterable: boolean;
   buildingId?: string; parkId?: string; sign?: Sign; spawn: Vec3;
   /** Centro de la puerta principal (D10), al ras de la cara exterior: solo en los lugares con interior. */
@@ -64,7 +66,9 @@ export interface Front { edges: number[]; corner: number[]; pb: PlantaBaja; arri
   /** Metros de la corrida principal que ocupa una ayuda de ascenso (escalera o contenedor, con su margen) desde la punta
    *  de `desde` (`inicio`) o la de `hasta` (`fin`): el toldo y el cartel dejan ese tramo libre. */
   ayuda?: { inicio?: number; fin?: number } }
-export interface SignLook { fondo: string; letra: string; marco: string; fuente: Fuente; cursiva?: true }
+/** `acento`: los caracteres de `desde` a `hasta` (sin incluir) del texto, en la letra `letra` (la P magenta de "CINES
+ *  PIXEL"). */
+export interface SignLook { fondo: string; letra: string; marco: string; fuente: Fuente; cursiva?: true; acento?: { letra: string; desde: number; hasta: number } }
 /** Marco local de una planta relevada (data/plantas.json): el punto local (u, v) va al mundo como origin + u·U + v·V.
  *  `u` y `v` son unitarios y perpendiculares; `u` corre a lo largo del frente y `v` entra al edificio. */
 export interface Frame { origin: Vec2; u: Vec2; v: Vec2 }

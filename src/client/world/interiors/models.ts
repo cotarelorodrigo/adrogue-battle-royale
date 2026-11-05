@@ -31,6 +31,11 @@ export const cyl = (r: number, h: number, at: Vec3, color: string, segments = 10
 export const cone = (rTop: number, rBottom: number, h: number, at: Vec3, color: string, segments = 10): THREE.BufferGeometry =>
   paint(new THREE.CylinderGeometry(rTop, rBottom, h, segments).translate(0, h / 2, 0), at, color);
 
+/** Tronco de cono sin tapas (lo de arriba y lo de abajo no se ve): de radio rTop arriba y rBottom abajo, con la base en
+ *  `at`. */
+const tube = (rTop: number, rBottom: number, h: number, at: Vec3, color: string, segments: number): THREE.BufferGeometry =>
+  paint(new THREE.CylinderGeometry(rTop, rBottom, h, segments, 1, true).translate(0, h / 2, 0), at, color);
+
 /** Caja de w × h × d con el medio de la base en `at`, inclinada `rx` sobre +x (por el medio de su base): una pata en A. */
 const lean = (w: number, h: number, d: number, at: Vec3, rx: number, color: string): THREE.BufferGeometry => {
   const g = new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0).rotateX(rx);
@@ -105,6 +110,50 @@ const foosRod = (z: number, n: number, team: string): THREE.BufferGeometry[] => 
   box(1.12, 0.016, 0.016, [0, 0.862, z], ROD_CHROME), box(0.11, 0.03, 0.03, [(z > 0 ? 1 : -1) * 0.6, 0.855, z], HANDLE),
   ...Array.from({ length: n }, (_, k) => box(0.03, 0.08, 0.025, [((k - (n - 1) / 2) * 0.6) / Math.max(1, n), 0.818, z], team)),
 ];
+
+// Cine Pixel y Guernica (tarea 9).
+/** La tela de la butaca del cine: un gris vino que, con la sala a oscuras (la luz horneada ~0,1 y la ACES a
+ *  INDOOR_EXPOSURE), apenas se lee (tests/client/interiors.test.ts, "el cine oscuro"). */
+export const BUTACA_TELA = '#b4949c';
+const BUTACA_ARMAZON = '#6a6a70', CASTER = '#2a2a2e';
+const POP_RED = '#b3202a', POP_TRIM = '#e8c547', POPCORN = '#f3dc8a', POP_KETTLE = '#9aa0a6';
+const POSTER_FRAME = '#1c1c1e';
+const CHROME = '#c9ccd0', TAP_HANDLE = '#1c1c1c', DRIP = '#8d9196';
+// la guirnalda brilla (ITEM_GLOW): el cable ya oscuro, las lamparitas de su color
+const GARLAND_CABLE = '#121212', GARLAND_BULB = '#e8b45a';
+const IRON = '#1e1e20', BAR_TOP = '#5a3a22';
+/** La guirnalda: un tramo de GARLAND.len m hacia +x desde el origen (el gancho de la punta), que cuelga `sag` m en el
+ *  medio, con `bulbs` lamparitas. */
+export const GARLAND = { len: 3.0, sag: 0.35, bulbs: 8 } as const;
+/** Una caja de w × h × d con el medio en `c`, girada `rz` sobre z: un tramo del cable de la guirnalda. */
+const tilted = (w: number, h: number, d: number, c: Vec3, rz: number, color: string): THREE.BufferGeometry => {
+  const g = new THREE.BoxGeometry(w, h, d).rotateZ(rz);
+  return paint(g, c, color);
+};
+/** El cable de la guirnalda, en `n` tramos rectos sobre la parábola (de 0 en las puntas a −sag en el medio). */
+const garlandY = (x: number): number => -GARLAND.sag * (1 - ((2 * x) / GARLAND.len - 1) ** 2);
+/** Una lamparita de la guirnalda: un octaedro estirado (8 triángulos; con índice, como las cajas: si no, no se juntan)
+ *  con el medio en `c`. */
+const bulb = (c: Vec3): THREE.BufferGeometry => {
+  const g = new THREE.OctahedronGeometry(0.034, 0).scale(0.85, 1.25, 0.85);
+  g.setIndex([...Array(g.getAttribute('position').count).keys()]);
+  return paint(g, c, GARLAND_BULB);
+};
+/** 112 triángulos por tramo (hay catorce en el Guernica): el cable en cuatro tramos rectos y las lamparitas colgando. */
+const garland = (): THREE.BufferGeometry[] => {
+  const n = 4, parts: THREE.BufferGeometry[] = [];
+  for (let k = 0; k < n; k++) {
+    const [x0, x1] = [(k * GARLAND.len) / n, ((k + 1) * GARLAND.len) / n];
+    const [y0, y1] = [garlandY(x0), garlandY(x1)];
+    const l = Math.hypot(x1 - x0, y1 - y0);
+    parts.push(tilted(l + 0.01, 0.012, 0.012, [(x0 + x1) / 2, (y0 + y1) / 2 - 0.006, 0], Math.atan2(y1 - y0, x1 - x0), GARLAND_CABLE));
+  }
+  for (let k = 0; k < GARLAND.bulbs; k++) {
+    const x = ((k + 0.5) * GARLAND.len) / GARLAND.bulbs, y = garlandY(x);
+    parts.push(bulb([x, y - 0.05, 0]));
+  }
+  return parts;
+};
 
 /** Los muebles, en su marco: el frente mira a +z (Item.yaw lo gira) y, si no se dice otra cosa, el origen va en el piso,
  *  en el medio de su planta (la caja de MODEL_BOX, si la tiene, lo rodea). Los colgados lo dicen en su comentario:
@@ -221,13 +270,48 @@ export const ITEM_MODELS: Record<ItemModel, () => THREE.BufferGeometry> = {
   // un balde de helado de la vitrina (brilla, bajo el vidrio): la cubeta y el copete, del color del gusto
   'balde-helado': () => model(box(0.16, 0.1, 0.32, [0, 0, 0], '#ffffff'), box(0.13, 0.05, 0.26, [0, 0.1, 0.01], '#ffffff'),
     box(0.08, 0.03, 0.14, [0.01, 0.15, -0.02], '#ffffff')),
+  // la butaca del cine (MODEL_BOX: 0,55 × 0,62 × 1,0; mira a +z, a la pantalla): el asiento y el respaldo alto de tela y
+  // el costado de −x con su apoyabrazos (el de +x es el de la butaca de al lado). Son 434: tres cajas (36 triángulos)
+  butaca: () => model(box(0.5, 0.14, 0.5, [0.02, 0.38, 0.04], BUTACA_TELA), box(0.5, 0.62, 0.12, [0.02, 0.38, -0.25], BUTACA_TELA),
+    box(0.05, 0.68, 0.62, [-0.25, 0, 0], BUTACA_ARMAZON)),
+  // la máquina de pochoclo (MODEL_BOX: 0,9 × 0,6 × 1,75): el carrito rojo con su guarda dorada, la vitrina (el vidrio va
+  // en ITEM_GLASS) con los parantes, el pochoclo, la olla colgada y el techo rojo
+  pochoclera: () => model(box(0.9, 0.82, 0.6, [0, 0.05, 0], POP_RED), box(0.92, 0.05, 0.62, [0, 0.82, 0], POP_TRIM),
+    ...[[-1, -1], [1, -1], [1, 1], [-1, 1]].flatMap(([sx, sz]) => [box(0.03, 0.7, 0.03, [sx * 0.435, 0.87, sz * 0.285], POP_TRIM), cyl(0.04, 0.05, [sx * 0.35, 0, sz * 0.22], CASTER, 6)]),
+    box(0.84, 0.26, 0.54, [0, 0.87, 0], POPCORN), cyl(0.12, 0.12, [0, 1.3, 0], POP_KETTLE, 10), cyl(0.012, 0.18, [0, 1.42, 0], POP_KETTLE, 4),
+    box(0.94, 0.16, 0.64, [0, 1.57, 0], POP_RED), box(0.96, 0.03, 0.66, [0, 1.72, 0], POP_TRIM)),
+  // el marco de un afiche (origen: el medio de su borde de abajo, contra la pared; sale 0,03 m hacia +z): la imagen es
+  // un cartel `afiche` del plan, de 0,72 × 1,06, delante del marco
+  afiche: () => model(box(0.8, 0.04, 0.03, [0, 0, 0.015], POSTER_FRAME), box(0.8, 0.04, 0.03, [0, 1.1, 0.015], POSTER_FRAME),
+    box(0.04, 1.06, 0.03, [-0.38, 0.04, 0.015], POSTER_FRAME), box(0.04, 1.06, 0.03, [0.38, 0.04, 0.015], POSTER_FRAME),
+    box(0.72, 1.06, 0.005, [0, 0.04, 0.0025], POSTER_FRAME)),
+  // una botella del estante (brilla: la ilumina el estante; origen: el piso del estante): el cuerpo y el cuello, del
+  // color del vidrio (Item.color, ya oscuro), sin tapas (20 triángulos; hay 54): abajo está el estante y la boca no se ve
+  botella: () => model(tube(0.036, 0.036, 0.2, [0, 0, 0], '#ffffff', 6), tube(0.013, 0.036, 0.085, [0, 0.2, 0], '#ffffff', 4)),
+  // la torre de canillas cromada en arco, sobre la barra (origen: la tapa de la barra): las dos patas, el arco, cinco
+  // canillas colgando del arco con sus manijas y la bandeja de goteo
+  canillas: () => model(cyl(0.05, 0.02, [-0.3, 0, 0], CHROME, 10), cyl(0.05, 0.02, [0.3, 0, 0], CHROME, 10),
+    cyl(0.03, 0.2, [-0.3, 0.02, 0], CHROME, 8), cyl(0.03, 0.2, [0.3, 0.02, 0], CHROME, 8),
+    paint(new THREE.TorusGeometry(0.3, 0.032, 6, 12, Math.PI), [0, 0.22, 0], CHROME),
+    ...[-0.24, -0.12, 0, 0.12, 0.24].flatMap((x) => {
+      const y = 0.22 + Math.sqrt(Math.max(0, 0.09 - x * x));
+      return [box(0.02, 0.06, 0.06, [x, y - 0.06, 0.03], CHROME), box(0.025, 0.12, 0.03, [x, y, 0.06], TAP_HANDLE)];
+    }),
+    box(0.7, 0.02, 0.16, [0, 0, 0.12], DRIP)),
+  // un tramo de guirnalda de lamparitas (brilla; origen: el gancho de una punta): GARLAND.len m hacia +x, colgando
+  guirnalda: () => model(...garland()),
+  // la mesa alta de bar (MODEL_BOX: 0,6 × 0,6 × 1,05): la tapa de madera, el pie de hierro, el apoyapiés y la base
+  'mesa-alta': () => model(cyl(0.3, 0.04, [0, 1.01, 0], BAR_TOP, 12), cyl(0.035, 1.0, [0, 0.01, 0], IRON, 6),
+    cyl(0.2, 0.02, [0, 0.3, 0], IRON, 8), cyl(0.24, 0.02, [0, 0, 0], IRON, 10)),
 };
 
 /** Los que brillan: van con su color pleno, sin la luz horneada. */
-export const ITEM_GLOW: Partial<Record<ItemModel, true>> = { lampara: true, cajero: true, turnero: true, pantalla: true, 'balde-helado': true };
+export const ITEM_GLOW: Partial<Record<ItemModel, true>> = { lampara: true, cajero: true, turnero: true, pantalla: true, 'balde-helado': true,
+  guirnalda: true, botella: true };
 
 /** Las partes de vidrio de un modelo, en su marco: van en la malla de in_vidrio del interior (con su material
  *  transparente), no en la de los muebles. El color lo pone el interior (es el lado de la cara, glass.ts). */
 export const ITEM_GLASS: Partial<Record<ItemModel, () => THREE.BufferGeometry>> = {
   'hoja-vidrio': () => box(0.8, 2.0, 0.01, [0, 0.05, 0], '#ffffff'),
+  pochoclera: () => box(0.86, 0.68, 0.56, [0, 0.87, 0], '#ffffff'),
 };

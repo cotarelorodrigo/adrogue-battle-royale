@@ -6,7 +6,7 @@
 import polygonClipping from 'polygon-clipping';
 import { ensureCCW, insetRing, pointInPolygon, polygonArea, signedAreaFromAbove, toLocal, toWorld } from '../geo.ts';
 import type { Vec2, Vec3 } from '../geo.ts';
-import type { Building, InteriorInput, Opening, SignLook } from '../mapdata.ts';
+import type { Building, InteriorInput, Opening, SignLook, Tree } from '../mapdata.ts';
 import { LEVEL_H, LINTEL_MIN, doorsOf } from './openings.ts';
 import type { Block, Collide, FloorArea, Interior, Item, ItemModel, Label, LabelDrawing, Lamp, Look, Pane, Role, StairRun, Viewpoint } from './types.ts';
 
@@ -44,6 +44,11 @@ export const MODEL_BOX: Partial<Record<ItemModel, { w: number; d: number; h: num
   heladera: { w: 1.3, d: 0.8, h: 2.0 },
   'mesa-picnic': { w: 1.8, d: 1.5, h: 0.75 },
   metegol: { w: 0.76, d: 1.42, h: 0.9 },
+  // Cine Pixel y Guernica (tarea 9): la butaca del cine (sólida, §2.3: las filas no se cruzan, se va por los pasillos),
+  // la máquina de pochoclo sobre su carrito y la mesa alta de bar
+  butaca: { w: 0.55, d: 0.62, h: 1.0 },
+  pochoclera: { w: 0.9, d: 0.6, h: 1.75 },
+  'mesa-alta': { w: 0.6, d: 0.6, h: 1.05 },
 };
 
 /** `holes`: huecos (marco local) en la losa de un nivel; los del nivel `publicFloors` atraviesan el bloque cerrado o el
@@ -64,6 +69,23 @@ export interface StairOpts {
    * jugador (0,75), sí la une. Lo usa La Veneciana (tarea 8).
    */
   approach?: number;
+  /**
+   * El pasamanos en pendiente (H9 de la T8), mirando la subida: 'izq', 'der' o 'ambos'. Va sobre el borde de las huellas,
+   * adentro del ancho, con un paño de RAIL_H por escalón (clase glass, D4), las barras en pendiente sobre la línea de las
+   * narices y un parante cada tres escalones. Un paño que pasaría el cielorraso de al lado (una losa de arriba, sin hueco
+   * ahí) no va: el costado lo cierra esa losa, a menos de RAIL_H del escalón. Como las barandas del hueco, sigue a
+   * `railStyle`: de vidrio, el paño con el look de `rail` y un pasamanos a HANDRAIL.vidrio; de caño, el paño no se ve y
+   * se ven el pasamanos y un intermedio (HANDRAIL.caño).
+   */
+  handrail?: 'izq' | 'der' | 'ambos';
+  /** El color del pasamanos y de los parantes; por defecto, el de `rail`. */
+  handrailLook?: Look;
+  /** Un tramo adentro del nivel `from` (con `to` = `from`): sube `rise` m sobre su piso, sin hueco en las losas ni barandas
+   *  de hueco; arriba llega a lo que arme el plan (las gradas de un cine, T9). */
+  rise?: number;
+  /** Descansos: el escalón que cierra cada `every` contrahuellas lleva `length` m de huella (rol `descanso`) en vez de
+   *  TREAD. El pasamanos va con la pendiente media del tramo. */
+  landings?: { every: number; length: number };
 }
 /** Cómo se ve una baranda. Sin nada, un paño de RAIL_H con el look (el vidrio de un balcón). `caño`: de caño (la de la
  *  terraza de La Veneciana, §4.7): el paño frena y no se ve, y se ven el pasamanos, un caño intermedio y los parantes
@@ -80,6 +102,13 @@ export const RAIL_T = 0.05;
 /** La baranda de caño: la sección de los caños (cuadrada, m), el alto del pasamanos y del intermedio (su tope, desde el
  *  piso) y los parantes, a lo sumo cada `paso` m. */
 const CAÑO = { t: 0.045, top: RAIL_H, mid: 0.55, paso: 1.4 } as const;
+/** El pasamanos de una escalera (StairOpts.handrail): sus barras (el tope sobre la línea de las narices, el ancho y el
+ *  alto, m) y los parantes (la sección y su tope sobre las narices). El de vidrio, el de la Casa de la Cultura; el de
+ *  caño, el de La Veneciana. */
+const HANDRAIL = {
+  vidrio: { bars: [[0.93, 0.07, 0.06]], post: 0.04, postTop: 0.87, postCap: false },
+  caño: { bars: [[0.9, 0.045, 0.045], [0.45, 0.04, 0.04]], post: 0.045, postTop: 0.88, postCap: true },
+} as const;
 /** El foot y el top de un StairRun quedan a esto del primer escalón y del último. */
 const STAIR_REACH = 0.6;
 /** Las barandas del hueco de una escalera van por tramos de a lo sumo RAIL_PIECE m: queda cada tramo que tiene piso a
@@ -139,6 +168,7 @@ export class Kit {
   private readonly blocks: Block[] = [];
   private readonly panes: Pane[] = [];
   private readonly items: Item[] = [];
+  private readonly trees: Tree[] = [];
   private readonly labels: Label[] = [];
   private readonly lamps: Lamp[] = [];
   private readonly views: Viewpoint[] = [];
@@ -146,6 +176,8 @@ export class Kit {
   private readonly runs: StairRun[] = [];
   /** El hueco (marco local) que abre cada escalera en las losas de los niveles from + 1 … to, y la baranda de su borde. */
   private readonly stairHoles: { from: number; to: number; poly: Vec2[]; rail: Look; style: RailStyle }[] = [];
+  /** Los pasamanos de las escaleras: se arman en done(), cuando ya están todos los huecos. */
+  private readonly handrails: { from: number; to: number; foot: Vec2; d: Vec2; side: Vec2; w: number; treads: [number, number][]; y0: number; y1: number; rail: Look; look: Look; style: RailStyle }[] = [];
 
   constructor(b: Building, input: InteriorInput) {
     this.b = b;
@@ -227,11 +259,14 @@ export class Kit {
   }
 
   /** Escalones sólidos hasta el piso de abajo (contrahuellas iguales ≤ RISER_MAX, huellas de TREAD), el hueco en las
-   *  losas de arriba sobre toda su planta, barandas en el borde del hueco (salvo por donde se llega) y su StairRun. */
+   *  losas de arriba sobre toda su planta, barandas en el borde del hueco (salvo por donde se llega) y su StairRun. Con
+   *  `rise`, un tramo adentro de un nivel (sin hueco); con `landings`, con descansos. */
   stair(o: StairOpts): void {
     this.need();
     const id = this.input.placeId;
-    const y0 = this.floorY(o.from), y1 = this.floorY(o.to);
+    const inLevel = o.rise !== undefined;
+    if (inLevel && o.to !== o.from) throw new Error(`${id}: un tramo con rise va adentro de un nivel (from = to)`);
+    const y0 = this.floorY(o.from), y1 = inLevel ? y0 + o.rise! : this.floorY(o.to);
     if (!(y1 > y0)) throw new Error(`${id}: la escalera tiene que subir (del nivel ${o.from} al ${o.to})`);
     const d = unit(o.dir);
     if (d[0] === 0 && d[1] === 0) throw new Error(`${id}: la escalera necesita una dirección`);
@@ -240,13 +275,25 @@ export class Kit {
     const side: Vec2 = [-d[1], d[0]];
     const w = o.width / 2;
     const at = (s: number, q: number): Vec2 => add(add(o.foot, d, s), side, q);
-    for (let i = 1; i < n; i++) {
-      const [s0, s1] = [(i - 1) * TREAD, i * TREAD];
-      this.block([at(s0, -w), at(s1, -w), at(s1, w), at(s0, w)], y0, y0 + i * r, 'solid', 'escalon', { top: o.look, side: o.look }, o.out);
+    const landing = (i: number): boolean => o.landings !== undefined && i % o.landings.every === 0;
+    const treads: [number, number][] = [];
+    for (let i = 1, s = 0; i < n; i++) {
+      const s1 = s + (landing(i) ? o.landings!.length : TREAD);
+      treads.push([s, s1]);
+      this.block([at(s, -w), at(s1, -w), at(s1, w), at(s, w)], y0, y0 + i * r, 'solid', landing(i) ? 'descanso' : 'escalon', { top: o.look, side: o.look }, o.out);
+      s = s1;
     }
-    const run = (n - 1) * TREAD;
+    const run = treads.length > 0 ? treads[treads.length - 1][1] : 0;
     const a = -(o.approach ?? 0);
-    this.stairHoles.push({ from: o.from, to: o.to, poly: [at(a, -w), at(run, -w), at(run, w), at(a, w)], rail: o.rail ?? o.look, style: o.railStyle ?? {} });
+    if (!inLevel) this.stairHoles.push({ from: o.from, to: o.to, poly: [at(a, -w), at(run, -w), at(run, w), at(a, w)], rail: o.rail ?? o.look, style: o.railStyle ?? {} });
+    if (o.handrail) {
+      // la izquierda de la subida, en el mundo (yaw de three.js: mirando hacia (x, z), la izquierda es (z, −x))
+      const [dx, dz] = this.vec(d), [sx, sz] = this.vec(side);
+      const left: Vec2 = sx * dz - sz * dx > 0 ? side : [-side[0], -side[1]];
+      const sides: Vec2[] = o.handrail === 'izq' ? [left] : o.handrail === 'der' ? [[-left[0], -left[1]]] : [left, [-left[0], -left[1]]];
+      const rail = o.rail ?? o.look;
+      for (const s of sides) this.handrails.push({ from: o.from, to: o.to, foot: o.foot, d, side: s, w, treads, y0, y1, rail, look: o.handrailLook ?? rail, style: o.railStyle ?? {} });
+    }
     const [f, t] = [this.at(add(o.foot, d, -STAIR_REACH)), this.at(add(o.foot, d, run + STAIR_REACH))];
     this.runs.push({ from: o.from, to: o.to, foot: [f[0], y0, f[1]], top: [t[0], y1, t[1]], yaw: this.yawToward(d) });
   }
@@ -288,6 +335,28 @@ export class Kit {
     // el de la última punta, si el recorrido no cierra (si cierra, es el de la primera)
     const [first, last] = [path[0], path[path.length - 1]];
     if (path.length > 1 && dist(first, last) > EPS) post(last);
+  }
+
+  /** Una barra que solo se dibuja (paños): de `a` a `b` (marco local, [u, y, v]: el medio de su cara de arriba en cada
+   *  punta), de `width` de través (horizontal) y `height` hacia abajo, de canto a a → b; para lo inclinado (un cabio, un
+   *  pasamanos). Con `ends`, también las tapas de las puntas. a → b no puede ser vertical. */
+  bar(a: Vec3, b: Vec3, width: number, height: number, look: Look, o: { sky?: true; ends?: true } = {}): void {
+    const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const l = Math.hypot(...d), h = Math.hypot(d[0], d[2]);
+    const e: Vec3 = [d[0] / l, d[1] / l, d[2] / l], t: Vec3 = [-d[2] / h, 0, d[0] / h];
+    // arriba: perpendicular a a → b y al través (t × e o e × t, el que sube)
+    const c: Vec3 = [t[1] * e[2] - t[2] * e[1], t[2] * e[0] - t[0] * e[2], t[0] * e[1] - t[1] * e[0]];
+    const up: Vec3 = c[1] >= 0 ? c : [-c[0], -c[1], -c[2]];
+    const at = (p: Vec3, s: number, y: number): Vec3 => [p[0] + t[0] * s - up[0] * y, p[1] - up[1] * y, p[2] + t[2] * s - up[2] * y];
+    const neg = (v: Vec3): Vec3 => [-v[0], -v[1], -v[2]];
+    const w = width / 2, f = o.sky ? { sky: true as const } : {};
+    this.pane([at(a, -w, 0), at(b, -w, 0), at(b, w, 0), at(a, w, 0)], up, look, f);
+    this.pane([at(a, -w, height), at(a, w, height), at(b, w, height), at(b, -w, height)], neg(up), look, f);
+    this.pane([at(a, w, 0), at(b, w, 0), at(b, w, height), at(a, w, height)], t, look, f);
+    this.pane([at(a, -w, 0), at(a, -w, height), at(b, -w, height), at(b, -w, 0)], neg(t), look, f);
+    if (!o.ends) return;
+    this.pane([at(a, -w, 0), at(a, w, 0), at(a, w, height), at(a, -w, height)], neg(e), look, f);
+    this.pane([at(b, -w, 0), at(b, -w, height), at(b, w, height), at(b, w, 0)], e, look, f);
   }
 
   /** Un prisma de planta `poly` (marco local) entre y0 e y1. `true` (o `out`): se dibuja con el edificio; `sky`: va
@@ -336,16 +405,24 @@ export class Kit {
     this.blocks.push({ polygon: ensureCCW(poly), y0: y, y1: y + box.h, collide: 'solid', role: 'mueble' });
   }
 
+  /** Un árbol del mapa en `p`, adentro de un patio (D12): Interior.trees. El cliente lo dibuja con los de la calle y
+   *  collision.ts le pone el tronco sólido de cualquier árbol (TRUNK_R, trunkHeight): no hace falta un bloque. */
+  tree(p: Vec2, variant: Tree['variant'], scale: number): void {
+    this.open();
+    if (!this.patios.some((r) => pointInPolygon(p, r))) throw new Error(`${this.input.placeId}: el árbol de (${p.join(', ')}) no está en un patio`);
+    this.trees.push({ position: this.at(p), variant, scale });
+  }
+
   /** Cartel con el medio en `p` a la altura `y`; `normal` (local) apunta hacia quien lo lee. Con `drawing`, en vez del
    *  texto lleva ese dibujo. `down`: acostado mirando abajo (`normal`, hacia el borde de arriba del dibujo); `round`: un
-   *  disco de diámetro `width`. */
+   *  disco de diámetro `width`. `placeSign` (con `out`): reemplaza al cartel del lote del lugar (Label.placeSign). */
   label(text: string, p: Vec2, y: number, normal: Vec2, width: number, height: number, look: SignLook,
-    o: { glow?: true; out?: true; drawing?: LabelDrawing; down?: true; round?: true } = {}): void {
+    o: { glow?: true; out?: true; drawing?: LabelDrawing; down?: true; round?: true; placeSign?: true } = {}): void {
     this.open();
     const [x, z] = this.at(p);
     this.labels.push({ text, at: [x, y, z], normal: unit(this.vec(normal)), width, height, look, ...(o.glow ? { glow: true as const } : {}),
       ...(o.out ? { out: true as const } : {}), ...(o.drawing ? { drawing: o.drawing } : {}), ...(o.down ? { down: true as const } : {}),
-      ...(o.round ? { round: true as const } : {}) });
+      ...(o.round ? { round: true as const } : {}), ...(o.placeSign ? { placeSign: true as const } : {}) });
   }
 
   lamp(p: Vec2, y: number, radius: number, power: number): void {
@@ -384,6 +461,7 @@ export class Kit {
       if (o.terrace) this.slab(pf, H, H + GROUND_Y, { top: floor(pf), side: floor(pf) }, 'none', 'otro');
     }
     for (const h of this.stairHoles) if (this.walkable(h.to)) this.holeRails(h.poly, h.to, h.rail, h.style);
+    for (const h of this.handrails) this.stairHandrail(h);
     const levels = [...Array(pf).keys(), ...(o.terrace ? [pf] : [])];
     const floors = levels.map((k): FloorArea => {
       const holes = this.holesAt(k);
@@ -396,7 +474,7 @@ export class Kit {
       blocks: this.blocks, panes: this.panes, items: this.items, labels: this.labels, lamps: this.lamps, floors, stairs: this.runs,
       doors: doorsOf(this.b, this.input), views: this.views, marks: this.marks,
       footprint: this.fp, patios: this.input.patios.map((r) => ensureCCW(r.map((p): Vec2 => [p[0], p[1]]))),
-      roofHoles: this.holesAt(pf).map((h) => this.toWorldRing(h)),
+      roofHoles: this.holesAt(pf).map((h) => this.toWorldRing(h)), trees: this.trees,
     };
   }
 
@@ -588,6 +666,45 @@ export class Kit {
         this.blocks.push({ polygon, y0, y1, collide, role, ...looksOf(looks), hide });
       }
     }
+  }
+
+  /** El pasamanos de un costado de una escalera (StairOpts.handrail): `side` (unitario, marco local) apunta a ese costado
+   *  y `w` es el medio ancho. */
+  private stairHandrail(h: Kit['handrails'][number]): void {
+    const { foot, d, side, w, treads, y0, y1, rail, look } = h;
+    if (treads.length === 0) return;
+    const caño = h.style.caño === true, P = caño ? HANDRAIL.caño : HANDRAIL.vidrio;
+    const t = RAIL_T / 2, q = w - t, p = P.post / 2, r = (y1 - y0) / (treads.length + 1);
+    const at = (s: number, lat: number): Vec2 => add(add(foot, d, s), side, lat);
+    // la línea de las narices: de la del primer escalón (a y0 + r) a la llegada (a y1, al final de la última huella); sin
+    // descansos, pasa por todas
+    const fin = treads[treads.length - 1][1];
+    const nose = (s: number): number => y0 + r + (s * (y1 - y0 - r)) / fin;
+    treads.forEach(([s0, s1], k) => {
+      const i = k + 1, y = y0 + i * r, m = (s0 + Math.min(s1, s0 + TREAD)) / 2;
+      if (y + RAIL_H <= this.ceilingBeside(at((s0 + s1) / 2, w + RAIL_PROBE), h.from, h.to, y) + 1e-6) {
+        this.block([at(s0 - t, q - t), at(s1 + t, q - t), at(s1 + t, q + t), at(s0 - t, q + t)], y, y + RAIL_H, 'glass', 'baranda', caño ? {} : { side: rail, top: rail });
+      }
+      if ((i - 1) % 3 === 0 || i === treads.length) {
+        this.block([at(m - p, q - p), at(m + p, q - p), at(m + p, q + p), at(m - p, q + p)], y, nose(m) + P.postTop, 'none', 'otro', P.postCap ? { side: look, top: look } : { side: look });
+      }
+    });
+    const [a, b] = [at(0, q), at(fin, q)];
+    for (const [top, width, height] of P.bars) this.bar([a[0], nose(0) + top, a[1]], [b[0], nose(fin) + top, b[1]], width, height, look, { ends: true });
+  }
+
+  /** El cielorraso al lado de una escalera en `p` (marco local), sobre un escalón a y: la cara de abajo de la losa más baja
+   *  de los niveles que sube (from + 1 … to) que no tiene hueco ahí y termina arriba de y (la de un escalón a la altura de
+   *  la losa también cuenta: la tiene al lado). Afuera de la planta (contra una pared), Infinity. */
+  private ceilingBeside(p: Vec2, from: number, to: number, y: number): number {
+    if (!pointInPolygon(p, this.inner)) return Infinity;
+    const pf = this.shellOpts!.publicFloors;
+    let c = Infinity;
+    for (let k = from + 1; k <= to; k++) {
+      const [bottom, top] = k < pf ? [k * LEVEL_H - SLAB_T, k * LEVEL_H] : [this.topBottom(), this.b.height];
+      if (top > y + EPS && !this.holesAt(k).some((hole) => pointInPolygon(p, hole))) c = Math.min(c, bottom);
+    }
+    return c;
   }
 
   /** Las barandas del hueco de una escalera en el piso `level`: por los dos costados y el pie (no por la llegada, la

@@ -332,4 +332,81 @@ function zigzag(look: SignLook, width: number, height: number): HTMLCanvasElemen
 
 /** El dibujo de cada Label.drawing, al tamaño del cartel (ancho × alto en metros, a PX_PER_M), con el texto del cartel
  *  de semilla (el tesoro y el zigzag no la usan). */
-export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro, menu, zigzag };
+/** Los cielos de los afiches (arriba, abajo) y el color de las siluetas. */
+const POSTER_SKIES = [
+  ['#0f1a3a', '#c4553a'], ['#05070d', '#2a5c8a'], ['#1b0f2e', '#d9822b'], ['#0c2424', '#7fb8a4'], ['#2a0a0a', '#e0b04a'], ['#101010', '#8a2be2'],
+] as const;
+const SILHOUETTE = '#07080a';
+
+/**
+ * El afiche de una película inventada (§4.6: afiches genéricos enmarcados), sin título ni marcas: un cielo en degradé, una
+ * luna o un sol, una silueta (una ciudad, unas montañas o una figura parada) y, abajo, el bloque de los créditos en
+ * rayitas claras; arriba, dos rayas gruesas donde iría el título. El marco (`look.marco`) alrededor.
+ */
+function afiche(look: SignLook, width: number, height: number, seed: string): HTMLCanvasElement {
+  const { canvas, c, w, h } = sheet(width, height);
+  const rng = rngOf(seed);
+  const [top, bottom] = any(rng, POSTER_SKIES);
+  const m = Math.max(4, Math.round(Math.min(w, h) * 0.05));
+  c.fillStyle = look.marco;
+  c.fillRect(0, 0, w, h);
+  const [x0, y0, iw, ih] = [m, m, w - 2 * m, h - 2 * m];
+  const g = c.createLinearGradient(0, y0, 0, y0 + ih);
+  g.addColorStop(0, top);
+  g.addColorStop(1, bottom);
+  c.fillStyle = g;
+  c.fillRect(x0, y0, iw, ih);
+  // la luna (o el sol): un disco claro con un halo
+  const [mx, my, mr] = [x0 + iw * (0.25 + rng.next() * 0.5), y0 + ih * (0.25 + rng.next() * 0.15), iw * (0.12 + rng.next() * 0.12)];
+  c.globalAlpha = 0.25;
+  c.fillStyle = '#fff4d6';
+  circle(c, mx, my, mr * 1.6);
+  c.fill();
+  c.globalAlpha = 1;
+  circle(c, mx, my, mr);
+  c.fill();
+  // la silueta, sobre el último tercio
+  c.fillStyle = SILHOUETTE;
+  const base = y0 + ih * 0.78, kind = Math.floor(rng.next() * 3) % 3;
+  if (kind === 0) {
+    // una ciudad: edificios de alturas al azar, con alguna ventana encendida
+    for (let x = x0; x < x0 + iw; ) {
+      const bw = iw * (0.06 + rng.next() * 0.1), bh = ih * (0.08 + rng.next() * 0.3);
+      c.fillStyle = SILHOUETTE;
+      c.fillRect(x, base - bh, bw + 1, bh + 1);
+      c.fillStyle = '#f2c14e';
+      for (let k = 0; k < 3; k++) if (rng.next() < 0.5) c.fillRect(x + bw * (0.2 + rng.next() * 0.6), base - bh * (0.2 + rng.next() * 0.7), Math.max(1, bw * 0.12), Math.max(1, bw * 0.12));
+      x += bw;
+    }
+    c.fillStyle = SILHOUETTE;
+  } else if (kind === 1) {
+    // montañas
+    c.beginPath();
+    c.moveTo(x0, base);
+    for (let k = 0; k <= 6; k++) c.lineTo(x0 + (iw * k) / 6, base - ih * (k % 2 ? 0.12 + rng.next() * 0.25 : 0.03 + rng.next() * 0.08));
+    c.lineTo(x0 + iw, base);
+    c.fill();
+  } else {
+    // una figura parada, de espaldas
+    const fx = x0 + iw * (0.35 + rng.next() * 0.3), fh = ih * 0.32;
+    circle(c, fx, base - fh, fh * 0.11);
+    c.fill();
+    c.beginPath();
+    c.moveTo(fx - fh * 0.16, base - fh * 0.86);
+    c.lineTo(fx + fh * 0.16, base - fh * 0.86);
+    c.lineTo(fx + fh * 0.2, base);
+    c.lineTo(fx - fh * 0.2, base);
+    c.fill();
+  }
+  c.fillRect(x0, base, iw, y0 + ih - base);
+  // el título (dos rayas gruesas claras) y los créditos (rayitas finas)
+  c.fillStyle = '#f4ede0';
+  c.fillRect(x0 + iw * 0.12, y0 + ih * 0.06, iw * 0.76, ih * 0.045);
+  c.fillRect(x0 + iw * 0.25, y0 + ih * 0.12, iw * 0.5, ih * 0.03);
+  c.globalAlpha = 0.7;
+  for (let k = 0; k < 4; k++) c.fillRect(x0 + iw * (0.1 + (k % 2) * 0.04), y0 + ih * (0.83 + k * 0.035), iw * (0.8 - (k % 2) * 0.08), Math.max(1, ih * 0.012));
+  c.globalAlpha = 1;
+  return canvas;
+}
+
+export const LABEL_DRAWINGS: Record<LabelDrawing, (look: SignLook, width: number, height: number, seed: string) => HTMLCanvasElement> = { tesoro, plafon, cuadro, menu, zigzag, afiche };

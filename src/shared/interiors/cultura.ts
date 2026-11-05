@@ -87,8 +87,6 @@ const COL_AIRE = 0.25, COL_LADOS = 12, BASE = { half: 0.2, h: 0.1 }, FUSTE_R = 0
 const BARROTE = 0.02, BARROTE_PASO = 0.12, PASAMANOS = { w: 0.07, y0: 0.97, y1: 1.03 }, PLANCHUELA = { y0: 0.05, y1: 0.09, w: 0.03 };
 /** Los parantes negros de los paños de vidrio de los balcones: a lo sumo cada tanto (m). */
 const PARANTE_CADA = 2.6, PARANTE = 0.04;
-/** El tope del pasamanos de una escalera, sobre la línea de las narices de sus escalones (m). */
-const PASAMANOS_ESCALERA = 0.93;
 /** El espesor de una baranda (el de Kit.railing). */
 const RAIL_T = 0.05;
 /** La escalera central (del atrio al balcón del fondo del piso 1) y la del costado (del 1 al 2): anchos (m). */
@@ -162,28 +160,6 @@ function sobre(path: Vec2[], s: number): Vec2 {
 }
 const largo = (path: Vec2[]): number => path.slice(1).reduce((t, p, j) => t + len(sub(p, path[j])), 0);
 
-/** Una barra que solo se dibuja (paños): de `a` a `b` (marco local, [u, y, v]: el medio de su cara de arriba en cada
- *  punta), de `ancho` de través (horizontal) y `alto` hacia abajo, de canto a a → b; para lo inclinado (un cabio, un
- *  pasamanos). Con `puntas`, también las tapas de las puntas. a → b no puede ser vertical. */
-export function barra(k: Kit, a: Vec3, b: Vec3, ancho: number, alto: number, look: Look, o: { sky?: true; puntas?: true } = {}): void {
-  const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-  const l = Math.hypot(...d), h = Math.hypot(d[0], d[2]);
-  const e: Vec3 = [d[0] / l, d[1] / l, d[2] / l], t: Vec3 = [-d[2] / h, 0, d[0] / h];
-  // arriba: perpendicular a a → b y al través (t × e o e × t, el que sube)
-  const c: Vec3 = [t[1] * e[2] - t[2] * e[1], t[2] * e[0] - t[0] * e[2], t[0] * e[1] - t[1] * e[0]];
-  const up: Vec3 = c[1] >= 0 ? c : [-c[0], -c[1], -c[2]];
-  const at = (p: Vec3, s: number, y: number): Vec3 => [p[0] + t[0] * s - up[0] * y, p[1] - up[1] * y, p[2] + t[2] * s - up[2] * y];
-  const neg = (v: Vec3): Vec3 => [-v[0], -v[1], -v[2]];
-  const w = ancho / 2, f = o.sky ? { sky: true as const } : {};
-  k.pane([at(a, -w, 0), at(b, -w, 0), at(b, w, 0), at(a, w, 0)], up, look, f);
-  k.pane([at(a, -w, alto), at(a, w, alto), at(b, w, alto), at(b, -w, alto)], neg(up), look, f);
-  k.pane([at(a, w, 0), at(b, w, 0), at(b, w, alto), at(a, w, alto)], t, look, f);
-  k.pane([at(a, -w, 0), at(a, -w, alto), at(b, -w, alto), at(b, -w, 0)], neg(t), look, f);
-  if (!o.puntas) return;
-  k.pane([at(a, -w, 0), at(a, w, 0), at(a, w, alto), at(a, -w, alto)], neg(e), look, f);
-  k.pane([at(b, -w, 0), at(b, -w, alto), at(b, w, alto), at(b, w, 0)], e, look, f);
-}
-
 /** Las caras `caras` de una caja que solo se dibuja (paños), de planta [u0, v0, u1, v1] (marco local) entre y0 e y1: las
  *  de los costados por el lado que miran (u0 mira a −U, v1 a +V…), el tope y el fondo. */
 type Cara = 'u0' | 'u1' | 'v0' | 'v1' | 'tope' | 'fondo';
@@ -244,27 +220,6 @@ function curvaDeReja(k: Kit, arco: Vec2[], level: number): void {
   }
 }
 
-/** La baranda de vidrio de un costado de una escalera (`lado` ±1 respecto de su subida): un paño por escalón, sobre su
- *  huella, y el pasamanos negro en pendiente, una sola barra de la nariz del primer escalón al borde de la llegada
- *  (PASAMANOS_ESCALERA arriba de la línea de las narices), con un parante cada tres escalones. */
-function barandaDeEscalera(k: Kit, foot: Vec2, dir: Vec2, width: number, y0: number, y1: number, lado: 1 | -1): void {
-  const n = Math.ceil((y1 - y0) / 0.2 - 1e-9), r = (y1 - y0) / n;
-  const side: Vec2 = [-dir[1] * lado, dir[0] * lado], q = width / 2 + RAIL_T / 2;
-  const at = (s: number): Vec2 => add(add(foot, dir, s), side, q);
-  const nariz = (s: number): number => y0 + r + (s * r) / TREAD;
-  const tope = (s: number): number => nariz(s) + PASAMANOS_ESCALERA;
-  for (let i = 1; i < n; i++) {
-    const s0 = (i - 1) * TREAD;
-    k.railing([at(s0), at(i * TREAD)], 0, VIDRIO, { y: y0 + i * r });
-    if ((i - 1) % 3 === 0 || i === n - 1) {
-      const m = at(s0 + TREAD / 2), h = PARANTE / 2;
-      k.block(rect([m[0] - h, m[1] - h, m[0] + h, m[1] + h]), y0 + i * r, tope(s0 + TREAD / 2) - (PASAMANOS.y1 - PASAMANOS.y0), 'none', 'otro', { side: NEGRO });
-    }
-  }
-  const fin = (n - 1) * TREAD, [a, b] = [at(0), at(fin)];
-  barra(k, [a[0], tope(0), a[1]], [b[0], tope(fin), b[1]], PASAMANOS.w, PASAMANOS.y1 - PASAMANOS.y0, NEGRO, { puntas: true });
-}
-
 /** Un cuadro abstracto colgado en `p` (marco local), a la altura `y`, mirando a `normal`. drawings.ts lo pinta con el
  *  texto de semilla, que sale del lugar: agregar o sacar un cuadro no cambia los demás. (Se exporta para los tests.) */
 export function cuadro(k: Kit, p: Vec2, y: number, normal: Vec2, w = 1.3, h = 1.0): void {
@@ -314,17 +269,17 @@ function lucernario(k: Kit, [u0, v0, u1, v1]: Rect, H: number): void {
   const sky = { sky: true } as const, y = (u: number): number => aguas(u) - BAJO_VIDRIO;
   for (let j = 0; j < CABIOS; j++) {
     const v = v0 + CABIO_W / 2 + 0.01 + ((v1 - v0 - CABIO_W - 0.02) * j) / (CABIOS - 1);
-    barra(k, [u0, y(u0), v], [mid, y(mid), v], CABIO_W, CABIO_H, ESTRUCTURA, sky);
-    barra(k, [mid, y(mid), v], [u1, y(u1), v], CABIO_W, CABIO_H, ESTRUCTURA, sky);
+    k.bar([u0, y(u0), v], [mid, y(mid), v], CABIO_W, CABIO_H, ESTRUCTURA, sky);
+    k.bar([mid, y(mid), v], [u1, y(u1), v], CABIO_W, CABIO_H, ESTRUCTURA, sky);
   }
   // las correas, a lo largo, a un sexto y a un tercio de cada borde: su tope es plano y el vidrio sube de través, así
   // que van un poco más abajo; la cumbrera, en el medio, más ancha
   for (const f of [0.17, 0.33, 0.67, 0.83]) {
     const u = u0 + (u1 - u0) * f, yc = aguas(u) - BAJO_VIDRIO - (CORREA_W / 2) * (CUMBRERA / half) - 0.004;
-    barra(k, [u, yc, v0], [u, yc, v1], CORREA_W, CORREA_H, ESTRUCTURA, sky);
+    k.bar([u, yc, v0], [u, yc, v1], CORREA_W, CORREA_H, ESTRUCTURA, sky);
   }
   const yr = top - BAJO_VIDRIO - CORREA_W * (CUMBRERA / half) - 0.004;
-  barra(k, [mid, yr, v0], [mid, yr, v1], 2 * CORREA_W, CABIO_H, ESTRUCTURA, sky);
+  k.bar([mid, yr, v0], [mid, yr, v1], 2 * CORREA_W, CABIO_H, ESTRUCTURA, sky);
   // el cordón alrededor del hueco, sobre el techo: se pisa (un escalón)
   const w = CORDON.w;
   for (const r of [[u0 - w, v0 - w, u0, v1 + w], [u1, v0 - w, u1 + w, v1 + w], [u0, v0 - w, u1, v0], [u0, v1, u1, v1 + w]] as Rect[]) {
@@ -466,11 +421,10 @@ export const culturaPlan: InteriorPlan = (k) => {
   // costado, del 1 al 2, contra la pared de +U
   const corrida = (Math.ceil(LEVEL_H / 0.2 - 1e-9) - 1) * TREAD;
   const pieCentral: Vec2 = [mid, ATRIO_V1 - corrida];
-  k.stair({ from: 0, to: 1, foot: pieCentral, dir: [0, 1], width: CENTRAL_W, look: PISO_PB, rail: VIDRIO });
-  for (const lado of [1, -1] as const) barandaDeEscalera(k, pieCentral, [0, 1], CENTRAL_W, 0, LEVEL_H, lado);
+  k.stair({ from: 0, to: 1, foot: pieCentral, dir: [0, 1], width: CENTRAL_W, look: PISO_PB, rail: VIDRIO, handrail: 'ambos', handrailLook: NEGRO });
   const pieCostado: Vec2 = [c.U1 - 0.05 - COSTADO_W / 2, 10];
-  k.stair({ from: 1, to: 2, foot: pieCostado, dir: [0, 1], width: COSTADO_W, look: PISO_ALTO, rail: VIDRIO });
-  barandaDeEscalera(k, pieCostado, [0, 1], COSTADO_W, LEVEL_H, 2 * LEVEL_H, 1); // del lado del balcón (−U)
+  // el pasamanos, del lado del balcón (−U)
+  k.stair({ from: 1, to: 2, foot: pieCostado, dir: [0, 1], width: COSTADO_W, look: PISO_ALTO, rail: VIDRIO, handrail: 'der', handrailLook: NEGRO });
   const huecoCostado = rect([pieCostado[0] - COSTADO_W / 2, pieCostado[1], pieCostado[0] + COSTADO_W / 2, pieCostado[1] + corrida]);
 
   // ---- las columnas, en los tres pisos: en los lados largos del hueco y donde empiezan las curvas

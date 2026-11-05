@@ -167,10 +167,13 @@ export async function loadBarkTexture(url: string, size = 256): Promise<THREE.Te
 
 /** Un tronco y una copa instanciados con todos los árboles, partidos en celdas (splitByCell). Las instancias van
  *  ordenadas por su hash, y cada celda conserva ese orden: con densidad d se dibujan las primeras de cada celda (las de
- *  hash < d), así setTreeDensity cambia la cantidad sin rehacer nada. */
-export function buildTrees(trees: Tree[], density: number, barkMap?: THREE.Texture): THREE.InstancedMesh[] {
-  if (trees.length === 0) return [];
-  const list = trees.map((t, i) => ({ t, h: hashIndex(i) })).sort((a, b) => a.h - b.h);
+ *  hash < d), así setTreeDensity cambia la cantidad sin rehacer nada. `pinned` (los de los patios de los interiores,
+ *  Interior.trees) van en las mismas mallas con un hash negativo: se dibujan con cualquier densidad, porque su tronco
+ *  sólido está siempre (un patio con un tronco invisible tendría una pared fantasma). */
+export function buildTrees(trees: Tree[], density: number, barkMap?: THREE.Texture, pinned: Tree[] = []): THREE.InstancedMesh[] {
+  if (trees.length + pinned.length === 0) return [];
+  const list = [...pinned.map((t, k) => ({ t, h: -(k + 1) / (pinned.length + 1) })), ...trees.map((t, i) => ({ t, h: hashIndex(i) }))]
+    .sort((a, b) => a.h - b.h);
   const hashes = Float64Array.from(list, (e) => e.h); // float64: el mismo corte que keepTree
 
   const leaf = leafAtlas();
