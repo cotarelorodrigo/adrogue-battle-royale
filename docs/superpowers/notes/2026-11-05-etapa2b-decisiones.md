@@ -45,7 +45,10 @@ Las técnicas menores (un nombre, un redondeo, un comentario) no se listan: qued
     simple que cubre toda su colisión.
   - Si la planta de la estación no es la relevada, `build:map` se frena con un error que dice qué falta, en vez de
     armar un hall vacío.
-- **La Veneciana.** Todo el techo es terraza pública (el kit no parte techos). Las mesas y sombrillas van en el tercio
+  - El cartel del frente va centrado (9,6 m) y se sacó el cartel de ayuda: así se ve en la realidad. Cuatro puntos de
+    botín se corrieron ~0,5 m.
+- **La Veneciana.** Va corrida 2,5 m al sudeste respecto del relevamiento satelital, para no pisar el carril del
+  AutoHelado de OSM, que el juego dibuja. Todo el techo es terraza pública (el kit no parte techos). Las mesas y sombrillas van en el tercio
   sobre Espora, como en la foto satelital. Lleva baranda blanca de caño en todo el borde, porque una terraza pública
   real la tiene y sin ella el jugador se cae. El cartel va en letra cursiva, como los toldos. El techo del chunk queda (se
   ve de lejos) y el hueco de la escalera se abre con el mismo recorte que el lucernario de la Casa.
@@ -54,7 +57,7 @@ Las técnicas menores (un nombre, un redondeo, un comentario) no se listan: qued
   más corto que el rectángulo satelital.
 - **Guernica.** 12 m de frente sobre Spiro, 16 m de fondo y 2 pisos, con el patio de adelante hasta la vereda. El balcón
   del piso 1 se probó junto con las apariciones en el mundo hueco.
-- **Cine.** La franja delante del cine es un despeje, no un patio: el cine no tiene patio. Las salas están a oscuras de
+- **Cine.** Mide 8,0 m de alto, porque una sala con gradas no entra en un piso de 3,8 m. La franja delante del cine es un despeje, no un patio: el cine no tiene patio. Las salas están a oscuras de
   verdad: se calibró la luz con la exposición de adentro, porque la adaptación del ojo no las puede aclarar.
 - **Casa de la Cultura.** El atrio tiene un hueco en el techo con lucernario: el techo del edificio se abre, y una tapa
   de vidrio lo cubre de lejos y se esconde cuando el interior se dibuja. El plafón y las obras de las salas son dibujos
